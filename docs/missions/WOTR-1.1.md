@@ -298,7 +298,8 @@ row owns; such a row is corrected in «Роли» by decision of приёмка,
 ### Read-only or forbidden
 
 - `BFME2/**`, `RotWK/**` and retail binaries;
-- `tools/script-cat/**` and relay files;
+- transport files — `tools/script-cat/**` and `tools/relay-*.mjs`, which are no longer part of this tree at all:
+  they are maintained in `Creative36711/relay-wotr`, so a card of this mission never edits or reinstates them;
 - unrelated OpenBFME parity code;
 - existing tests/oracles except additive wiring required by the card;
 - `Creative36711/wotr` runtime or full authored dataset; ADR-002 importer work is assigned to phase 2 and remains license-gated;

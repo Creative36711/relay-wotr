@@ -193,3 +193,11 @@ Transport Maintainer changes `src/**` only on a dedicated card. A source change
 must bump both `@version` and `SCRIPT_VERSION`, add/update decision and regression
 evidence, run `node tools/script-cat/build.mjs`, then complete the full gate.
 Browser installation is never performed silently by repository tooling.
+
+## Decision for the relay-wotr transport PR
+
+No plain-semver bump is required when the only source changes are restoration of terminal newlines; this leaves the generated userscript byte-for-byte unchanged. Nor is a bump required for an embedded operational digest alone: the version bump gate is scoped to semantic `src/**` transport changes. Current transport version remains unchanged. This exception must not be used for behavior changes.
+
+## Mirror sync and digest-only version decision
+
+The 2026-11-22 operational mirror sync embeds regulation 1.3. The normalized digest is 7,588 characters (limit 9,000); the full regulation and digest versions must travel in the same change. Bundle SHA-256 after regeneration: `4d10f303cbfd9672daf3917c2f6c6a9a9aaeb6b22a980c7bc4ed66b2fa9924ac`. The digest-only change does not require a plain-semver bump because the version gate checks `src/**` only.

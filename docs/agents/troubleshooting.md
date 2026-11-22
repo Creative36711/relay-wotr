@@ -49,7 +49,9 @@ Check GitHub connection, target repo/base, PR URL, merge state and merge commit.
 
 ## Digest/build mismatch
 
-Run:
+Run in `Creative36711/relay-wotr` (the transport repository; `docs/REGULATION.md` and
+`docs/regulation-digest.md` are copied there from Open BFME, so a regulation change needs a sync commit
+and a rebuild on that side):
 
 ```bash
 node tools/script-cat/build.mjs
