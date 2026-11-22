@@ -1,0 +1,21 @@
+{
+  "name": "wotr-remaster",
+  "version": "0.1.0",
+  "private": true,
+  "description": "War Of The Ring: Remaster — deterministic strategy, Godot world/editor and OpenBFME tactical runtime",
+  "license": "GPL-3.0-or-later",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "scriptcat:build": "node tools/script-cat/build.mjs",
+    "scriptcat:check": "node tools/script-cat/build.mjs --check",
+    "scriptcat:guard": "node tools/script-cat/portability-guard.mjs",
+    "test": "npm run test:scriptcat",
+    "test:scriptcat": "node --test tools/script-cat/tests/*.mjs",
+    "test:scriptcat:regression": "node --test tools/script-cat/regression-tests/*.mjs",
+    "test:scriptcat:tool-limit": "node --test tools/script-cat/tests/tool-limit-continuation-smoke.mjs tools/script-cat/regression-tests/tool-limit-continuation-integration.mjs",
+    "verify:scriptcat": "npm run scriptcat:check && npm run scriptcat:guard && npm run test:scriptcat && npm run test:scriptcat:regression && npm run test:scriptcat:tool-limit",
+    "verify:scriptcat:node": "node tools/relay-build.mjs --repo . --allow-dirty --json"
+  }
+}
