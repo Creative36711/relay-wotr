@@ -19,7 +19,9 @@ worked around: it is raised as `master` to the owner, because a Maintainer whose
 
 Two journals and one mirror: `docs/DECISIONS.md` in `relay-wotr` holds that repository's own `D-###` decisions, the
 verbatim copy of the Open BFME journal lives in `docs/DECISIONS-UPSTREAM.md`, and every remaining `docs/**` file is a
-byte-for-byte mirror that is never hand-edited there (Р11). The transport's `.github/**` gate is judged by the same
+byte-for-byte mirror of a set closed by name — the process documents of Р11 — and product documentation under
+`docs/` is never copied there: a `docs/**` glob once delivered 31 588 lines of product pages to a public transport
+repository. The transport's `.github/**` gate is judged by the same
 fixed-gate rules as a product PR — read-only permissions, actions pinned by full commit sha, no secrets, and a checkout
 deep enough for the preflight it runs to see `origin/main`: a gate that is red on a tree nobody changed is a defect of
 the gate, and it is fixed in the workflow, never by relaxing the rule the gate enforces.
