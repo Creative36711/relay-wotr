@@ -1,0 +1,48 @@
+{
+  "format": "scriptcat-project-config",
+  "version": 1,
+  "profile": {
+    "id": "d9f9bf1b-63a7-41be-b9e6-0dcb5f6dcb2e",
+    "name": "War Of The Ring: Remaster",
+    "roles": "41e6f0cf-5705-81ce-bba9-000b94dd2784",
+    "missions": "41e6f0cf-5705-8115-8638-000b8448175c",
+    "requests": "41e6f0cf-5705-8176-a3fd-000bc17308b8",
+    "questions": "41e6f0cf-5705-817d-8029-000b2ef5c15c",
+    "pageUrl": "https://app.notion.com/p/WOTR-Remaster-41e6f0cf57058178ac91c320891b1d7b",
+    "questionsUrl": "https://app.notion.com/p/41e6f0cf570581b79dbbc9a16835ba85",
+    "repo": "Creative36711/open-bfme",
+    "branch": "main",
+    "driveFolder": "wotr-remaster",
+    "repos": [
+      {
+        "repo": "Creative36711/open-bfme",
+        "branch": "main",
+        "main": true
+      },
+      {
+        "repo": "Creative36711/relay-wotr",
+        "branch": "main",
+        "main": false
+      }
+    ],
+    "roleRepos": [
+      {
+        "roleId": "41e6f0cf-5705-815f-9b37-e533c4ccad21",
+        "repo": "Creative36711/relay-wotr"
+      }
+    ],
+    "agentProvisionEnabled": true,
+    "agentProvisionMode": "manual",
+    "agentProvisionRepoAllowlist": [
+      "Creative36711/open-bfme"
+    ],
+    "agentBootstrapPrompt": "Открой AGENTS.md и docs/agents/cost-gates.md в целевом репозитории. Ничего не меняя, кратко назови три архитектурные границы, функцию своей роли и допустимые значения полей build/retail Cost gate, которые должна задать карточка.",
+    "agentProvisionMaxJobs": 3,
+    "agentProvisionDailyMax": 5,
+    "agentBootstrapWaitMs": 600000,
+    "agentUrlWaitMs": 30000,
+    "agentRenameAttempts": 3,
+    "agentProvisionAutoActivate": false,
+    "agentProvisionArchiveOld": true
+  }
+}
