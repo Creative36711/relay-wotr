@@ -13,7 +13,8 @@ Function: `Executor`. Applies to Strategic Core, Tactical Bridge, Godot World, C
 - If clone is shallow and history is needed, run `git fetch --unshallow origin` or an explicit sufficient deepen.
 - Implement the smallest complete result; do not add future-phase placeholders.
 - Add or run the exact oracle without weakening existing checks.
-- Before push run `node tools/script-cat/preflight.mjs --zone "<allowed paths>"` and `git diff --check`.
+- Before push run `node tools/script-cat/preflight.mjs --zone "<allowed paths>"` (that script lives with the
+  transport in `Creative36711/relay-wotr`; run it in the repository whose paths you changed) and `git diff --check`.
 - Merge only the accepted card PR, then verify the merge before claiming `merged:true`.
 - Report exact commands/rc/output, artifacts/hash, tested SHA and every `not run`.
 

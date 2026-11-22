@@ -2,10 +2,11 @@
 
 Use repository scripts before ad-hoc commands.
 
-- ScriptCat build/check: `node tools/script-cat/build.mjs [--check]`.
-- Portability: `node tools/script-cat/portability-guard.mjs`.
-- Transport tests: root `npm run verify:scriptcat`.
-- PR preflight: `node tools/script-cat/preflight.mjs --zone "<paths>"`.
+- ScriptCat build/check: `node tools/script-cat/build.mjs [--check]` — in `Creative36711/relay-wotr`; the
+  transport is no longer built from this repository.
+- Portability: `node tools/script-cat/portability-guard.mjs` (same repository).
+- Transport tests: `npm run verify:scriptcat` in `Creative36711/relay-wotr`.
+- PR preflight: `node tools/script-cat/preflight.mjs --zone "<paths>"` in the repository that owns the paths.
 - Upstream pin: `OPENBFME_UPSTREAM`; sync is an Upstream Integrator (Executor) card.
 - Cost selection: `docs/agents/cost-gates.md`; declare `build` and `retail` tiers before expensive work.
 - Retail BIG transfer: `tools/retail_big_transfer.py`; byte-exact, canary-first and only with `retail: hydrate`.

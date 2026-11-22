@@ -33,7 +33,8 @@ Budgets limit transport instructions, not verbatim task facts. Instructions are 
 
 Required overhead limits represented by current profiles: ≤2800, ≤2200, ≤3400, ≤1500, ≤2400, ≤1800, ≤2000, ≤700, ≤250 and ≤900 characters. A full prompt also has a hard limit; exceeding it is an explicit transport pause.
 
-The profile names and exact blocks are generated in `tools/script-cat/contracts/prompt-coverage.json`. Continuation profiles contain no full assignment and no Git-write authority.
+The profile names and exact blocks are generated in `tools/script-cat/contracts/prompt-coverage.json`
+(that path lives in `Creative36711/relay-wotr`, where the bundle is built). Continuation profiles contain no full assignment and no Git-write authority.
 
 ## 4. Ordinary cycle
 
