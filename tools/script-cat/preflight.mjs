@@ -293,7 +293,9 @@ if (!existsSync(prAuditPath)) {
     }
   }
 }
-add("public-tree", "публичное дерево проходит аудит (tools/release/pr_audit.py)", publicOk, publicDetail);
+// The upstream privacy auditor belongs to Open BFME, whose tree and release policy this transport repository does not own.
+// Do not print a green PASS when the auditor is absent; only show this row in repositories that actually carry the tool.
+if (existsSync(prAuditPath)) add("public-tree", "публичное дерево проходит аудит (tools/release/pr_audit.py)", publicOk, publicDetail);
 
 if (zone) {
   const outside = zoneOutside(zone);

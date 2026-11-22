@@ -229,12 +229,12 @@ test("preflight: маркеры конфликта в файле — блоке�
   }
 });
 
-test("preflight: нет tools/release — проверка публичного дерева пропускается, а не блокирует", () => {
+test("preflight: без tools/release не печатает фиктивный PASS публичного аудита", () => {
   const dir = makeRepo();
   try {
     const res = run(dir);
     const out = `${res.stdout}${res.stderr}`;
-    assert.match(out, /ok\s+публичное дерево проходит аудит.*нет tools\/release\/pr_audit\.py/, `пропуск без релизного лейна:\n${out}`);
+    assert.doesNotMatch(out, /публичное дерево проходит аудит/, `аудит отсутствует в этом репозитории и не должен выглядеть пройденным:\n${out}`);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

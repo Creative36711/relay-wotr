@@ -4,7 +4,7 @@ These rules apply to every role that writes `Creative36711/open-bfme`.
 
 ## Р1 · One card, one PR
 
-A PR implements one request card and references mission/card IDs. Unrelated cleanup and opportunistic fixes are separate cards. A PR that records a decision adds exactly one `## D-###` entry to `docs/DECISIONS.md` and its matching key to `tools/script-cat/contracts/agent-protocol.json`; the WOTR operational mirror uses `docs/DECISIONS-UPSTREAM.md` and is not a transport-decision journal.
+A PR implements one request card and references mission/card IDs. Unrelated cleanup and opportunistic fixes are separate cards.
 
 ## Р2 · Preserve local work
 
@@ -49,8 +49,6 @@ python3 tools/precommit.py                                                     #
 node tools/script-cat/preflight.mjs --zone "<comma-separated role/card paths>" # in relay-wotr, the transport repository
 ```
 
-For this transport repository, the Transport Maintainer zone includes `.github/**`, `docs/**`, `tools/script-cat/**`, `tools/relay-*.mjs`, `tools/*.mjs`, `package.json`, `README.md` and `WARDEN-SCRIPTCAT-MIGRATION.md`.
-
 Open BFME has no `tools/script-cat/**`, so a product card never runs `preflight.mjs`: its equivalent fixed gate is
 `python3 tools/precommit.py` plus the tree audit below. Transport cards run `preflight.mjs` in `relay-wotr`. A zone
 string is a comma- or newline-separated list of globs only — prose in a zone turns into patterns that match nothing,
@@ -59,6 +57,24 @@ which is how a role's own mandatory file got declared «вне зоны».
 A pass must cover: non-shallow usable history, no conflict markers, only own zone, coherent decision/contract change, source/version coupling and generated bundle consistency where applicable. Network uncertainty is reported as unknown; it does not authorize bypass.
 
 Since 1.16.6 the pass also covers the public tree audit (`tools/release/pr_audit.py --tree HEAD^{tree} --base origin/main`), because that CI step reads the whole tree the pull request would make, not its diff: a finding already in `main` is reported on every later pull request and looks like the newcomer's defect. A finding attributed to the base is not this pull request's blocker and never justifies editing another role's file (Р5); it is named to its owner with the commit that introduced it. A finding of your own tree is fixed in your own PR, before push.
+
+## Р11 · Transport docs mirror
+
+`docs/**` of `Creative36711/relay-wotr` is a one-way mirror of this repository, and the recipe is a subtraction, not a
+list: every file under `docs/` is copied byte-for-byte **except** `docs/DECISIONS.md` (the transport's own `D-###`
+journal) and its transport-only files (`docs/scriptcat-update.md`, `docs/DECISIONS-UPSTREAM.md`). The copy of this
+repository's journal lives over there in `docs/DECISIONS-UPSTREAM.md` verbatim, which is what keeps the transport
+preflight pattern `^##\s+D-\d+` a real check instead of a decoration: WOTR keys are `## WOTR-D-###` and never enter the
+transport's journal, and loosening that pattern to accommodate them is refused (Р6). A file list as the recipe was
+tried first and is what lost `docs/missions/TEMPLATE.md` — absent in `relay-wotr` for a whole mission.
+
+Mirrored files are not hand-edited over there: the edit is invisible here, the next sync erases it, and an audit that
+says «24 files equal, 2 files always different» no longer proves anything. A transport-local rule goes into a
+transport-only file. A regulation edit moves `docs/REGULATION.md` and `docs/regulation-digest.md` in one transport
+commit, because `build.mjs` refuses when the two declare different versions, and the rebuilt bundle hash is recorded in
+`docs/scriptcat-update.md`. Adding `.github/**` to the transport follows Р10 as well: a CI checkout that cannot see
+`origin/main` cannot satisfy the «non-shallow usable history» precondition of its own preflight, so the step fetches
+full history (`fetch-depth: 0`) instead of turning a green tree red.
 
 ## Commit shape
 

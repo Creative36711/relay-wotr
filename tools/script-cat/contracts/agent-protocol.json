@@ -2191,5 +2191,22 @@
       "probe": "tests/relay-send-unregistered-smoke.mjs",
       "suites": 123
     }
+  },
+  "d001": {
+    "version": "1.16.8",
+    "title": "Transport CI and decision-journal boundary",
+    "date": "2026-11-22",
+    "decision": [
+      "The relay-wotr workflow is one read-only aggregate check on PRs and pushes to main; checkout fetch-depth is zero so its preflight sees complete history and origin/main.",
+      "docs/DECISIONS.md is the transport D-### journal; docs/DECISIONS-UPSTREAM.md is the verbatim Open BFME WOTR decision mirror and excluded from transport decision counting."
+    ],
+    "safety": [
+      "No workflow secrets or write permissions; every external action is pinned to a full commit SHA.",
+      "Do not weaken preflight decision matching to accept WOTR-D headings; do not claim an absent public-tree auditor passed."
+    ],
+    "evidence": {
+      "workflow": ".github/workflows/scriptcat.yml",
+      "probe": "tools/script-cat/tests/pr-preflight-smoke.mjs"
+    }
   }
 }
