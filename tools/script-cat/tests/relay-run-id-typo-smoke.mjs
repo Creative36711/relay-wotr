@@ -272,26 +272,38 @@ function harness({ reviewRequired = true } = {}) {
   assert.equal(h.calls.writes, 0);
 }
 
-// ── 7. Замена попала на дефис: это сдвиг строки, а не опечатка ─────────────
+// ── 7. Замена попала на дефис: сдвиг строки, а не опечатка ─────────────────
+// WOTR-D-030: значение с двойным дефисом перестаёт быть UUID, поэтому это
+// формат-дефект (лестница), а не conflict (пауза). Опечаткой D-054 оно не
+// считается и не принимается: writes 0, карточка не сдана, пока ID не повторены.
 {
   const h = harness({ reviewRequired: false });
   const e = expectDispatch(); h.expect(e);
-  // a437578a-e5d6-… -> a437578a-e5d-…: тот же набор знаков, но сдвинут.
+  // a437578a-e5d6-… -> a437578a-e5d--…: тот же набор знаков, но сдвинут.
   const shifted = `${RUN.slice(0, 12)}-${RUN.slice(13)}`;
   h.replies = [message(`${longBody}\n${agentResult({ run_id: shifted })}`)];
   await h.submitExecutor(worker, e);
-  assert.equal(h.pauses.at(-1)?.kind, 'marker-mismatch', 'сдвиг с дефисом не прощаем');
-  assert.equal(h.calls.writes, 0);
+  assert.equal(h.pauses.length, 0, 'пауза не ставится: значение не UUID — формат-дефект');
+  assert.deepEqual(h.calls.markerMissing, [{ name: 'CF_AGENT_RESULT', why: 'ids' }], 'сдвиг не прощается, но и не останавливает цикл: лестница просит точные ID');
+  assert.equal(h.calls.writes, 0, 'сдвинутое значение не засчитывается');
+  assert.equal(state(h.pages.get(CARD)), 'Running', 'карточка не сдана');
 }
 
-// ── 8. В маркере не UUID: опечатку искать не в чем ─────────────────────────
+// ── 8. В маркере не UUID: формат-дефект, а не чужая выдача ─────────────────
+// WOTR-D-030: обрезанный ID («a437578a-e5d6») — тот же префикс, усечённый при
+// копировании; чужая выдача не несёт обрезанный UUID. Раньше такой маркер шёл
+// в marker-mismatch и останавливал цикл; теперь лестница просит повторить
+// маркер с полными ID, не переделывая работу. Гейт приёма не ослаблен: без
+// повтора с точным UUID ответ не засчитывается, writes остаются 0.
 {
   const h = harness({ reviewRequired: false });
   const e = expectDispatch(); h.expect(e);
   h.replies = [message(`${longBody}\n${agentResult({ run_id: 'a437578a-e5d6' })}`)];
   await h.submitExecutor(worker, e);
-  assert.equal(h.pauses.at(-1)?.kind, 'marker-mismatch', 'обрезанный ID не принимается');
-  assert.equal(h.calls.writes, 0);
+  assert.equal(h.pauses.length, 0, 'пауза не ставится: это формат-дефект, а не чужой ответ');
+  assert.deepEqual(h.calls.markerMissing, [{ name: 'CF_AGENT_RESULT', why: 'ids' }], 'лестница просит повторить маркер с точными ID');
+  assert.equal(h.calls.writes, 0, 'непринятый ответ в журнал не пишется');
+  assert.equal(state(h.pages.get(CARD)), 'Running', 'карточка не сдана');
 }
 
 // ── 9. Карточка выдана другому агенту — чужой ответ ───────────────────────
