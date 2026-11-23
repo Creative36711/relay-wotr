@@ -50,7 +50,7 @@ export const CHECKS = [
  * Только эти пути вправе меняться в проверяемом коммите. Сторож и узел сборки
  * живут рядом с комплектом (`tools/`), но вне бандла: вкладку они не касаются.
  */
-// WOTR uses one repository, but a transport release is still narrow: transport,
+// The project uses one repository, but a transport release is still narrow: transport,
 // its process documentation and the root script manifest only. Product, retail,
 // art and upstream-integration paths require their own cards and gates.
 export const ALLOWED_PATHS = ['tools/script-cat/', 'tools/relay-watchdog.mjs', 'tools/relay-build.mjs', 'docs/', 'AGENTS.md', 'package.json'];

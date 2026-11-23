@@ -1,6 +1,6 @@
 # ScriptCat transport decisions
 
-This journal contains only transport decisions using the `D-###` format. The WOTR operational journal is mirrored verbatim in `DECISIONS-UPSTREAM.md`; it is excluded from the relay-wotr docs sync recipe.
+This journal contains only transport decisions using the `D-###` format. Since D-003 the transport holds no mirrored foreign journal: foreign decisions may appear only as citations, and foreign prefixed numbers are never presented as our own.
 
 ## D-001 (1.16.8) — Isolate transport CI and keep the decision gate meaningful
 
@@ -43,6 +43,37 @@ The relay-wotr pull-request gate is a single aggregate required check on GitHub-
 4. **Формат evidence-строки.** Отчёт строчный: строка evidence = команда, rc, существенный вывод, длительность в секундах (шаг «команды/rc/существенный вывод» — `docs/agents/cost-gates.md` §7); шапка отчёта фиксирует tested SHA, Node version, итоги (pass/fail) и каждый `not run`. Ровно этот формат обязателен для отчётов транспорта в `docs/evidence/`.
 
 Всё, что вне этих четырёх пунктов, — приватная деталь транспорта.
+
+## D-003 (1.17.0) — Транспорт без проектного содержимого: digest и профиль — вход сборки (шаг 2/2, вариант (б))
+
+**Date:** 2026-11-22 · **Status:** accepted (шаг 1 — OPS · RELAY-BUILD-1, Accepted; настоящий шаг закрывает цепочку NEU).
+
+### Контекст
+
+D-002 зафиксировал контракт профиля и оставил старый путь (embedded-mirror) рабочим. Теперь принят вариант **(б) «транспорт как библиотека и контракт»**: транспорт не хранит и не читает проектное содержимое, операция синхрона зеркала исчезает вместе с зеркалом.
+
+### Решение
+
+1. **Удаление одиннадцати путей** одним коммитом с проверками, которые на них падают: `docs/REGULATION.md`, `docs/regulation-digest.md`, `docs/PHASES.md`, `docs/DECISIONS-UPSTREAM.md`, `docs/agents/cost-gates.md`, `docs/agents/troubleshooting.md`, `docs/agents/roles/localization-cultural-qa-engineer.md`, `docs/missions/TEMPLATE.md`, `docs/missions/WOTR-1.1.md`, `docs/missions/WOTR-1.2.md`, `tools/script-cat/wotr-project.json`. Команда `git ls-tree -r --name-only HEAD -- <все 11 путей>` даёт пустой вывод — команда и вывод фиксируются в evidence-отчёте.
+2. **Регламент — вход сборки.** Placeholder `@@REGULATION_DIGEST@@` остаётся в `src/01-config.js`; вход сборки — `--digest <путь>`; без параметров сборка даёт нейтральный бандл с пустым блоком регламента и rc 0. Каждая сборка записывает `contracts/build-manifest.json` `{schema, version, digest: null | {version, sha256}}`; `--check` сверяет bundle, coverage и manifest.
+3. **Оракул сохраняется, проверка переезжает на вход.** `regulation-oracle.mjs` не удаляется: шапка переданного digest'а («Версия N.N») сверяется с build-manifest (`assertDigestAgainstManifest`); при `digest: null` функция возвращает `null` — неприменимость показывается явно в прогоне и в отчёте, никогда молча и никогда не как skip.
+4. **Guard только расширяется.** К прежним паттернам добавляются нейтральные паттерны проекта (имя, репозиторий, префиксы карточек, Notion/Drive идентификаторы, процессные пути); существующие проверки не выключаются; `UPSTREAM.md` — единственное исключение для новых паттернов; всё, что на новые паттерны падает, удаляется тем же коммитом.
+5. **Изоляция проектов закреплена пробой:** два sanitized-фиктивных проекта живут в одном рантайме изолированно (prompt, зоны, лимиты, очереди), удаление одного не ломает другой; собранный бандл не содержит проектных строк; отсутствие одиннадцати путей — отдельной проверкой.
+6. **Release.** @version поднят в `src/` и инструментах (1.16.9 → 1.17.0), changelog — в `docs/scriptcat-update.md`, `protocolVersion` контракта 1.11 → 1.12, настоящая запись — своим номером; чужие номера не используются.
+
+### Инварианты
+
+- Ноль проектных байтов и ноль сетевых чтений проектных репозиториев: вход только параметрами сборки.
+- Удаление содержимого ≠ удаление оракула: проверка версии существует на входе и показывает неприменимость явно.
+- Guard расширяется только добавлением паттернов; not run ≠ pass; таймаут ≠ skip.
+- Односторонняя зависимость: `UPSTREAM.md` — единственное исключение.
+- Свои номера `D-###`; чужие — только цитатой и без чужих префиксов в этом журнале.
+- Breaking оформлен своим release; правок в чужих репозиториях нет.
+- Без секретов, retail-ссылок и чужих идентификаторов; новых capability не запрашивается.
+
+### Rollback
+
+Откат — одним коммитом: вернуть одиннадцать путей, прежний CLI сборки, прежний оракул и прежние guard-паттерны; @version и запись D-003 откатываются вместе с ними. Пер-проектная обратимость D-002 сохраняется.
 
 ### Fail closed (нормативно)
 

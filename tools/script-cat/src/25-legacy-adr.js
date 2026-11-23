@@ -132,7 +132,7 @@
    * репозитория. Это факт, а не догадка.
    *
    * 09.11 (2-я редакция): ролей два репозитория, и документы лежат не там, где
-   * работает роль. У WOTR репозиторий один (`Creative36711/open-bfme`), и в
+   * работает роль. У проекта один репозиторий (задаёт профиль), и в
    * Notion «Репозиторий» роли-приёмки (`Warden`) назван именно он.
    * Поэтому читаем не `C.repo` (это репозиторий сессии роли), а
    * `C.docsRepo` → репозиторий роли-приёмки → `C.repo`. Иначе сверка ищет
@@ -152,7 +152,9 @@
     return String(C.repo || "");
   }
 
-  async function publishedTzVersion(file = C.queueDoc || "docs/PHASES.md") {
+  async function publishedTzVersion(file = C.queueDoc || "") {
+    // D-003: без явно заданного файла проекта сети нет — сверка неприменима.
+    if (!file) return null;
     const cache = GM_getValue("cfn-tz-published", null);
     const now = Date.now();
     const repo = canonicalTargetRepository(docsRepository());
@@ -1396,7 +1398,7 @@
         const why = `карточка «${taskTitle(card)}» не выдана: ${problem}`;
         if (misses >= 3) {
           GM_setValue("cfn-dispatch-miss", 0);
-          // WOTR-D-018: вид `redispatch` общий у двух причин, и адресат у них
+          // внешний D-018: вид `redispatch` общий у двух причин, и адресат у них
           // разный. Карточку отвергла повторная предполётная проверка — разошёлся
           // сам гейт транспорта, это его дефект и его разбор. Очередь правда
           // уехала (состояние, адресат, следы ответа) — решение за приёмкой.

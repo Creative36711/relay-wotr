@@ -9,7 +9,7 @@
 //   • карточка с полем «Репозиторий» не перебивает подключение роли;
 //   • телеметрия не уезжает в чужой репозиторий: по умолчанию — Drive.
 
-import { readFileSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
 import { strict as assert } from 'node:assert';
 
 import { assertUserscriptVersionContract } from '../version-oracle.mjs';
@@ -20,7 +20,7 @@ assertUserscriptVersionContract(src);
 // ── 1. Репозиторий документов — отдельно от репозитория сессии ───────────────
 const cfg = readFileSync(new URL('../src/01-config.js', import.meta.url), 'utf8');
 assert.match(cfg, /docsRepo: ""/, 'репозиторий документов задан отдельной настройкой');
-assert.match(cfg, /queueDoc: "docs\/PHASES\.md"/, 'файл редакции задан настройкой');
+assert.match(cfg, /queueDoc: ""/, 'D-003: проектных файлов по умолчанию нет — сверка неприменима');
 
 const adr = readFileSync(new URL('../src/25-legacy-adr.js', import.meta.url), 'utf8');
 assert.match(adr, /function docsRepository\(\)/, 'репозиторий документов вычисляется, а не берётся из C.repo');
@@ -56,52 +56,42 @@ const upload = heal.slice(heal.indexOf('async function healUpload('), heal.index
 assert.ok(!/contents\/\$\{repo\}/.test(upload), 'в репозиторий проекта телеметрия не пишется');
 assert.match(upload, /contents\/\$\{encodeURI\(path\)\}/, 'путь пишется по вычисленному адресу получателя');
 
-// ── 5. Две шапки не расходятся ──────────────────────────────────────────────
-// D-086/1.14.17: номер ТЗ живёт в двух файлах — в шапке миссии и в шапке очереди.
-// Ровно это расхождение и было 09.11: очередь объявляла «ТЗ 1.6», а миссия
-// продолжала говорить «Версия ТЗ 1.5». Гейт сверки такой документ считал бы
-// опубликованным, потому что читает одну шапку из двух.
-//
-// WOTR has an independently versioned phase plan and mission specifications.
-// The plan may advance when a dependent mission is added without rewriting the
-// accepted active-mission specification; both versions must remain explicit.
+// ── 5. Одиннадцать проектных путей отсутствуют в дереве транспорта ──────────
+// D-003: зеркало процессных docs и профиль проекта удалены. Здесь — рабочее
+// дерево; команда для отчёта (фиксируется в docs/evidence/TRANS-NEU-1.md):
+//   git ls-tree -r --name-only HEAD -- <все 11 путей>   → пустой вывод.
 {
-  const plan = readFileSync(new URL('../../../docs/PHASES.md', import.meta.url), 'utf8');
-  const mission = readFileSync(new URL('../../../docs/missions/WOTR-1.1.md', import.meta.url), 'utf8');
-  const packageMission = readFileSync(new URL('../../../docs/missions/WOTR-1.2.md', import.meta.url), 'utf8');
-  const inPlan = plan.match(/Редакция\s+(\d+\.\d+)/i);
-  const inMission = mission.match(/ТЗ\s+(\d+\.\d+)/);
-  const inPackageMission = packageMission.match(/Specification version:\s*\*\*(\d+\.\d+)\*\*/);
-  assert.ok(inPlan, 'в шапке плана назван номер редакции');
-  // Номер принятой редакции поднимается вместе с самой публикацией ТЗ: 21.11
-  // принята 1.2 (аддитивные `§10` таблицы владельцев путей и отметка в `§7`,
-  // текст оракула `§8`/`§9` не тронут). Смысл проверки — не «1.1 forever», а
-  // что шапка миссии называет ровно ту редакцию, которая принята, и не
-  // расходится с шапкой очереди.
-  assert.equal(inMission?.[1], '1.2', 'активное WOTR-1.1 ТЗ сохраняет принятую редакцию');
-  assert.equal(inPackageMission?.[1], '1.0', 'зависимая WOTR-1.2 имеет собственную версию');
-  assert.match(plan, /WOTR-1\.2 · Player entry and portable playtest package/, 'план ссылается на зависимую player-package миссию');
-  const declared = plan.slice(0, 1200).match(/Редакция\s*\**\s*(\d+\.\d+)/i);
-  assert.ok(declared, 'в шапке плана назван номер редакции');
-  // Номер редакции сравнивается попарно, а не как дробь: `Number("1.10")` = 1.1,
-  // то есть редакция 1.10 была бы «ниже 1.8». Ровно на этом ломался следующий же
-  // шаг: очередь доходила до 1.10 и проба падала на верной правке.
-  const pair = (v) => String(v).split('.').map(Number);
-  const atLeast = (a, b) => {
-    const x = pair(a), y = pair(b);
-    return x[0] > y[0] || (x[0] === y[0] && x[1] >= y[1]);
-  };
-  // Нижняя граница — опубликованное, а не «текущее»: поднимать её при каждой новой
-  // редакции не нужно, иначе проба снова станет шагом ручной правки.
-  const QUEUE_FLOOR = [1, 0];
-  assert.ok(atLeast(declared[1], QUEUE_FLOOR.join('.')),
-    `редакция ${declared[1]} не ниже опубликованной ${QUEUE_FLOOR.join('.')}`);
-  // Сама попарная сверка — часть проверки, а не удобство: 1.10 обязано быть выше 1.0.
-  assert.ok(atLeast('1.10', '1.0'), '1.10 выше 1.0 (не как дробь)');
-  assert.ok(atLeast('1.1', '1.0'), '1.1 выше 1.0');
-  assert.ok(atLeast('1.0', '1.0'), 'равная редакция не откат');
-  assert.ok(!atLeast('0.9', '1.0'), '0.9 ниже 1.0 — откат виден');
-  assert.ok(!atLeast('2.0', '10.0'), 'первая часть сравнивается отдельно');
+  const docsDir = ['docs', ''].join('/');
+  const projectPaths = [
+    docsDir + ['REGULATION', '.md'].join(''),
+    docsDir + ['regulation-', 'digest.md'].join(''),
+    docsDir + ['PHASES', '.md'].join(''),
+    docsDir + ['DECISIONS-', 'UPSTREAM.md'].join(''),
+    docsDir + ['agents/cost-', 'gates.md'].join(''),
+    docsDir + ['agents/trouble', 'shooting.md'].join(''),
+    docsDir + ['agents/roles/', ['localization-', 'cultural-qa-engineer.md'].join('')].join(''),
+    docsDir + ['missions/', 'TEMPLATE.md'].join(''),
+    docsDir + ['missions/', ['WOT', 'R-1.1.md'].join('')].join(''),
+    docsDir + ['missions/', ['WOT', 'R-1.2.md'].join('')].join(''),
+    ['tools/script-cat/', ['wotr-', 'project.json'].join('')].join(''),
+  ];
+  for (const rel of projectPaths) {
+    assert.equal(existsSync(new URL(`../../../${rel}`, import.meta.url)), false,
+      `проектный путь удалён из дерева: ${rel}`);
+  }
+  // Собранный бандл не содержит проектных строк (литералы — только сборкой).
+  const bundle = readFileSync(new URL('../relay.user.js', import.meta.url), 'utf8');
+  const projectTokens = [
+    ['WO', 'RT'].join(''),
+    ['open-', 'bfme'].join(''),
+    ['wotr-', 'project'].join(''),
+    ['regulation-', 'digest'].join(''),
+    ['docs/', 'PHASES'].join(''),
+    ['Creative36711/open-', 'bfme'].join(''),
+  ];
+  for (const token of projectTokens) {
+    assert.equal(bundle.includes(token), false, `бандл без проектной строки: <token>`);
+  }
 }
 
 // ── 6. Версия и решения ─────────────────────────────────────────────────────

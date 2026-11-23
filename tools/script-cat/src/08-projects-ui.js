@@ -309,7 +309,7 @@
             <label>URL базы «Обратная связь» в Notion<input id="cfn-project-questionsUrl" style="${field}" placeholder="https://…"></label>
             <label>GitHub репозиторий<input id="cfn-project-repo" style="${field}" placeholder="owner/repository"></label>
             <label>Базовая ветка<input id="cfn-project-branch" style="${field}" value="main"></label>
-            <label>Папка проекта внутри Arena (латиница)<input id="cfn-project-driveFolder" style="${field}" placeholder="wotr-remaster"></label>
+            <label>Папка проекта внутри Arena (латиница)<input id="cfn-project-driveFolder" style="${field}" placeholder="project-folder"></label>
           </div>
           <div id="cfn-project-repos" style="border:1px solid #343b48;border-radius:8px;padding:10px;margin-top:14px;display:none">
             <h4 style="margin:0 0 6px">Репозитории профиля</h4>
@@ -319,7 +319,7 @@
           </div>
           <div id="cfn-project-routes" style="border:1px solid #343b48;border-radius:8px;padding:10px;margin-top:10px;display:none">
             <h4 style="margin:0 0 6px">Маршрутизация ролей к репозиториям</h4>
-            <div style="color:#aab4c3;font-size:12px">Каждой роли ставится в соответствие репозиторий, в котором она работает (ID роли — UUID страницы в базе «Роли», а не её имя). Все WOTR-роли → Creative36711/open-bfme; отдельный маршрут нужен только для явно принятого внешнего target или полной ссылки на PR. Роли без маршрута работают в главном репозитории.</div>
+            <div style="color:#aab4c3;font-size:12px">Каждой роли ставится в соответствие репозиторий, в котором она работает (ID роли — UUID страницы в базе «Роли», а не её имя). Все роли проекта → репозиторий его профиля; отдельный маршрут нужен только для явно принятого внешнего target или полной ссылки на PR. Роли без маршрута работают в репозитории профиля.</div>
             <div id="cfn-project-routes-list"></div>
             <button id="cfn-project-route-add" type="button" style="${action};margin-top:7px">Добавить маршрут роли</button>
             <button id="cfn-project-roles-autofill" type="button" style="${action};margin-top:7px;margin-left:7px">Автозаполнить маршруты ролей</button>

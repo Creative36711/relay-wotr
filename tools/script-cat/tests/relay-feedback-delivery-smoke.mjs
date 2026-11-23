@@ -1,6 +1,6 @@
-// Проба 1.16.8 (WOTR-D-023): очередь обратной связи не имеет права стоять молча.
+// Проба 1.16.8 (внешний D-023): очередь обратной связи не имеет права стоять молча.
 //
-// Инцидент 22.11, WOTR-1.1 (ручной режим, «Шаг»): строка «остановка без
+// Инцидент 22.11, внешняя карточка (ручной режим, «Шаг»): строка «остановка без
 // автоматического пути» (`41f6f0cf-5705-8139-b90b-c69c24308819`) висела «Ждёт» с
 // пустым «Ответом», `answerQueue` был пуст, журнал не говорил ничего. Три независимые
 // причины, и каждая из них по отдельности глушила передачу:
@@ -51,7 +51,7 @@ const waitRow = (id, text) => ({
     'Ответ': { rich_text: [] },
     'По умолчанию': { rich_text: rt('работать по-прежнему') },
     'Варианты': { rich_text: [] },
-    'Миссия': { rich_text: rt('WOTR-1.1') },
+    'Миссия': { rich_text: rt('PRJ-7') },
     'Доставлено': { date: null },
     'Срок': { date: null },
     'Что блокирует': { rich_text: [] },
@@ -117,7 +117,7 @@ const makeHarness = ({ activeMission, maxTries = 3, holdMs = 1800000 }) => {
 // ── 1. Передача не зависит от чтения активной миссии ─────────────────────────
 // Страховка в обе стороны: миссия нужна фильтром, а не условием самой передачи.
 {
-  const h = makeHarness({ activeMission: async () => copy({ id: 'm', properties: { 'Миссия': { title: [{ plain_text: 'WOTR-1.1' }] } } }) });
+  const h = makeHarness({ activeMission: async () => copy({ id: 'm', properties: { 'Миссия': { title: [{ plain_text: 'PRJ-7' }] } } }) });
   h.db.push(waitRow('row-ok', 'Проверить доставку'));
   await h.api.refreshQuestions({ force: true, quiet: true });
   assert.equal(h.api.answerQueue().filter((i) => i.id === 'row-ok').length, 1,
@@ -319,8 +319,8 @@ const makeHarness = ({ activeMission, maxTries = 3, holdMs = 1800000 }) => {
 }
 
 // ── 5. Оформление выпуска и настройки ───────────────────────────────────────
-assert.match(src, /^\/\/ @version\s+1\.16\.9\s*$/m, 'WOTR-сборка 1.16.9 объявлена');
-assert.match(src, /\|\| "1\.16\.9";/, 'SCRIPT_VERSION совпадает с @version');
+assert.match(src, /^\/\/ @version\s+1\.17\.0\s*$/m, 'сборка 1.17.0 объявлена');
+assert.match(src, /\|\| "1\.17\.0";/, 'SCRIPT_VERSION совпадает с @version');
 {
   const from = at('  const C = {');
   const cfg = src.slice(from, src.indexOf('\n  };', from));
@@ -380,5 +380,5 @@ assert.match(src, /\|\| "1\.16\.9";/, 'SCRIPT_VERSION совпадает с @ver
   assert.match(body, /forgetQuestionBody\(row\.id\);\s*\n\s*log\(/, 'отпускание объявлено в журнале');
 }
 
-console.log('OK: WOTR-D-023 — удержание тела ограничено сроком и числом попыток, одна битая строка');
+console.log('OK: внешний D-023 — удержание тела ограничено сроком и числом попыток, одна битая строка');
 console.log('    не обрывает проход, передача не зависит от активной миссии, а простой объясняется причиной.');

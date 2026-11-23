@@ -102,7 +102,7 @@
       forbidden: ["queue.coordinator", "review.protocol"],
       budget: { overhead: 1500 },
     });
-    def("pilot.wotr", {
+    def("pilot.project", {
       audience: ["pilot"], marker: null,
       blocks: ["pilot.repo", "pilot.brief", "pilot.stop"],
       requiredFacts: ["pilot.brief", "pilot.startSha"],
@@ -226,7 +226,7 @@
         if (kind === "arbiter") return "continuation.arbiter";
         return "continuation.dispatch";
       }
-      if (kind === "pilot") return "pilot.wotr";
+      if (kind === "pilot") return "pilot.project";
       if (kind === "reminder") return "reminder.marker";
       if (kind === "plan") return tier === "recovery" || tier === "compact" ? "coordinator.recovery" : "coordinator.plan";
       if (kind === "review") return "reviewer.mission";

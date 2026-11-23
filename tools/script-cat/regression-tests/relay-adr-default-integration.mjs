@@ -70,7 +70,7 @@ const unanswered = question('missing', 'Предложение docs/decisions/CA
     'flushQuestionQueue', 'dbg', 'openQuestions', 'C', 'paintQuestions', 'questionRows', 'Q',
     'activeMission', 'rt', 'missionSame', 'expiredQuestions', 'closeExpired', 'GM_getValue',
     'answerHandoffKey', 'handWaitingRow', 'questionFromRow', 'log', 'qText', 'qFallback',
-    // WOTR-D-019: adoption сверяется с живой передачей, а не с пожизненной
+    // внешний D-019: adoption сверяется с живой передачей, а не с пожизненной
     // отметкой, поэтому у песочницы появились те же свободные имена, что у
     // бандла. `handoffNeedsRequeue` здесь отвечает «передачи нет» — ровно то,
     // что должно происходить со строкой, о которой хранилище ничего не знает.

@@ -4,7 +4,7 @@
 2. For a non-admin role without an agent, set Agent State to `запрошен`. ScriptCat provisioning remains manual unless the owner explicitly enables auto mode.
 3. An active admin role approves only listed `create`/`replace` jobs. It cannot grant admin, delete a row or activate a role.
 4. Arena creates the agent. A human verifies the resulting URL, role identity and bootstrap result, then writes Agent URL and activates the row.
-5. The new agent reads `AGENTS.md`, `docs/REGULATION.md`, its role document and the active mission before any card.
+5. The new agent reads `AGENTS.md`, the project regulation, its role document and the active mission before any card.
 6. First working card is narrow and has a machine-verifiable oracle. The agent records branch, BASE_SHA and existing dirty state before edits.
 7. Coordinator dispatches only after roster, repo route, zone and dependency checks pass.
 

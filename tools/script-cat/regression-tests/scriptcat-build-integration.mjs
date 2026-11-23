@@ -11,14 +11,21 @@ const temp = mkdtempSync(join(tmpdir(), 'relay-build-probe-'));
 const run = (args) => spawnSync(process.execPath, args, { cwd: temp, encoding: 'utf8' });
 try {
   for (const path of ['src', 'build.mjs', 'version-oracle.mjs', 'regulation-oracle.mjs', 'coverage-oracle.mjs', 'fingerprint-oracle.mjs', 'contracts', 'relay.user.js']) cpSync(join(source, path), join(temp, path), {recursive:true});
-  // Краткий регламент вшивается в бандл, поэтому источник и его версия нужны и здесь.
-  for (const path of ['regulation-digest.md', 'REGULATION.md']) cpSync(join(source, '..', '..', 'docs', path), join(temp, 'docs', path), {recursive:true});
   let result = run(['build.mjs', '--check']); assert.equal(result.status, 0, result.stderr);
   appendFileSync(join(temp, 'src', '03-utils.js'), '\n// local build probe\n');
   result = run(['build.mjs', '--check']); assert.notEqual(result.status, 0, 'изменённый исходник нельзя выдать за собранный');
   result = run(['build.mjs']); assert.equal(result.status, 0, result.stderr);
   result = run(['build.mjs', '--check']); assert.equal(result.status, 0, result.stderr);
   result = run(['--check', 'relay.user.js']); assert.equal(result.status, 0, result.stderr);
+  // D-003: неизвестный/неполный аргумент — usage и rc ≠ 0 (нейтральный режим без docs).
+  const bad = run(['build.mjs', '--profile', 'x']);
+  assert.notEqual(bad.status, 0, 'неизвестный аргумент отклонён');
+  assert.match(String(bad.stderr), /Usage: node build\.mjs \[--check\] \[--digest <путь>\]/);
+  const incomplete = run(['build.mjs', '--digest']);
+  assert.notEqual(incomplete.status, 0, '--digest без значения отклонён');
+  // Manifest нейтральной сборки: digest null — сверка неприменима и показана явно.
+  const manifest = JSON.parse(readFileSync(join(temp, 'contracts', 'build-manifest.json'), 'utf8'));
+  assert.equal(manifest.digest, null, 'нейтральная сборка: manifest digest null');
   const bundle = readFileSync(join(temp, 'relay.user.js'), 'utf8');
   assert.equal((bundle.match(/^\/\/ @version\s/gm) || []).length, 1);
   assert.match(bundle, /^\/\/ @name\s+Relay — передача хода между агентами$/m);

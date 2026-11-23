@@ -30,7 +30,7 @@ const adrUrl = `https://github.com/${repo}/blob/main/${adrPath}`;
 const config = {
   repo, questions: ds, questionHours: 24, questionLineMax: 3, questionTextMax: 180,
   questionTextFull: 12000, questionDefaultMax: 200, questionCheckMs: 600000, adrCheckMs: 600000,
-  // WOTR-D-023: удержание незаписанного тела ограничено сроком и попытками.
+  // внешний D-023: удержание незаписанного тела ограничено сроком и попытками.
   questionBodyHoldMs: 1800000, questionBodyMaxTries: 3,
 };
 const K = { qQueue: 'q-queue', answers: 'answers', expect: 'expect', ghToken: 'token' };
@@ -711,7 +711,7 @@ await api.refreshQuestions({ force:true, quiet:true });
 assert(!api.answerQueue().some((item) => item.id === unsupported.id));
 assert.equal(sel(unsupported.properties['Статус']), 'Ждёт');
 
-// WOTR-D-023: если тело так и не записалось, строка не может висеть вечно.
+// внешний D-023: если тело так и не записалось, строка не может висеть вечно.
 // Сюита идёт последней: у мока Notion одноразовые флаги (`lostBodyResponse`) и
 // сквозная дедупликация вопросов по префиксу, поэтому вставка между чужими
 // сценариями ломала их, а не проверяла это.

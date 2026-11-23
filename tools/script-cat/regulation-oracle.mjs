@@ -1,74 +1,85 @@
-// Оракул краткой версии регламента.
-//
-// Зачем: с 1.8.0 транспорт вшивает краткий регламент прямо в промпт, чтобы агент
-// получал правила вместе с заданием, а не отдельным чтением страницы Notion.
-// Вшитый текст — копия `docs/regulation-digest.md`, и копия обязана совпадать с
-// источником: устаревшая копия в бандле опаснее её отсутствия, потому что агент
-// читает правила и не знает, что они старые.
-//
-// Три источника сверяются между собой:
-//   1. `docs/regulation-digest.md` — источник текста;
-//   2. `docs/REGULATION.md` — источник версии (шапка «Версия 1.2»);
-//   3. `relay.user.js` — то, что реально достанется агенту.
+// Краткий регламент проекта — ВХОД СБОРКИ (D-003), а не содержимое репозитория:
+// сборка получает путь к файлу параметром `--digest`, без параметра бандл
+// нейтральный (пустой блок регламента). В git не попадает ни байта проектного
+// регламента; версия регламента сверяется на входе — по собственной шапке
+// переданного файла и по contracts/build-manifest.json этой же сборки.
+import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 
-import { strict as assert } from 'node:assert';
-
-/** Плейсхолдер в `src/01-config.js`; сборка заменяет его текстом регламента. */
+// Ровно одна строка: поле regulationDigest в блоке конфига (внезависимости — в
+// 01-config.js). Сборка заменяет её строковым литералом.
 export const DIGEST_PLACEHOLDER = '"@@REGULATION_DIGEST@@"';
-
-/** Предел объёма: краткая версия — вход хода, а не справочник. */
+// Лимит прежний: пустая строка — тоже валидное заполнение.
 export const DIGEST_MAX_CHARS = 9000;
-
-const VERSION_LINE = /Версия\s+(\d+\.\d+)/;
-
-/** Маркер, после которого начинаются служебные заметки: в промпт они не идут. */
 export const DIGEST_META_MARKER = '<!-- build:meta -->';
 
-/** Текст для промпта: всё до маркера служебных заметок. */
-export function promptDigest(markdown) {
-  const source = String(markdown || '').replace(/\r\n/g, '\n');
-  const at = source.indexOf(DIGEST_META_MARKER);
-  return (at === -1 ? source : source.slice(0, at)).trim();
+/**
+ * Промпт-регламент: markdown без build:meta и служебных комментариев
+ * (HTML-комментарии не сжимаются).
+ */
+export function promptDigest(text) {
+  const stripped = String(text || '')
+    .split(/\r?\n/)
+    .filter((line) => !line.includes(DIGEST_META_MARKER) && !line.trim().startsWith('<!--'))
+    .join('\n');
+  return stripped.replace(/\n{3,}/g, '\n\n').trim();
 }
 
-export function normalizeDigest(markdown) {
-  const text = promptDigest(markdown);
-  assert.ok(text.length > 0, 'краткая версия регламента не может быть пустой');
-  assert.ok(
-    text.length <= DIGEST_MAX_CHARS,
-    `краткая версия регламента ${text.length} знаков при пределе ${DIGEST_MAX_CHARS}: вход хода обязан оставаться коротким`,
-  );
-  return text;
+/** Нормализованный регламент: обрезанные пробелы, пустые строки схлопнуты. */
+export function normalizeDigest(text) {
+  const cleaned = promptDigest(text);
+  assert.ok(cleaned.length <= DIGEST_MAX_CHARS,
+    `regulation digest is ${cleaned.length} chars; the limit is ${DIGEST_MAX_CHARS}`);
+  return cleaned;
 }
 
-export function digestVersion(markdown) {
-  const match = String(markdown || '').match(VERSION_LINE);
-  assert.ok(match, 'в тексте регламента нет строки «Версия N.N»');
-  return match[1];
+/**
+ * Версия регламента — из СОБСТВЕННОЙ ШАПКИ файла («Версия N.N»): раньше
+ * версия сверялась по соседнему файлу регламента, которого в транспорте
+ * больше нет. Без строки версии возвращается null — вызывающий обязан
+ * показать это как «проверка неприменима», а не как pass.
+ */
+export function digestVersion(text) {
+  const head = String(text || '').slice(0, 500);
+  const hit = head.match(/Версия\s+([\d.]+)/);
+  return hit ? hit[1] : null;
 }
 
-/** Версия краткой копии должна совпадать с версией полного регламента. */
-export function assertDigestVersionMatches(digest, regulation) {
+/**
+ * D-003: сверка входа с build-manifest, записанным той же сборкой.
+ *
+ * Возвращает версию digest'а при сверке, и `null` — когда manifest несёт
+ * `digest: null` (нейтральный бандл): проверка в этом случае НЕПРИМЕНИМА.
+ * Молча вернуть pass нельзя — вызывающий показывает null явно.
+ */
+export function assertDigestAgainstManifest(digest, manifest) {
+  if (!manifest || !manifest.digest) return null;
+  assert.ok(digest, 'build-manifest несёт digest, но проверке не передан digest');
   const short = digestVersion(digest);
-  const full = digestVersion(regulation);
-  assert.equal(
-    short,
-    full,
-    `краткая версия регламента (${short}) отстала от полной (${full}): обновите docs/regulation-digest.md`,
-  );
+  assert.ok(short, 'во входном digest нет шапки «Версия N.N» — версия не сверяема');
+  assert.equal(short, manifest.digest.version,
+    `digest на входе (Версия ${short}) не совпадает с build-manifest (${manifest.digest.version})`);
+  const sha = createHash('sha256').update(String(digest)).digest('hex');
+  assert.equal(sha, manifest.digest.sha256,
+    'sha256 входного digest не совпадает с build-manifest: файл менялся после сборки');
   return short;
 }
 
-/** Подставить текст регламента в исходник транспорта вместо плейсхолдера. */
+/**
+ * Подставляет регламент в placeholder ровно один раз. Пустой вход — валидное
+ * заполнение (нейтральный бандл): поле regulationDigest остаётся в блоке
+ * конфига, но несёт пустую строку.
+ */
 export function inlineDigest(source, markdown) {
   const count = source.split(DIGEST_PLACEHOLDER).length - 1;
-  assert.equal(count, 1, 'в исходниках транспорта должен быть ровно один плейсхолдер краткого регламента');
-  return source.replace(DIGEST_PLACEHOLDER, JSON.stringify(normalizeDigest(markdown)));
+  assert.equal(count, 1, `build expects exactly one ${DIGEST_PLACEHOLDER} (found ${count})`);
+  const filled = String(markdown || '').trim() === '' ? '' : normalizeDigest(markdown);
+  return source.replace(DIGEST_PLACEHOLDER, JSON.stringify(filled));
 }
 
-/** Прочитать вшитый текст обратно из бандла (для проверок и проб). */
-export function readEmbeddedDigest(source) {
-  const match = String(source || '').match(/regulationDigest:\s*("(?:[^"\\]|\\.)*")/);
-  assert.ok(match, 'в бандле нет поля regulationDigest: сборка не вшила краткий регламент');
-  return JSON.parse(match[1]);
+/** Поле regulationDigest в собранном userscript: строка, даже если это "". */
+export function readEmbeddedDigest(built) {
+  const m = String(built || '').match(/regulationDigest:\s*("(?:[^"\\]|\\.)*")/);
+  assert.ok(m, 'в бандле нет поля regulationDigest');
+  return JSON.parse(m[1]);
 }

@@ -8,7 +8,7 @@ Use repository scripts before ad-hoc commands.
 - Transport tests: `npm run verify:scriptcat` in `Creative36711/relay-wotr`.
 - PR preflight: `node tools/script-cat/preflight.mjs --zone "<paths>"` in the repository that owns the paths.
 - Upstream pin: `OPENBFME_UPSTREAM`; sync is an Upstream Integrator (Executor) card.
-- Cost selection: `docs/agents/cost-gates.md`; declare `build` and `retail` tiers before expensive work.
+- Cost selection: the project cost-gate matrix; declare `build` and `retail` tiers before expensive work.
 - Retail BIG transfer: `tools/retail_big_transfer.py`; byte-exact, canary-first and only with `retail: hydrate`.
 - GitHub facts: `git` locally and `gh` for PR/check state.
 - UI/art contract: `docs/tooling/ART-PIPELINE.md`; generated art belongs to a Technical Artist Scope, while Godot layout/integration belongs to Godot World Engineer.

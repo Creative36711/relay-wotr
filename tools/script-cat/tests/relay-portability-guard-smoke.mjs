@@ -6,7 +6,7 @@ import {findPortableNameLeaks, findProvenanceBoundaryErrors} from '../portabilit
 
 const root = mkdtempSync(join(tmpdir(), 'relay-portability-'));
 try {
-  writeFileSync(join(root, 'ok.md'), 'WOTR-only portable guide with CASEA-1 fixture');
+  writeFileSync(join(root, 'ok.md'), 'Portable guide with CASEA-1 fixture');
   assert.deepEqual(findPortableNameLeaks(root), []);
 
   const formerProduct = ['nar', 'thex'].join('');
@@ -29,6 +29,29 @@ try {
   assert(hits.some((hit) => hit === 'bad.md:5: former role label'));
   assert(hits.some((hit) => hit === 'bad.md:6: former schema label'));
 
+  // D-003: нейтральные паттерны проекта — имя, репозиторий, префикс карточки,
+  // проектный путь; литералы собираются, чтобы сам файл пробыл нейтральным.
+  const projectName = ['WOT', 'R'].join('');
+  const projectRepo = ['open-', 'bfme'].join('');
+  const projectCard = `${projectName}-1.1`;
+  const projectPath = ['docs/', 'REGULATION.md'].join('');
+  writeFileSync(join(root, 'project-leak.md'),
+    [`${projectName} target`, projectRepo, projectCard, projectPath].join('\n'));
+  const phits = findPortableNameLeaks(root);
+  assert(phits.some((h) => h === 'project-leak.md:1: project name'), 'имя проекта поймано');
+  assert(phits.some((h) => h === 'project-leak.md:2: project repository'), 'репозиторий проекта пойман');
+  assert(phits.some((h) => h === 'project-leak.md:3: project name'), 'префикс карточки пойман');
+  assert(phits.some((h) => h === 'project-leak.md:3: project card prefix'), 'префикс карточки пойман явно');
+  assert(phits.some((h) => h === 'project-leak.md:4: project process path'), 'проектный путь пойман');
+  rmSync(join(root, 'project-leak.md'));
+  // Единственное исключение: UPSTREAM.md несёт provenance и проектный токен
+  // там не считается утечкой (прежние паттерны при этом действуют).
+  writeFileSync(join(root, 'UPSTREAM.md'),
+    ['| Source repository (provenance only) | `PLACEHOLDER` |'.replace('PLACEHOLDER', ['Creative-', 'textile/', 'va', 'ult'].join('')), `Operational target: ${projectRepo}`].join('\n'));
+  assert.deepEqual(findPortableNameLeaks(root).filter((h) => h.startsWith('UPSTREAM.md')), [],
+    'проектный токен в UPSTREAM.md — разрешённое исключение');
+  rmSync(join(root, 'UPSTREAM.md'));
+
   const provenance = ['Creative-', 'textile/', 'va', 'ult'].join('');
   const pinned = [
     `| Source repository (provenance only) | \`${provenance}\` |`,
@@ -41,4 +64,4 @@ try {
   assert(findPortableNameLeaks(root).some((hit) => hit.startsWith('UPSTREAM.md:3:')), 'extra provenance token is a text leak');
   assert.equal(findProvenanceBoundaryErrors(root).length, 1, 'provenance lines are pinned, not merely counted');
 } finally { rmSync(root, {recursive:true, force:true}); }
-console.log('OK: full-tree portability guard rejects former names/card prefixes and confines exact provenance');
+console.log('OK: full-tree portability guard rejects former and project identifiers (UPSTREAM.md excepted) and confines exact provenance');

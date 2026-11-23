@@ -1,6 +1,6 @@
 # Pull request rules
 
-These rules apply to every role that writes `Creative36711/open-bfme`.
+These rules apply to every role that writes the project repository named in its profile.
 
 ## Р1 · One card, one PR
 
@@ -58,29 +58,26 @@ A pass must cover: non-shallow usable history, no conflict markers, only own zon
 
 Since 1.16.6 the pass also covers the public tree audit (`tools/release/pr_audit.py --tree HEAD^{tree} --base origin/main`), because that CI step reads the whole tree the pull request would make, not its diff: a finding already in `main` is reported on every later pull request and looks like the newcomer's defect. A finding attributed to the base is not this pull request's blocker and never justifies editing another role's file (Р5); it is named to its owner with the commit that introduced it. A finding of your own tree is fixed in your own PR, before push.
 
-## Р11 · Transport docs mirror
+## Р11 · No transport docs mirror (D-003)
 
-The mirror is a **closed set of process documents**, not a directory glob. Mirrored into
-`Creative36711/relay-wotr` byte-for-byte: `docs/REGULATION.md`, `docs/regulation-digest.md`, `docs/PHASES.md`,
-`docs/agents/**`, `docs/missions/**`, and — one-way and verbatim — this repository's `docs/DECISIONS.md` as their
-`docs/DECISIONS-UPSTREAM.md`. Everything else under `docs/` is product documentation and is never mirrored: pages at
-the `docs/` root, `docs/re/**`, `docs/evidence/**`, `docs/coverage-*/**`, `docs/architecture/**`, `docs/tooling/**`,
-`docs/setup/**`, `docs/handoff/**`, `docs/performance/**`. A `docs/**` glob was tried once and in a single pull
-request it carried 160 changed files and 31 588 added lines of product documentation — `docs/setup/notion-ids.md`
-with the Notion data-source list and the retail reverse-engineering notes included — into a public transport
-repository. A set defined by name cannot repeat that; a glob can, silently.
+The transport repository carries **no project process documents at all**: since D-003 the former
+mirror set (regulation, digest, phase plan, foreign decisions journal, missions, agent guides)
+and the project profile file are deleted from its tree, and `build.mjs` takes the regulation as
+an input (`--digest <path>`) instead of reading a copy. Project docs are edited in this
+repository only; nothing under `docs/**` is copied into the transport.
 
-Membership of the set changes only through a decision recorded in `docs/DECISIONS.md`: a process file the transport's
-tests read is added there (that is how `docs/missions/TEMPLATE.md`, once lost by a file list, entered the mirror), and
-an accidental member leaves the transport by deleting the file in a transport PR — never by hand-editing a mirrored
-file. Mirrored files are not hand-edited over there: the edit is invisible here, the next sync erases it, and an audit
-that says «the files are equal except two that are always different» proves nothing. A transport-local rule goes into a
-transport-only file such as `docs/scriptcat-update.md`. A regulation edit moves `docs/REGULATION.md` and
-`docs/regulation-digest.md` in one transport commit, because `build.mjs` refuses when the two declare different
-versions, and the rebuilt bundle hash is recorded in `docs/scriptcat-update.md`. Adding `.github/**` to the transport
-follows Р10 as well: a CI checkout that cannot see `origin/main` cannot satisfy the «non-shallow usable history»
-precondition of its own preflight, so the step fetches full history (`fetch-depth: 0`) instead of turning a green tree
-red.
+The historical rule behind the deletion still binds: a `docs/**` glob was tried once and in a
+single pull request it carried 160 changed files and 31 588 added lines of product documentation —
+`docs/setup/notion-ids.md` with the Notion data-source list and the retail reverse-engineering
+notes included — into a public transport repository. A set defined by name could not repeat that;
+a glob could, silently. Now even the named set is gone: the transport has no docs mirror to
+maintain, sync or accidentally widen.
+
+A transport-local rule goes into a transport-only file such as `docs/scriptcat-update.md` or
+`docs/DECISIONS.md`, and the rebuilt bundle hash is recorded in `docs/scriptcat-update.md`.
+Adding `.github/**` to the transport follows Р10 as well: a CI checkout that cannot see
+`origin/main` cannot satisfy the «non-shallow usable history» precondition of its own preflight,
+so the step fetches full history (`fetch-depth: 0`) instead of turning a green tree red.
 
 ## Commit shape
 

@@ -11,7 +11,7 @@ Function: `Coordinator`. Writes queue/planning fields in Notion; product code, b
 1. Read current mission/version, Submitted/Running/Ready/Rework/Draft and dependencies.
 2. Accept or return every Submitted card with a specific oracle fact.
 3. Reuse a Rework card; create a new card only for a new Scope/oracle.
-4. Before dispatch, declare `build: none|focused|full`, `retail: none|reuse|hydrate`, reason and minimum commands from `docs/agents/cost-gates.md`.
+4. Before dispatch, declare `build: none|focused|full`, `retail: none|reuse|hydrate`, reason and minimum commands from the project cost-gate matrix.
 5. For UI/visual work apply `docs/tooling/ART-PIPELINE.md`: Godot structure/integration and Technical Artist source generation are separate Scopes; name every asset, consuming scene, style brief, provenance and generation budget (0–10), never issue an abstract «сделать красиво» card.
 6. Dispatch one eligible lowest-sequence card to its exact active role.
 7. Never dispatch an Executor/Auditor card to Reviewer/Warden.

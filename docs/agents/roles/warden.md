@@ -16,7 +16,7 @@ Registered agent: https://arena.ai/agent/01a1f841-ee82-74a2-aa0b-5b98b012a89d
 
 ## Authority
 
-- Publish `docs/missions/**`, phase/decision/regulation changes and process/CI changes inside the Warden zone.
+- Publish mission documents, phase/decision/regulation changes and process/CI changes inside the Warden zone.
 - Correct any role's «Зона записи» that fails to cover a path that role is required to change: an uncovered mandatory
   path is a registry defect, fixed by a Warden card that edits the row — never by narrowing the role's rights and never
   by exempting the path in a gate.

@@ -1,6 +1,6 @@
-# Drive layout · WOTR Remaster
+# Drive layout · проект
 
-Project root: `Arena/wotr-remaster/`.
+Project root: `Arena/<проект>/`.
 
 ```text
 logs/       append-only machine journal per dispatch/run
@@ -24,8 +24,8 @@ Recommended names:
 
 ```text
 <dispatch_id>_<run_id>__<slug>.<ext>
-manual__wotr-remaster__<slug>.<ext>
-<WOTR-ID>__<CARD-ID>__<kind>__<date-or-SHA>.<ext>
+manual__<проект>__<slug>.<ext>
+<PROJECT-ID>__<CARD-ID>__<kind>__<date-or-SHA>.<ext>
 ```
 
 Allowed MIME types:

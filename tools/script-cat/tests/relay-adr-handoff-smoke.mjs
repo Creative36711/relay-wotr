@@ -98,7 +98,7 @@ assert.match(askSrc, /приёмка уже ответила/, 'в журнал�
 const flushSrc = cut('  async function flushQuestionQueue() {', '  /**\n   * Ссылки на решения в тексте вопроса');
 assert.match(flushSrc, /complete = await questionFromRowComplete\(same\.row\);[\s\S]*?const handled = handWaitingRow\(same\.row, complete \|\| questionFromRow\(same\.row\), item\.ctx \|\| \{\}\);/, 'очередь тоже передаёт висящую строку');
 assert.match(src, /const adopted = mine\.filter\(/, 'загрузка страницы подбирает строки, созданные прошлыми версиями');
-// WOTR-D-019: раньше это было «повторно вопрос не гоняется» — пожизненная
+// внешний D-019: раньше это было «повторно вопрос не гоняется» — пожизненная
 // отметка. Она и висяла строку: отметка ставилась до подтверждения доставки.
 // Теперь повтор разрешён, но только когда передачи нет ни в очереди, ни в
 // живом ходе: дуть два хода в одну строку по-прежнему нельзя.

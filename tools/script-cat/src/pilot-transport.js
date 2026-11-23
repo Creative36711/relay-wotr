@@ -1,4 +1,4 @@
-  // ───────────────────────── эфемерные пилоты WOTR-PILOT ─────────────────────────
+  // ───────────────────────── эфемерные пилоты проекта ─────────────────────────
   // Пилот — разовый прогон публичного брифа на отдельном Arena-агенте, URL
   // которого предоставляет Мастер вручную. Создание/клонирование агентов НЕ
   // реализовано (отдельное ТЗ). Состояние пилота живёт в собственном namespace
@@ -37,7 +37,7 @@
     let host = ""; let path = "";
     try { const u = new URL(clean); host = u.host; path = u.pathname; } catch { return { ok: false, error: "pilot URL не разбирается" }; }
     if (!/arena|e2b|app/i.test(host)) return { ok: false, error: "pilot URL не похож на страницу Arena-агента" };
-    if (!/^[0-9a-f]{40}$/i.test(String(startSha || ""))) return { ok: false, error: "startSha должен быть 40-hex SHA коммита WOTR target" };
+    if (!/^[0-9a-f]{40}$/i.test(String(startSha || ""))) return { ok: false, error: "startSha должен быть 40-hex SHA коммита target" };
     if (!pilotBriefClean(brief)) return { ok: false, error: "бриф содержит внутренние токены (CF_/Notion/aux-workspace/REGULATION/WARDEN/DECISIONS) или пуст" };
     const variant = pilotVariant(brief);
     if (!["A", "B", "C"].includes(variant)) return { ok: false, error: "бриф должен быть помечен вариантом A, B или C" };
@@ -67,7 +67,7 @@
     if (!pilot) return { ok: false, error: "пилот не зарегистрирован" };
     const envelope = PromptCompiler.compile({
       kind: "pilot", role: { fn: "pilot", name: `pilot-${pilot.variant}` },
-      pilot: { brief: pilot.brief, repo: "Creative36711/open-bfme", startSha: pilot.startSha },
+      pilot: { brief: pilot.brief, repo: (typeof C !== "undefined" && C.repo) || "", startSha: pilot.startSha },
       delivery: { tier: "full" },
     });
     if (!envelope.ok) return { ok: false, error: envelope.error.message };
@@ -76,7 +76,7 @@
       at: Date.now(), sentAt: 0, watermark: "", seen: [], status: "queued",
     });
     savePilots(listPilots().map((p) => (p.id === id ? { ...p, status: "queued" } : p)));
-    log(`Пилот ${pilot.variant} (${id.slice(0, 8)}) поставлен в очередь; перехожу на ${pilot.url}.`, true, { ntfy: "quiet", title: "Relay: пилот WOTR" });
+    log(`Пилот ${pilot.variant} (${id.slice(0, 8)}) поставлен в очередь; перехожу на ${pilot.url}.`, true, { ntfy: "quiet", title: "Relay: пилот проекта" });
     // D-045: очередь пилота и его статус доводим до хранилища до ухода со
     // страницы. Синхронный контракт сохраняем: вызывающий получает id сразу,
     // а переход выполняется по подтверждении записи.

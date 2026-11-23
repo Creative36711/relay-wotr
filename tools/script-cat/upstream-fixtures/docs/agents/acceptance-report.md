@@ -35,13 +35,13 @@ Send не было 20 с. `writePrompt` считал успехом наличи
 ## D-108 (1.16.0): план фаз — источник опубликованной редакции
 
 **Что было.** Гейт D-086 сверял объявленную редакцию с шапкой очереди миссии CASEC-1 и
-`docs/missions/CASEC-1-card-queue.md`. Миссия была написана до того, как определены
+`docs/tasks/CASEC-1-card-queue.md`. Миссия была написана до того, как определены
 производительность, качество 3D и мультичейн, поэтому Мастер её остановил: идут подготовка и
 планирование, а не миссии.
 
-**Что стало.** Миссий нет; есть план фаз `docs/PHASES.md` и шаблон ТЗ `docs/missions/TEMPLATE.md`.
-Гейт читает `docs/PHASES.md`; `publishedTzVersion` понимает форму «Версия N.M» наряду с «ТЗ N.M»
-и «редакция N.M». Файлы CASEC-1 — в `docs/missions/archive/`. В Notion ТЗ, строка миссии и пять
+**Что стало.** Миссий нет; есть план фаз `docs/phases.md` и шаблон ТЗ `docs/tasks/TEMPLATE.md`.
+Гейт читает `docs/phases.md`; `publishedTzVersion` понимает форму «Версия N.M» наряду с «ТЗ N.M»
+и «редакция N.M». Файлы CASEC-1 — в `docs/tasks/archive/`. В Notion ТЗ, строка миссии и пять
 карточек переведены в архив; страница проекта и четыре базы остались.
 
 **Проверка (2026-11-12).**
@@ -66,7 +66,7 @@ Send не было 20 с. `writePrompt` считал успехом наличи
 репозиторий; профиль пилота переименован `pilot.fixture-project` → `pilot.fixture-workspace`; проверка
 переносимости расширена прежними именами проектов и исключает только архивные журналы
 (`DECISIONS.md`, `scriptcat-update.md`, `agent-protocol.json`); редакция очереди —
-`docs/missions/CASEC-1-card-queue.md`. Схема Notion и её API (`protocolVersion 1.11`) не
+`docs/tasks/CASEC-1-card-queue.md`. Схема Notion и её API (`protocolVersion 1.11`) не
 менялись; бюджеты промптов не поднимались.
 
 **Проверка (2026-11-12).**
@@ -76,7 +76,7 @@ Send не было 20 с. `writePrompt` считал успехом наличи
 - `npm run test:regression` — **22/22 pass, 0 fail**.
 - `npm run test:tool-limit` — **2/2 pass, 0 fail**.
 - `npm run verify:node` — rc=0: «сборка допущена: 1.15.0, sha256 …».
-- `docs/regulation-digest.md` v1.0 совпадает по версии с `docs/REGULATION.md` v1.0.
+- `docs/regulation-brief.md` v1.0 совпадает по версии с `docs/regulation.md` v1.0.
 
 **Что правилось в пробах, а не в коде.** Проверки, привязанные к двум репозиториям и к
 прежним именам, переведены на данные FixtureWorkspace: маршрутизация по репозиториям сохранена как

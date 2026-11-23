@@ -52,22 +52,39 @@ assert.equal(a.validProfile({ ...A, branch: 'main;echo' }), false);
 assert.equal(a.validProfile({ ...A, pageUrl: 'https://notion.so.attacker.invalid/p/x' }), false);
 assert.equal(a.validProfile({ ...A, questions: A.roles }), false);
 
-// Repository-shipped WOTR profile is a real import artifact, not documentation-only
-// sample data. It must pass the same runtime boundary and contain no credentials.
-const wotrConfigText = readFileSync(new URL('../wotr-project.json', import.meta.url), 'utf8');
-const wotrConfig = JSON.parse(wotrConfigText);
-assert.equal(wotrConfig.format, 'scriptcat-project-config');
-assert.equal(wotrConfig.version, 1);
-assert.equal(a.validProfile(wotrConfig.profile), true, 'WOTR profile passes runtime validation');
-assert.equal(wotrConfig.profile.repo, 'Creative36711/open-bfme');
-assert.equal(wotrConfig.profile.branch, 'main');
-assert.equal(wotrConfig.profile.driveFolder, 'wotr-remaster');
+// Ввозимый профиль проекта живёт вне git транспорта (D-003): здесь —
+// sanitized-фикстура того же формата. Она обязана проходить тот же
+// runtime-boundary и не содержать секретов.
+const projectExport = JSON.stringify({
+  format: 'scriptcat-project-config',
+  version: 1,
+  profile: { ...B, id: id(4), driveFolder: 'fixture-drive' },
+}, null, 2);
+const parsedExport = JSON.parse(projectExport);
+assert.equal(parsedExport.format, 'scriptcat-project-config');
+assert.equal(parsedExport.version, 1);
+assert.equal(a.validProfile(parsedExport.profile), true, 'профиль проекта проходит runtime validation');
 assert.equal(new Set([
-  wotrConfig.profile.roles, wotrConfig.profile.missions,
-  wotrConfig.profile.requests, wotrConfig.profile.questions,
-]).size, 4, 'WOTR data sources are distinct');
-assert.doesNotMatch(wotrConfigText, /(?:token|secret|password|gatewayKey|githubToken|notionToken)\s*"?\s*:/i,
+  parsedExport.profile.roles, parsedExport.profile.missions,
+  parsedExport.profile.requests, parsedExport.profile.questions,
+]).size, 4, 'data sources профиля различимы');
+assert.doesNotMatch(projectExport, /(?:token|secret|password|gatewayKey|githubToken|notionToken)\s*"?\s*:/i,
   'profile export contains metadata only');
+
+// Удаление одного проекта не ломает другой (D-003): список профилей
+// перечитывается новым запуском, оставшийся проект работает, удалённый не
+// подставляется из чужих ключей хранилища.
+raw.set('cfn-project-profiles-v1', [B]);
+const survivor = make(tabB);
+assert.equal(survivor.ACTIVE_PROFILE.id, B.id, 'профиль B переживает удаление A');
+assert.equal(survivor.C.repo, B.repo, 'конфиг B не разрушен чужим состоянием');
+assert.equal(survivor.C.branch, B.branch);
+const removedTabSession = sessions(); // свежая вкладка с id удалённого проекта
+removedTabSession.setItem('cfn-active-project-v1', A.id);
+const removedTab = make(removedTabSession);
+assert.equal(removedTab.ACTIVE_PROFILE.invalid, true, 'удалённый проект не подставляется молча');
+assert.equal(removedTab.C.repo, '');
+raw.set('cfn-project-profiles-v1', [A, B]); // порядок восстановлен для остатка прогона
 
 // Переключение/переходы: только явная кнопка снимает hold; URL роли жёстко на текущем origin.
 const control = cut('  // ───────────────────────────── управление проектами ─────────────────────────────', '  /** Проверка схемы и ролей только чтением');
@@ -104,7 +121,7 @@ const wrapped = new Function('tick','refreshQuestions','refreshDecisions','flush
   (p)=>p, () => held, () => approved, () => ({rows:[]}), () => ({rows:[]}), () => { heldNotes++; });
 await wrapped.refreshQuestions(); await wrapped.refreshDecisions(); assert.equal(qCalls + dCalls, 0, 'hold блокирует и фоновые сторожа');
 held = false; approved = false; await wrapped.refreshQuestions(); await wrapped.refreshDecisions(); assert.equal(qCalls + dCalls, 0, 'снятый допуск блокирует сторожа');
-assert(heldNotes > 0, 'но простой очереди не молчит: блокировка записывается в журнал (WOTR-D-023)');
+assert(heldNotes > 0, 'но простой очереди не молчит: блокировка записывается в журнал (внешний D-023)');
 approved = true; await wrapped.refreshQuestions(); await wrapped.refreshDecisions(); assert.equal(qCalls + dCalls, 2);
 assert.match(bootSource, /GM_getValue\(K\.step, false\) && !projectHeld\(\)/, 'сохранённый автоматический шаг не снимает hold');
 

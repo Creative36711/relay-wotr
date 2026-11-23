@@ -12,7 +12,7 @@ const upstreamDocs = join(root, 'tools/script-cat/upstream-fixtures/docs');
 const contract = JSON.parse(readFileSync(join(root, 'tools/script-cat/contracts/agent-protocol.json'), 'utf8'));
 
 // 1. Контракт: версия и sourceSha.
-assert.equal(contract.protocolVersion, '1.11');
+assert.equal(contract.protocolVersion, '1.12');
 assert.match(contract.sourceSha, /^[0-9a-f]{40}$/, 'sourceSha — 40-hex');
 assert.equal(contract.d043?.budgetsRaised, false, 'D-043 не поднимал бюджеты');
 assert.match(contract.d043?.protocolNote || '', /остаётся 1\.10/, 'D-043 транспорт-внутренний');
@@ -127,7 +127,7 @@ assert.match(updateDoc, /1\.14\.32 \(D-105\)/);
 // 2. Все документы на месте (включая drive.md, закрывающий битую ссылку).
 const docs = ['README.md', 'protocol.md', 'markers.md', 'notion.md', 'drive.md',
   'roles/coordinator.md', 'roles/warden.md', 'roles/executor.md', 'roles/auditor.md',
-  'troubleshooting.md', 'onboarding.md', 'acceptance-report.md', 'pr-rules.md'];
+  'onboarding.md', 'acceptance-report.md', 'pr-rules.md'];
 for (const d of docs) assert.ok(existsSync(join(root, 'docs/agents', d)), `docs/agents/${d}`);
 
 // 3. Примеры маркеров прогоняются боевым разбором.
@@ -359,7 +359,7 @@ for (const [role, file] of Object.entries(roleDoc)) {
     'вопрос Координатора читается при любом next');
   assert.match(adr, /if \(blocked\) asked\.question\.gate = true;/, 'при остановке вопрос держит ход');
   const answers = readFileSync(join(root, 'tools/script-cat/src/27-review-answers.js'), 'utf8');
-  // WOTR-D-019: адресат переживает очередь и без `gate`: `gate` держит ход, а
+  // внешний D-019: адресат переживает очередь и без `gate`: `gate` держит ход, а
   // имя адресата — не право останавливать, а подпись, кому отвечать. Строгое
   // «need читается только вместе с gate» остаётся правилом маркера
   // (`parseQuestion`), а строка из базы теряет адресата без этой строки.
@@ -508,7 +508,7 @@ for (const [role, file] of Object.entries(roleDoc)) {
   assert.match(adr, /async function publishedTzVersion/, 'опубликованная редакция читается из репозитория');
   const cfg = readFileSync(join(root, 'tools/script-cat/src/01-config.js'), 'utf8');
   // D-108: до первой миссии опубликованная редакция живёт в плане фаз.
-  assert.match(cfg, /queueDoc: "docs\/PHASES\.md"/, 'файл редакции задан конфигом');
+  assert.match(cfg, /queueDoc: ""/, 'D-003: проектных файлов по умолчанию нет — сверка неприменима');
   assert.match(cfg, /telemetryRepo: ""/, 'телеметрия в проект не пишется');
   const heal = readFileSync(join(root, 'tools/script-cat/src/41-heal.js'), 'utf8');
   assert.match(heal, /C\.telemetryRepo/, 'выгрузка идёт в отдельный репозиторий');
