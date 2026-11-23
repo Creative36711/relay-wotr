@@ -30,7 +30,7 @@ Campaign Pack → strategic map → WEGO movement → conflict
 - Existing upstream tactical facts may be wrapped: `LivingWorld::BattleSetup`, `LivingWorld::BattleResult`, `BattleResultCapture`, `NewGameMessage::livingWorldBattle`, retail archive policy.
 - Existing `LivingWorldLogic` is reference/read-only for this mission; it is not the Remaster strategic core.
 - Required roles: Upstream Integrator (`Executor` specialization), Strategic Core Engineer, Tactical Bridge Engineer, Godot World Engineer, Localization & Cultural QA Engineer (`Executor` specialization), Determinism & Save Auditor and Integration Auditor. UX & Modding Auditor independently reviews the visible map, locale behavior and pack boundary. `Transport Maintainer` is the only `Maintainer` and is not a product executor.
-- Product locale tags are exactly `en`, `ru`, `zh-Hans`, `ja`, `pt-BR`, `de`, `fr`, `ko`; English is per-message fallback and locale is presentation-only.
+- Product locale tags are `en`, `ru`, `de`, `fr`, `es`, `it` (`WOTR-D-032` amends `WOTR-D-013`); `pl`, `sv`, `tr`, `da`, `no`, `pt-BR` are the Phase 6 community tier and out of scope here; `zh-Hans`, `ja`, `ko` are out of plan. English is per-message fallback and locale is presentation-only. Until the localization card lands, `tools/l10n/l10n.py` keeps checking the previous set, which is stricter and blocks nothing.
 
 Execution begins only after the required role rows have active Arena Agent URLs and the published source baseline is present in the repository. Every card is issued with an explicit `build`/`retail` Cost gate from `docs/agents/cost-gates.md`.
 
@@ -192,9 +192,9 @@ mission row «ТЗ SHA» and only after `B0` is `Accepted`.
 ### K5 · Localization and cultural QA
 
 - Every phase-1 user-facing string is an English source ID; all exact required locale catalogs are present, validate and regenerate byte-identically.
-- English per-message fallback is proven for missing partial translations; `zh`/`pt` aliases do not replace the public `zh-Hans`/`pt-BR` tags.
+- English per-message fallback is proven for missing partial translations; retail `zh`/`pt` install aliases never replace the exact public tag of a catalog that is present, including `pt-BR`.
 - A repeated fixture under each locale produces the same canonical state/save/request/result hashes as English.
-- Target screenshots or headless geometry reports cover long text, CJK/Hangul/Cyrillic glyphs, shaping, clipping and input. A locale remains `partial` and is not called production-ready without 100% coverage plus native/cultural review.
+- Target screenshots or headless geometry reports cover long text, Cyrillic and Latin glyphs including accented `es`/`it` output, shaping, clipping and input. A locale remains `partial` and is not called production-ready without 100% coverage plus native/cultural review.
 
 ### A1 · Determinism/save
 

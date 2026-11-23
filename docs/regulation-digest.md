@@ -1,6 +1,6 @@
 # Регламент WOTR Remaster · краткий вход
 
-Версия 1.3 · 2026-11-22. Полный источник: `docs/REGULATION.md` и одноимённая страница Notion из профиля. Этот текст уже пришёл в задании; повторно открывать регламент не нужно.
+Версия 1.4 · 2026-11-23. Полный источник: `docs/REGULATION.md` и одноимённая страница Notion из профиля. Этот текст уже пришёл в задании; повторно открывать регламент не нужно.
 
 ## 1. Архитектура
 
@@ -57,7 +57,7 @@ Custom asset требует provenance/license/author/hash. Pack не содер
 
 Неясность решай минимально и обратимо; в отчёт `Допущение:`. Вопрос — только `question` в result marker с options и полным default; без gate продолжай по default. `gate:true` — лишь когда следующий шаг физически невозможен. Контракт/oracle/граница продукта — `ADR:` с тремя вариантами и default `оставить как есть`.
 
-Секреты и session data не в Git/Notion/Drive/chat. Retail executable не запускать ради проверки данных. Процесс и общение — русский; code/API/schema/commit — English. Обязательные локали: `en`, `ru`, `zh-Hans`, `ja`, `pt-BR`, `de`, `fr`, `ko`; English fallback, production — только после coverage/native review/rendering gate. Locale не меняет simulation/save/network hash.
+Секреты и session data не в Git/Notion/Drive/chat. Retail executable не запускать ради проверки данных. Процесс и общение — русский; code/API/schema/commit — English. Product локали: `en`, `ru`, `de`, `fr`, `es`, `it`; community tier с фазы 6: `pl`, `sv`, `tr`, `da`, `no`, `pt-BR`; `zh-Hans`/`ja`/`ko` вне плана (`WOTR-D-032`); English fallback, production — только после coverage/native review/rendering gate. Locale не меняет simulation/save/network hash.
 
 <!-- build:meta -->
 Сборка вшивает текст выше в `relay.user.js` (в `Creative36711/relay-wotr`, откуда копируются `docs/REGULATION.md` и этот файл). После изменения: поднять версию только при изменении transport source, выполнить `node tools/script-cat/build.mjs`, затем полный ScriptCat gate. Предел входа — 9000 знаков.

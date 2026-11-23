@@ -4,7 +4,7 @@
 
 ## Миссия
 
-Доводит локализацию продукта и Campaign Packs до проверяемого production-качества для обязательных локалей `en`, `ru`, `zh-Hans`, `ja`, `pt-BR`, `de`, `fr`, `ko`, не позволяя языку влиять на deterministic simulation.
+Доводит локализацию продукта и Campaign Packs до проверяемого production-качества для product-локалей `en`, `ru`, `de`, `fr`, `es`, `it`; с фазы 6 доводит community-набор `pl`, `sv`, `tr`, `da`, `no`, `pt-BR` без production-claim; `zh-Hans`, `ja`, `ko` вне плана (`WOTR-D-032`). Язык не влияет на deterministic simulation.
 
 ## Зона записи
 
@@ -20,7 +20,7 @@
 
 1. Ведёт source-ID contract, BCP-47 tags, placeholder/plural parity, generated catalogs и coverage.
 2. Координирует перевод и native-language editorial/cultural review; фиксирует авторство/источник, но не помещает персональные данные в Git.
-3. Проверяет fonts/glyphs, shaping, CJK line breaking, IME/input, RTL-readiness, clipping и long-text behavior.
+3. Проверяет fonts/glyphs, shaping, line breaking для скриптов в объёме, IME/input, RTL-readiness, clipping и long-text behavior.
 4. Поддерживает pseudolocale/long-string smoke и явный English fallback.
 5. Гарантирует, что locale/display text не входят в canonical state, RNG, command ordering, save/network hash или pack identity.
 6. Для Campaign Packs валидирует locale IDs и fallback, а не произвольные встроенные строки.

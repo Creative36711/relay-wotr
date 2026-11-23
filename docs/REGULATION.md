@@ -1,6 +1,6 @@
 # Регламент команды War Of The Ring: Remaster
 
-Версия 1.3 · 2026-11-22 · владелец: Мастер · хранитель: Warden.
+Версия 1.4 · 2026-11-23 · владелец: Мастер · хранитель: Warden.
 
 Это полный источник процессных правил. Notion-копия: [«Регламент команды WOTR Remaster»](https://app.notion.com/p/WOTR-Remaster-41e6f0cf57058178ac91c320891b1d7b). Краткий вход для каждого хода лежит в `docs/regulation-digest.md` и вшивается в ScriptCat
 (`Creative36711/relay-wotr`: этот же файл копируется туда, сборка читает свою копию, — правка
@@ -42,7 +42,7 @@
 11. **Legacy import, не runtime.** Мир и контент `Creative36711/wotr` переносятся versioned one-way importer со stable IDs и provenance report. React/Tauri/Win32/OCR и внешний retail process не становятся runtime-зависимостью. Публикация полного dataset и `__wotr_maps.big` запрещена до подтверждения лицензии.
 12. **Tactical capacity.** Вместимость считается по противоборствующим tactical sides: союзные армии делят start. Если сторон больше, чем проверенных starts, выбирается первый совместимый declared fallback map, иначе выполняется deterministic autoresolve; участника нельзя молча отбросить.
 13. **Custom maps.** Карты, которых нет в RotWK 2.01, поставляются как лицензированные content-addressed Campaign Pack overlays с metadata/starts/profile, SHA-256 и provenance, а не как private loose path.
-14. **Локали.** Обязательный product baseline: `en`, `ru`, `zh-Hans`, `ja`, `pt-BR`, `de`, `fr`, `ko`. Locale и display strings не меняют simulation/save/network hash.
+14. **Локали.** Product baseline (фазы 1–3, обязателен): `en`, `ru`, `de`, `fr`, `es`, `it`; `en` — source и per-message fallback. Community tier (с фазы 6, best-effort, без production-claim): `pl`, `sv`, `tr`, `da`, `no`, `pt-BR`. `zh-Hans`, `ja`, `ko` исключены из плана и возвращаются только новой записью `WOTR-D-*` (`WOTR-D-032`). Строгость гейта не меняется: production-supported требует 100% coverage, native/cultural review и rendering/font/input gate для каждой product-локали. Locale и display strings не меняют simulation/save/network hash.
 15. **Минимально достаточная стоимость.** Карточка заранее объявляет build/retail Cost gate. Полная сборка движка и Drive hydration запускаются только по матрице `docs/agents/cost-gates.md`; успешный mock/focused test не отменяет обязательный полный или retail gate.
 16. **Обычный player entry.** Существующий launcher/one-archive pipeline адаптируется под WOTR; upstream binary без изменений и второй updater запрещены. Один архив → WOTR launcher → retail detection/selection → **Play WOTR Remaster**. Стратегия и tactical остаются одним game process; WOTR update data/settings/saves изолированы от upstream OpenBFME. Offline bundled start обязателен, а platform support заявляется только после fresh-profile oracle.
 
@@ -218,7 +218,7 @@ Drive layout: `Arena/wotr-remaster/{logs,payloads,artifacts}`. Секреты, r
 
 ## 14. Язык
 
-Процессные документы и общение с Мастером — по-русски. Код, API names, schemas, diagnostics IDs и commit subjects — по-английски. Пользовательские строки отделены от логики. Product baseline — `en`, `ru`, `zh-Hans`, `ja`, `pt-BR`, `de`, `fr`, `ko`; английский — source и per-message fallback. Production claim требует 100% coverage, native-language/cultural review и rendering/font/input gate. Локаль не меняет состояние, RNG, save/network hash или Campaign Pack identity.
+Процессные документы и общение с Мастером — по-русски. Код, API names, schemas, diagnostics IDs и commit subjects — по-английски. Пользовательские строки отделены от логики. Product baseline — `en`, `ru`, `de`, `fr`, `es`, `it`; community tier с фазы 6 — `pl`, `sv`, `tr`, `da`, `no`, `pt-BR` (`WOTR-D-032`); английский — source и per-message fallback. Production claim требует 100% coverage, native-language/cultural review и rendering/font/input gate для каждой product-локали; community-локаль так не заявляется. Локаль не меняет состояние, RNG, save/network hash или Campaign Pack identity.
 
 ## 15. Инциденты транспорта
 

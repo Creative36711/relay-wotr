@@ -80,7 +80,7 @@ World/locations/regions/ownership/content из `Creative36711/wotr@fd12e3a3a52ad
 
 ## WOTR-D-013 · Eight-locale product baseline
 
-**Дата:** 2026-11-20 · **Статус:** принято · **ADR:** `docs/architecture/ADR-003-PRODUCT-LOCALES.md`.
+**Дата:** 2026-11-20 · **Статус:** принято; состав набора пересмотрен `WOTR-D-032` (2026-11-23) · **ADR:** `docs/architecture/ADR-003-PRODUCT-LOCALES.md`.
 
 Обязательные product locales: `en`, `ru`, `zh-Hans`, `ja`, `pt-BR`, `de`, `fr`, `ko`. Английский — source/per-message fallback; production support требует 100% coverage, native-language/cultural review, rendering/font/input evidence и locale-invariant canonical hash. Добавляется Executor-specialization `Localization & Cultural QA Engineer`; независимую проверку выполняет UX & Modding Auditor.
 
@@ -379,3 +379,80 @@ glob отвергнут этим замером; отвергнутый ране
 контракте, побайтовое равенство процессных файлов, бандл `4d10f303…` при `build --check` rc 0). Отдельно:
 `git diff --check` спотыкается о наш `docs/STOPS.md:959` (`new blank line at EOF`) — дефект нашего файла, а не
 транспорта; вне набора зеркала транспорта он больше не касается, правит его владелец корневых `docs/*.md`.
+
+## WOTR-D-030 · Гидрация retail: шаг закачки — не более 5 volumes, лимит по числу файлов
+
+**Дата:** 2026-11-23 · **Статус:** принято.
+
+Замер. Snapshot `openbfme-retail-transfer` = 57 volumes (56 × 99 614,720 B + 57 649,079 B), `ingest` в
+`tools/retail_big_transfer.py` последовательный, флагов параллельной закачки у скрипта нет (CLI: `pack`,
+`unpack(manifest, out, force, delete_parts)`, `validate_manifest_layout`, `existing_matches`). OOM в песочницах
+возникал до скрипта — агент вытаскивал из Drive максимум parts сразу, и пик приходился на staging-файлы и буферы
+распаковки. §5 разрешал это только молча («не скачивать все volumes на будущее»), численного шага не было.
+
+Решение. Шаг закачки — **не более 5 volumes**; шаг закрыт после `ingest --out .retail --delete-parts` и удаления
+staging-parts, следующий начинается только после этого. Обоснование — пик памяти агента: 5 × 99 614,720 B ≤ 475 MiB
+staging. Суммарный объём, набор контрольных сумм и общее время не меняются, поэтому гейт ничего не теряет:
+доказательство по-прежнему `existing_matches` + archive validation провалидированной `.retail`. Отчёт карточки
+фиксирует число volumes в шаге там же, где число обработанных volumes (§7).
+
+## WOTR-D-031 · Время сборки движка: действующая экономия — §3, артефакт кэша — только отдельной карточкой
+
+**Дата:** 2026-11-23 · **Статус:** принято; исполнение — вне `main` до карточки.
+
+Замер. Единственные две состоявшиеся полные сборки движка в реестре: `tools/arena/build_engine.sh --clean --tests`
+rc 0 за **58 min 40 s** при `-j2` на 2 vCPU, артефакты `openbfme_tests` 116 652 240 B, `libopenbfme_core.a`
+58 421 346 B, `openbfme.linux.template_debug.x86_64.so` 32 823 128 B (K1, `upstream-source-baseline`); полный suite
+локально = 5652 test cases / 1 409 787 assertions, rc 1 из-за 5 MP3-кейсов (нет `lame`/`mpg123`) и 27 retail-skip,
+принятая селекция baseline A+B = 128 кейсов rc 0. База сравнения для любых кандидата оптимизации — 754.83 s полного
+прогона release-файлов на 2 vCPU (`docs/evidence/WOTR-1-1/K3-review.md`:54).
+
+Решение.
+1. То, что экономит время уже сейчас, — `docs/agents/cost-gates.md` §3: при итерации `--quick`, `--core`, конкретный
+   Ninja target и точный test filter, полный гейт один раз на финальном SHA, плюс переиспользование провалидированной
+   `.retail`. Этого хватает, чтобы не пересобирать 117-мегабайтный тестовый бинарь на каждой правке.
+2. `ccache`/`sccache` и snapshot тулчейна не вводятся до замера; порог — не менее четверти времени итерационного
+   цикла относительно базы выше.
+3. Кэш-артефакт (`engine/build`, `godot/bin`, `godot/.godot`) делается только карточкой в зоне Upstream Integrator
+   (`tools/arena/**`, `WOTR-D-022`) с ключом, включающим `git rev-parse HEAD^{tree}`, `build_engine.sh --check` и
+   сверкой SHA до/после. Перенос доказательства на кэш, `not run`→pass и правки `tools/arena/**` внутри чужой
+   карточки отклонены; полный разбор восьми пунктов предложения — `docs/evidence/WOTR-1-1/K3-review.md`.
+4. CI-рычаги закрыты и измерены (`WOTR-D-026`, `WOTR-D-027`): doc PR 10 m 17 s → 6 m 08 s, required gate 5 m 56 s,
+   push-прогон ≈9 m 21 s. Локальную чистую сборку движка в песочнице они не ускоряют, поэтому новые предложения
+   «ускорить агентов через workflow» без нового замера не принимаются.
+
+Цена. До появления INFRA-карточки агенты платят полную сборку на финальном SHA; 58 min 40 s — это ширина песочницы
+(`-j2` на 2 vCPU), а не верхняя цена кода, и сравнивать кандидата надо с этой базой.
+
+## WOTR-D-032 · Product-локали: шесть языков с фазы 1, community-набор с фазы 6, CJK вне плана
+
+**Дата:** 2026-11-23 · **Статус:** принято; пересматривает `WOTR-D-013` (состав набора) · **ADR:** `docs/architecture/ADR-003-PRODUCT-LOCALES.md`.
+
+Мастер подтвердил состав. Product baseline фаз 1–3: `en` (source, per-message fallback), `ru`, `de`, `fr`, `es`, `it`. Community tier с фазы 6:
+`pl`, `sv`, `tr`, `da`, `no`, `pt-BR`. Исключены из плана: `zh-Hans`, `ja`, `ko`. Возврат любого из них — только новой записью здесь.
+Распределение по фазам — решение Warden, оно зафиксировано в `docs/PHASES.md` (общий гейт 6 и текст фазы 6).
+
+Что это и чем не является. Сокращение скоупа, а не ослабление гейта: для каждой product-локали сохраняются 100% coverage,
+placeholder/plural parity, native-language/cultural review, rendering/font/input gate, locale-invariant canonical hash и
+независимая проверка UX & Modding Auditor. Community-локаль не может быть заявлена production-supported: её статус
+`partial`/`community` остаётся видимым в селекторе. «Есть в дереве, но молча частичная» — по-прежнему не проходит.
+
+Замер цены (по текущему коду, правок которого эта запись не делает).
+`tools/l10n/catalog/` содержит `de en fr ja ko pt-BR ru zh-Hans`: для product-набора не хватает `es` и `it`, для
+community — `pl sv tr da no`. Правила плюрализации (`PLURAL_CATEGORIES` в `tools/l10n/l10n.py:38` и те же таблицы в
+`l10n.gd`/`OpenBFMEText.cpp`) уже есть для `es it pl sv no pt-BR` и отсутствуют для `tr` и `da`; `DECIMAL_COMMA`
+(`launcher/scripts/l10n/l10n.gd:19`) тоже не содержит `tr`/`da`; `RETAIL_LANGUAGES` не имеет алиасов danish/turkish,
+поэтому «Automatic» для них принципиально не сработает — только ручной выбор. Вывод: product-набор дешевеет
+(CJK-шрифты, shaping и line breaking уходят из обязательной приёмки, `es`/`it` используют уже настроенные правила),
+а `tr`/`da` — единственные две позиции, которые требуют правки C++ и поэтому карточки с `build: focused`.
+
+Судьба данных. Каталоги `zh-Hans`, `ja`, `ko` и retail-алиасы `chinese`/`korean` не удаляются этой записью:
+их состояние (оставить как `sample` вне обязательного набора или удалить вместе с mapping) решает карточка
+`Localization & Cultural QA Engineer` и фиксирует в своём отчёте, чтобы решение обратимо было по данным, а не по
+переписанной истории. `pt-BR` остаётся в дереве, переходя в community tier.
+
+Что проверяется после. `tools/l10n/l10n.py:28 REQUIRED_LOCALES` и `launcher/tests/l10n_test.gd:42` переводятся на
+product-набор той же карточкой; до неё оракул строже плана (требует прежние восемь), и это намеренно: ни одна проверка
+не выключается и ни один `not run` не становится pass. Правки реестра, `docs/REGULATION.md` и
+`docs/regulation-digest.md` до версии 1.4 обязывают транспорт пересобрать бандл и обновить зеркала
+(`WOTR-D-029`), иначе preflight `relay-wotr` законно упадёт на расхождении номера регламента.

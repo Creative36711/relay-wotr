@@ -72,7 +72,8 @@ download one archive
   network/update failure does not block Play. A newer version is staged for a
   later start, not substituted mid-session.
 - **INV-10 Exact locales.** Launcher, first-run, product entry and failures use
-  stable IDs for `en`, `ru`, `zh-Hans`, `ja`, `pt-BR`, `de`, `fr`, `ko`, with
+  stable IDs for the product set `en`, `ru`, `de`, `fr`, `es`, `it`
+  (`WOTR-D-032`; the community tier is out of scope for this mission), with
   English per-message fallback and no locale effect on canonical state.
 - **INV-11 Honest platform claim.** A platform is supported only after a real
   fresh-profile oracle on that platform. Source compatibility is not a claim.

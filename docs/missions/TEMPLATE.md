@@ -11,7 +11,7 @@
 - Published base SHA / upstream pin.
 - Предыдущие принятые миссии.
 - Нужные роли и независимые аудиторы; specialization записывается с точной функцией из «Ролей».
-- Locale impact для `en`, `ru`, `zh-Hans`, `ja`, `pt-BR`, `de`, `fr`, `ko` и license/provenance impact для content.
+- Locale impact для product-набора `en`, `ru`, `de`, `fr`, `es`, `it` (community-набор `pl`, `sv`, `tr`, `da`, `no`, `pt-BR` — с фазы 6, `WOTR-D-032`) и license/provenance impact для content.
 
 ## Cost gate
 
