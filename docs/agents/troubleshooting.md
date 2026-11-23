@@ -68,6 +68,8 @@ Remove former-project names/default routes from executable source, prompts and o
 
 Report exact missing prerequisite and command/rc. A synthetic DTO test may keep a card moving but cannot close a criterion that explicitly requires retail BFME2/RotWK. Never invent a pass or start bulk asset transfer before a verified canary.
 
+Repeated OOM during hydration is a symptom of a download step larger than 5 volumes (`docs/agents/cost-gates.md` §5), not of a sandbox that is too small: the fix is a smaller step, never a weakened archive validation or a skipped canary.
+
 ## Human-only cases
 
 Escalate only browser userscript installation, captcha/login, access/account creation, paid quota, secrets, license/ToS or product boundary decisions. Code defects, queue mistakes, missing evidence and recoverable network faults stay with the named agent/maintainer path.

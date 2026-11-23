@@ -13,7 +13,7 @@
 3. save/schema migration и deterministic hash не имеют незакрытой регрессии;
 4. retail-dependent критерии проверены в Arena на реальных BFME2 1.06 + RotWK 2.01 данных;
 5. заявленный Cost gate соответствует `docs/agents/cost-gates.md`; full build/Drive hydration не запускаются для несвязанных карточек;
-6. обязательные локали `en`, `ru`, `zh-Hans`, `ja`, `pt-BR`, `de`, `fr`, `ko` имеют coverage report, а локаль не меняет canonical hash;
+6. обязательные локали product-набора `en`, `ru`, `de`, `fr`, `es`, `it` имеют coverage report, а локаль не меняет canonical hash; community-набор (`pl`, `sv`, `tr`, `da`, `no`, `pt-BR`) проверяется с фазы 6 и не заявляется как production-supported (`WOTR-D-032`);
 7. документация, Campaign Pack schema и upstream pin соответствуют коду.
 
 ## Фаза 0 · Baseline decisions (решения приняты; history sanitation открыта)
@@ -75,6 +75,8 @@ Turn planning/resolution, movement, conflicts, economy/recruitment baseline, fog
 ### WOTR-6.1 · Mod-aware Campaign Packs
 
 Profile inheritance/overrides, dependency and conflict diagnostics, licensed custom tactical maps with declared starts/capacity and content hashes, custom asset provenance/licensing, pack discovery, deterministic overlay order and compatibility matrix. Vanilla RotWK 2.01 не меняется при установке mod pack.
+
+Здесь же открывается community locale tier (`WOTR-D-032`): `pl`, `sv`, `tr`, `da`, `no`, `pt-BR` добавляются в селектор и в coverage report, production-claim для них запрещён, статус в UI остаётся видимым; `tr` и `da` требуют правил плюрализации и формата чисел во всех трёх рантаймах, то есть карточка с `build: focused` минимум один раз.
 
 ## Фаза 7 · Advanced systems и narrative/hybrid
 

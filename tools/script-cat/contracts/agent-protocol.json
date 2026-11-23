@@ -2208,5 +2208,25 @@
       "workflow": ".github/workflows/scriptcat.yml",
       "probe": "tools/script-cat/tests/pr-preflight-smoke.mjs"
     }
+  },
+  "d002": {
+    "version": "1.16.9",
+    "title": "Authority через контракт профиля: ADR, три варианта, default — embedded-mirror",
+    "date": "2026-11-22",
+    "decision": [
+      "Шаг 0 — только ADR и контракт: контракт зафиксирован нормативной секцией D-002 в docs/DECISIONS.md; перенос содержимого и удаление embedded-mirror не делаются, старый путь остаётся рабочим, зелёным и обратимым per-project.",
+      "Три варианта: (а) artifact-by-reference — Drive через существующий drive-gateway, профиль хранит {fileId, sha256, regulationVersion}, сверка хэша до каждого dispatch; (б) transport-as-library — версионированный выпуск, бандл собирает проект своим CI; (в) embedded-mirror — default.",
+      "Контракт: версия транспорта (semver + docs/scriptcat-update.md), минимальная схема профиля (projectId, repo, notion data source, authority{kind, fileId|url, sha256, regulationVersion}, dispatch{markerPrefix, roleZones, costGateMatrix}), формат result-marker (CF_*_RESULT по contracts/agent-protocol.json), формат evidence-строки; всё вне контракта — приватная деталь транспорта; проектные значения читаются из профиля, не хардкодятся.",
+      "Fail closed: несовпадение sha256 или отсутствие authority-артефакта — отказ dispatch с явной ошибкой (ожидаемый и полученный хэш, regulationVersion), warning запрещён; при embedded-mirror поведение не меняется."
+    ],
+    "safety": [
+      "Ни одна проверка не выключается и не ослабляется: embedded-mirror зелёный до принятия нового пути; not run не становится pass, таймаут не становится skip; guard расширяется только добавлением паттернов.",
+      "Односторонняя зависимость: транспорт не знает о проектах; чужие номера WOTR-* не выделяются — журнал только D-###, чужие решения только цитатой; breaking-контракт = release + @version + новый D-###.",
+      "Секретов, токенов, retail-ссылок и персональных путей в git нет; новых capability нет — артефакты читаются существующим drive-gateway."
+    ],
+    "evidence": {
+      "adr": "docs/DECISIONS.md#d-002",
+      "report": "docs/evidence/TRANS-NEU-authority-adr.md"
+    }
   }
 }

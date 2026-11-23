@@ -92,11 +92,11 @@ Mock/synthetic путь может закрыть T1, но не retail-крит�
 3. проверяет свободное место (минимум 6.5 GiB сверх нужного build output);
 4. получает `retail: hydrate` в карточке;
 5. скачивает manifest и один первый volume как canary, проверяет размер/hash и resume path;
-6. только после canary последовательно подаёт volumes в `tools/retail_big_transfer.py ingest --out .retail --delete-parts`;
+6. только после canary подаёт volumes в `tools/retail_big_transfer.py ingest --out .retail --delete-parts` **шагами не более 5 volumes**: шаг считается закрытым после `ingest` и удаления staging-parts, следующий шаг начинается только после этого;
 7. выставляет `BFME2_INSTALL=$PWD/.retail/BFME2` и `ROTWK_INSTALL=$PWD/.retail/RotWK`;
 8. даёт OpenBFME провалидировать archive policy до продуктового теста.
 
-Не скачивать все volumes «на будущее», не хранить их в Git/build artifacts и не запускать retail executables для проверки данных. Повторный агент в том же workspace переиспользует провалидированную `.retail`, а не скачивает её заново.
+Не скачивать все volumes «на будущее», не хранить их в Git/build artifacts и не запускать retail executables для проверки данных. Лимит шага — по **числу файлов, а не по объёму**: при `56 × 99 614,720 B` шаг из 5 volumes — это ≤475 MiB staging-файлов, а `tools/retail_big_transfer.py` не имеет флагов параллельной закачки, `ingest` последовательный, поэтому OOM возникает из-за того, сколько parts агент успел вытащить из Drive до передачи в скрипт. Суммарный объём, число контрольных сумм и общее время гидрации от шага в 5 volumes не меняются. Повторный агент в том же workspace переиспользует провалидированную `.retail`, а не скачивает её заново.
 
 ## 6. Матрица минимальных команд
 
