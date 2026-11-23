@@ -561,7 +561,7 @@
 
   /**
    * Разрешить короткий slug из старых Notion-полей в owner/repo профиля.
-   * Role rows давно допускали короткий slug (`open-bfme`), хотя GitHub API требует
+   * Role rows давно допускали короткий slug репозитория, хотя GitHub API требует
    * `owner/repo`; приоритет — точное уникальное совпадение профиля.
    */
   function canonicalTargetRepository(value, fallback = C.repo) {

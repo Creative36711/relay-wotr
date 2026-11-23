@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Relay — передача хода между агентами
 // @namespace    https://arena.ai/
-// @version      1.16.9
+// @version      1.17.0
 // @description  Цикл Координатор → исполнитель → Координатор: агент сам коммитит, пушит и мержит PR; ScriptCat ждёт мерж и нажимает Continue.
 // @match        https://arena.ai/*
 // @match        https://www.arena.ai/*
@@ -73,12 +73,12 @@
     // questionFallback. Поле хранится ради совместимости со старыми профилями.
     questionDefaultMax: 200,
     questionCheckMs: 600000, // как часто проверять сроки вопросов (10 минут)
-    // WOTR-D-019: сколько раз осиротевшую строку обратной связи можно передать
+    // внешний D-019: сколько раз осиротевшую строку обратной связи можно передать
     // приёмке заново. Порог ожидания — тот же `questionCheckMs`: чаще adoption
     // всё равно не ходит. После предела это уже не «очередь подождёт», а
     // потерянная доставка, и пауза `answer-orphan` идёт Transport Maintainer'у.
     answerRehandoffMax: 2,
-    // WOTR-D-023: полный текст вопроса — единственная причина ПОДОЖДАТЬ с
+    // внешний D-023: полный текст вопроса — единственная причина ПОДОЖДАТЬ с
     // передачей приёмке, и у неё есть срок. `questionBodyHoldMs` — сколько
     // строка ждёт записи тела, прежде чем уйти адресату по тому, что уже
     // лежит в базе; `questionBodyMaxTries` — сколько попыток вообще.
@@ -86,18 +86,19 @@
     questionBodyMaxTries: 3,
     adrCheckMs: 600000, // как часто смотреть docs/decisions на proposed (10 минут)
     pageUrl: "",
-    // Краткий регламент вшивается сборкой из docs/regulation-digest.md: агент получает
-    // правила вместе с заданием, а страница по pageUrl остаётся справочником для деталей.
-    regulationDigest: "# Регламент WOTR Remaster · краткий вход\n\nВерсия 1.4 · 2026-11-23. Полный источник: `docs/REGULATION.md` и одноимённая страница Notion из профиля. Этот текст уже пришёл в задании; повторно открывать регламент не нужно.\n\n## 1. Архитектура\n\n- Один репозиторий для продукта и процесса: `Creative36711/open-bfme`; техническая часть ScriptCat — `Creative36711/relay-wotr`.\n- `WotrRemaster` — отдельное детерминированное стратегическое ядро: WEGO commands, canonical state/hash, versioned save. Godot nodes, wall clock, locale, filesystem/unordered iteration и неназванный RNG в simulation запрещены.\n- Godot делает 2.5D hex map, ввод, HUD и Campaign Pack editor.\n- OpenBFME Godot Nightly делает tactical battle и читает retail BFME2/RotWK пользователя напрямую.\n- Граница — versioned `BattleRequest` / полный `BattleResult`: победитель, survivors, experience/rank, heroes, persistent upgrades/sciences, reinforcements, destroyed strategic buildings и metadata. Mock не заменяет retail gate.\n- Vanilla RotWK 2.01 — первый tactical profile; Campaign Packs поддерживают retail references, licensed custom assets и mod overrides.\n- Мир `Creative36711/wotr` переносится только versioned one-way importer со stable IDs/provenance, без React/Tauri/Win32 runtime; publication ждёт license. Tactical capacity считается по сторонам: союзники делят start; overflow → declared fallback map либо deterministic autoresolve.\n- Новые tactical maps — лицензированные content-addressed `pack:` overlays с starts/profile/hash/provenance. Retail assets не копируются в продукт или публикуемую history; BIG передаётся байт-в-байт.\n- Player path: адаптировать существующий launcher/one-archive pipeline, не upstream binary и не второй updater. Один архив → WOTR launcher → retail selection → **Play WOTR Remaster**; strategy+tactical — один game process. WOTR data/saves изолированы, offline bundled start обязателен, support — только после fresh-profile oracle.\n\n## 2. Роли\n\nМастер — направление, доступы, лицензии и платные действия. Warden — любая операционная часть: ТЗ, роли/зоны, регламент, процесс и CI этого репозитория, финальная приёмка. Coordinator — очередь и карточки, без кода и финальной приёмки. Executors: Strategic Core, Tactical Bridge, Godot World, Campaign Editor, Technical Artist, AI & Simulation, Localization & Cultural QA, Upstream Integrator. Единственный Maintainer — Transport Maintainer: любая техническая часть ScriptCat в `relay-wotr` (исходники, бандл, gateway, механика профиля, тесты, CI, выпуск). Операционные решения не за ним, а техническую работу транспорта не делает Warden. Auditors: Integration, Determinism & Save, UX & Modding.\n\nИсточник полномочий — строка Notion «Роли». Без строки, активного статуса и Agent URL рабочей роли нет. Исполнитель не принимает себя; Auditor не чинит найденное в том же ходе; Warden не пишет продукт.\n\n## 3. Зоны и Git\n\nЗона роли — постоянная граница, Scope карточки — граница хода. Чужое только читать. «Зона записи» обязана покрывать всё, что роль обязана менять: непокрытый обязательный путь — дефект реестра, он правится строкой «Роли» карточкой Warden, а не сужением прав и не обходом гейта. Оракул можно усиливать, но нельзя удалять, ослаблять, skip/todo или подгонять. Перед правкой зафиксируй branch, BASE_SHA и `git status --short`; чужие локальные изменения не reset/clean/stash/overwrite.\n\nРаботай только в ветке Arena. Один PR — одна карточка. Direct push в `main` запрещён. Клон может быть shallow: пустой merge-base не доказательство. `merged:true` только после фактического merge. OpenBFME sync — отдельная карточка Upstream Integrator по pin `OPENBFME_UPSTREAM` с range/conflict report и полным regression gate. Транспорт (`tools/script-cat/**`) меняет только Transport Maintainer отдельным выпуском в `Creative36711/relay-wotr`. History rewrite retail — отдельная destructive Master-approved операция из full mirror clone, не продуктовая карточка.\n\n## 4. Фазы и ход\n\nПлан: `docs/PHASES.md`, фазы 1–8. Активная миссия `WOTR-1.1`: map → movement → OpenBFME battle → full native result → map/save. `WOTR-1.2` остаётся черновиком без карточек: accept `WOTR-1.1` только снимает зависимость, а подготовка `WOTR-1.2` требует отдельного будущего решения. Не делай работу будущих миссий и пустые заготовки.\n\nПосле отдельного решения начать подготовку миссии ассистент создаёт её первую карточку: единственную `Ready` B0 — read-only репетицию всего оракула (`build:none`, `retail:none`). Только после её `Accepted` Coordinator нарезает остальные карточки.\n\nЦикл: Warden публикует ТЗ → Coordinator готовит Draft/Ready и зависимости → ScriptCat выдаёт dispatch/run → агент сдаёт evidence и точный marker → Coordinator Accepted/Rework → независимый audit → Warden `accept/rework/master`. Зелёная карточка не заменяет финальный oracle собранной миссии. `master` — только доступ/аккаунт, лицензия/ToS, платное действие, секрет, agent activation или продуктовая граница.\n\n## 5. Evidence\n\n`not run`, timeout, зелёный нерелевантный CI, слова агента или mock вместо retail-пути не равны pass. Нужны команда, rc, существенный вывод, artifact path/hash, tested SHA и Cost gate. Карточка заранее задаёт `build: none/focused/full` и `retail: none/reuse/hydrate`; сначала static/focused. Полная engine build и Drive hydration — только по `docs/agents/cost-gates.md` или явному критерию, но обязательный финальный gate не пропускается. Визуал — агент открыл screenshot/video и описал увиденное.\n\n- Core: unit + repeated-run equal hash + canonical save + negative validation.\n- Bridge: synthetic DTO + retail map real battle + native full result + strategic apply.\n- Godot/editor: headless smoke + deterministic interaction + opened visual artifact + frame/memory facts.\n- Save/schema: round-trip + corruption/unknown-version/migration failures.\n- Upstream: C++/GDExtension build + focused tests + WOTR regressions + retail smoke.\n- ScriptCat (repo `Creative36711/relay-wotr`): `npm run verify:scriptcat` — build check, portability guard, smoke, regression, tool-limit.\n\nФормат финальной строки всегда стоит в самом конце задания; точный marker и IDs задаёт ScriptCat. Финал `WOTR-1.1`: map → real battle → result → save/hash. Финал `WOTR-1.2` на каждой заявленной платформе: fresh profile → unpack one archive → WOTR launcher/retail selection/Play → тот же round-trip/save, offline/update/tamper/coexistence negatives.\n\n## 6. Save, assets, mods\n\nSave envelope содержит schema version, Campaign Pack identity/hash, tactical profile, canonical state, command/RNG metadata и checksum. Неизвестная версия, damaged checksum, missing pack или incompatible profile отказываются до изменения живого state. Миграция не перезаписывает исходный файл.\n\nCustom asset требует provenance/license/author/hash. Pack не содержит абсолютных путей машины автора. Missing/ambiguous references дают явную ошибку. Mod profile не меняет Vanilla молча.\n\n## 7. Вопросы, секреты, язык\n\nНеясность решай минимально и обратимо; в отчёт `Допущение:`. Вопрос — только `question` в result marker с options и полным default; без gate продолжай по default. `gate:true` — лишь когда следующий шаг физически невозможен. Контракт/oracle/граница продукта — `ADR:` с тремя вариантами и default `оставить как есть`.\n\nСекреты и session data не в Git/Notion/Drive/chat. Retail executable не запускать ради проверки данных. Процесс и общение — русский; code/API/schema/commit — English. Product локали: `en`, `ru`, `de`, `fr`, `es`, `it`; community tier с фазы 6: `pl`, `sv`, `tr`, `da`, `no`, `pt-BR`; `zh-Hans`/`ja`/`ko` вне плана (`WOTR-D-032`); English fallback, production — только после coverage/native review/rendering gate. Locale не меняет simulation/save/network hash.",
+    // Краткий регламент подставляет сборка по входу --digest (нейтральный бандл —
+    // пустая строка): агент получает правила вместе с заданием, а страница по
+    // pageUrl остаётся справочником для деталей.
+    regulationDigest: "",
     // D-073: отпечаток сборки вшивает build.mjs (SHA-256 источника). Номер версии
     // говорит «какой выпуск», отпечаток — «какая именно сборка»: без него проверка
     // «работает новая версия, а не прежняя под новым номером» невозможна.
-    buildFingerprint: "cd0b5b8c6fc5a793",
+    buildFingerprint: "d393863a3480db40",
     repo: "", // для ссылки на PR из номера
     tickMs: 15000,
     mergeGraceMs: 90000, // сколько ждём мерж, прежде чем нажать кнопки за агента
     arenaResendMax: 1, // один минимальный повтор после ошибки Arena; второй отказ — пауза
-    // Лимита продолжений после tool-call limit нет (WOTR-D-021): счётчик
+    // Лимита продолжений после tool-call limit нет (внешний D-021): счётчик
     // `toolLimitContinuations` ведётся только для журнала и лога.
     arenaRetryMs: 180000, // ошибка старше трёх минут уже не про нашу отправку
     maxReloadAttempts: 3, // максимум автоматических перезагрузок страницы при ошибке Arena
@@ -167,15 +168,16 @@
     // репозиторий проекта не должен получать служебные коммиты мимо приёмки.
     // Если нужен git-канал — отдельный приватный репозиторий, а не проект.
     telemetryRepo: "",
-    // D-086: repository containing process documents. WOTR uses one repository,
+    // D-086: repository containing process documents. The project uses one repository,
     // so the Warden role route resolves to the same target; the override remains
     // only for portable profiles and migration tests.
     docsRepo: "",
     // D-086: файл, в шапке которого лежит опубликованная редакция плана и миссий.
     // Читается из репозитория перед приёмкой ответа: «объявлено» ≠ «лежит в main».
-    // D-108: the published queue revision lives in docs/PHASES.md until a mission
-    // document becomes the active source. The same «редакция N.M» header is used.
-    queueDoc: "docs/PHASES.md",
+    // D-108 → D-003: публикованная редакция очереди живёт в самом проекте.
+    // Транспорт по умолчанию проектных документов не читает: пустое значение
+    // делает сверку редакции неприменимой явно, а не тихо.
+    queueDoc: "",
     heartbeatMs: 600000, // сердцебиение для сторожа: 10 минут — свежесть без траты квоты
     retryWaits: [800, 2500, 6000], // выдержки перед повторами: 4 попытки, ~9 с
     linkProbeWaits: [5000, 15000], // зонды связи после обрыва: 5 и 15 с
@@ -373,7 +375,7 @@
    * Почему вкладка не может работать — тремя словами, а не одним. Прежняя
    * панель отвечала на все три причины одной строкой «проект ещё не разрешён»,
    * и человек шёл в «Управление проектами» подтверждать допуск, которого там уже
-   * не было: настоящая причина сидела в sessionStorage вкладки (WOTR-D-023).
+   * не было: настоящая причина сидела в sessionStorage вкладки (внешний D-023).
    */
   const projectBlockReason = () => {
     if (ACTIVE_PROFILE.invalid) return "invalid";
@@ -783,7 +785,7 @@
 
   const NTFY_BASE = "https://ntfy.sh";
   const SCRIPT_VERSION =
-    (typeof GM_info !== "undefined" && GM_info?.script?.version) || "1.16.9";
+    (typeof GM_info !== "undefined" && GM_info?.script?.version) || "1.17.0";
 
   /** «https://ntfy.sh/topic?x=1» и «topic» одинаково дают topic. */
   function normalizeNtfyTopic(raw) {
@@ -2713,7 +2715,7 @@
             <label>URL базы «Обратная связь» в Notion<input id="cfn-project-questionsUrl" style="${field}" placeholder="https://…"></label>
             <label>GitHub репозиторий<input id="cfn-project-repo" style="${field}" placeholder="owner/repository"></label>
             <label>Базовая ветка<input id="cfn-project-branch" style="${field}" value="main"></label>
-            <label>Папка проекта внутри Arena (латиница)<input id="cfn-project-driveFolder" style="${field}" placeholder="wotr-remaster"></label>
+            <label>Папка проекта внутри Arena (латиница)<input id="cfn-project-driveFolder" style="${field}" placeholder="project-folder"></label>
           </div>
           <div id="cfn-project-repos" style="border:1px solid #343b48;border-radius:8px;padding:10px;margin-top:14px;display:none">
             <h4 style="margin:0 0 6px">Репозитории профиля</h4>
@@ -2723,7 +2725,7 @@
           </div>
           <div id="cfn-project-routes" style="border:1px solid #343b48;border-radius:8px;padding:10px;margin-top:10px;display:none">
             <h4 style="margin:0 0 6px">Маршрутизация ролей к репозиториям</h4>
-            <div style="color:#aab4c3;font-size:12px">Каждой роли ставится в соответствие репозиторий, в котором она работает (ID роли — UUID страницы в базе «Роли», а не её имя). Все WOTR-роли → Creative36711/open-bfme; отдельный маршрут нужен только для явно принятого внешнего target или полной ссылки на PR. Роли без маршрута работают в главном репозитории.</div>
+            <div style="color:#aab4c3;font-size:12px">Каждой роли ставится в соответствие репозиторий, в котором она работает (ID роли — UUID страницы в базе «Роли», а не её имя). Все роли проекта → репозиторий его профиля; отдельный маршрут нужен только для явно принятого внешнего target или полной ссылки на PR. Роли без маршрута работают в репозитории профиля.</div>
             <div id="cfn-project-routes-list"></div>
             <button id="cfn-project-route-add" type="button" style="${action};margin-top:7px">Добавить маршрут роли</button>
             <button id="cfn-project-roles-autofill" type="button" style="${action};margin-top:7px;margin-left:7px">Автозаполнить маршруты ролей</button>
@@ -3323,7 +3325,7 @@
       Тихие (priority 2): задание отправлено, ответ записан, пауза снята.<br>
       Громкие (priority 5): только когда цикл остановлен. Громкий тест — тоже только на паузе или при выключенном цикле.</div>
       <label style="display:block;margin-bottom:6px">Топик или ссылка<br>
-        <input id="cfn-ntfy-topic" placeholder="arena-wotr-remaster" style="${inputStyle()}"></label>
+        <input id="cfn-ntfy-topic" placeholder="arena-project-topic" style="${inputStyle()}"></label>
       <label style="display:block;margin-bottom:6px">Access token (необязательно)<br>
         <input id="cfn-ntfy-token" type="password" placeholder="tk_…" style="${inputStyle()}"></label>
       <div style="display:flex;gap:6px;flex-wrap:wrap">
@@ -10129,7 +10131,7 @@
 
   /**
    * Разрешить короткий slug из старых Notion-полей в owner/repo профиля.
-   * Role rows давно допускали короткий slug (`open-bfme`), хотя GitHub API требует
+   * Role rows давно допускали короткий slug репозитория, хотя GitHub API требует
    * `owner/repo`; приоритет — точное уникальное совпадение профиля.
    */
   function canonicalTargetRepository(value, fallback = C.repo) {
@@ -10744,7 +10746,7 @@
     } });
 
     def("repo.boundary", { ruleIds: ["R-REPO-BOUNDARY"], render: () =>
-      "WOTR: пиши только в целевой repo Creative36711/open-bfme. Чужая зона только читается; посторонняя ссылка вместо target — дефект." });
+      "Пиши только в целевой repo хода (target из профиля). Чужая зона только читается; посторонняя ссылка вместо target — дефект." });
 
     // D-038: зона роли — это факт (как task.scope), а не шаблон. Вынесена в
     // verbatim-блок role.zone и не входит в overhead; authority.core несёт только
@@ -10784,7 +10786,7 @@
     def("authority.reviewer", { version: 2, ruleIds: ["R-ROLES", "R-VERIFY-GITHUB", "R-MASTER-ONLY", "R-D028", "R-DOCS"], audience: ["Reviewer"], render: (c) =>
       c.kind === "arbiter"
         ? "Ты приёмка (Reviewer) и сейчас арбитр: не правь чужую работу — ни код, ни карточки, ни постановку, ни документы процесса. Твой выход — решение по карточке или остановка цикла. Проверяй по GitHub, Notion и фактам, а не по словам агента; Мастера зовёшь только там, где без него физически нельзя."
-        : "Ты приёмка (Reviewer): не правь чужую работу — ни код, ни карточки, ни постановку. Документы процесса в репозитории своей роли (`docs/missions/**`, `docs/handoff/**`, `docs/DECISIONS.md`) — твоя зона: объявил редакцию — опубликуй её отдельным PR до выдачи карточек. Выход: вердикт (accept/rework/master), ответ или эта публикация. Проверяй по GitHub и фактам. Вопрос агента закрываешь вместо Мастера; Мастер — только где без него нельзя." });
+        : "Ты приёмка (Reviewer): не правь чужую работу — ни код, ни карточки, ни постановку. Документы процесса в репозитории своей роли (`docs/handoff/**`, `docs/DECISIONS.md`) — твоя зона: объявил редакцию — опубликуй её отдельным PR до выдачи карточек. Выход: вердикт (accept/rework/master), ответ или эта публикация. Проверяй по GitHub и фактам. Вопрос агента закрываешь вместо Мастера; Мастер — только где без него нельзя." });
 
     def("git.executor", { version: 2, ruleIds: ["R-GIT"], audience: ["Executor"], render: (c) => {
       const base = c.target?.baseBranch || "main";
@@ -10798,7 +10800,7 @@
       const base = c.target?.baseBranch || "main";
       const repo = c.target?.repo || "репозиторий документов";
       return `ПУБЛИКАЦИЯ РЕДАКЦИИ в ${repo}: ветка от origin/${base}; правь только ` +
-        "docs/missions/**, docs/handoff/**; подними номер в шапке файла (ТЗ N.M, редакция N.M) — ключ сверки; " +
+        "правь только процессные docs проекта; подними номер в шапке файла (ТЗ N.M, редакция N.M) — ключ сверки; " +
         `коммит, пуш, gh pr create --fill --base ${base}, gh pr merge <N> --merge. Direct push в ${base} запрещён. ` +
         "Карточки по неопубликованной редакции не выдаются.";
     } });
@@ -10865,14 +10867,14 @@
 
     // Текст СЖАТ, а не скопирован из прошлого проекта: до D-111 здесь стояли
     // «каталог игр», «доля/валюта/комиссия» и «ядро не open source без OSI» —
-    // термины прежнего продукта, которых в WOTR нет. Агент
+    // термины прежнего продукта, которых в проекте нет. Агент
     // читал запрет про каталог и не понимал, к чему он относится. Фаза не
     // называется в блоке намеренно: активная фаза меняется (сейчас Ф1), а
-    // правило остаётся. Источник фаз — docs/PHASES.md через краткий регламент.
+    // правило остаётся. Источник фаз — краткий регламент (вход сборки, D-003).
     def("phases.bans", { version: 3, ruleIds: ["R-PHASES"], render: () =>
       "Фазы: не опережай; retail read-only; AI/multiplayer — Ф8+; оракул не ослаблять. Package: адаптируй существующий launcher, не upstream binary/второй updater; strategy+tactical — один game process. Cost: build none/focused/full; retail none/reuse/hydrate; без tier нельзя full/hydrate." });
 
-    // WOTR-D-013: состав локалей теперь принят и обеспечен реальными каталогами
+    // внешний D-013: состав локалей теперь принят и обеспечен реальными каталогами
     // tools/l10n/catalog. Теги zh-Hans и pt-BR не сокращаются: это часть
     // публичного контракта, хотя plural rules могут делить реализацию с языком.
     // Локаль остаётся presentation-only и не входит в canonical hash.
@@ -11106,7 +11108,7 @@
     def("pilot.stop", { audience: ["pilot"], render: () =>
       "Финал — отчёт текстом: что сделано, как запущено, артефакты, журнал затруднений и допущения. Командные маркеры не используй." });
     def("pilot.repo", { audience: ["pilot"], render: (c) =>
-      `Репо: ${c.pilot?.repo || "Creative36711/open-bfme"}@${c.pilot?.startSha || "main"}, read-only; запись лишь в sandbox.` });
+      `Репо: ${c.pilot?.repo || c.repo || "—"}@${c.pilot?.startSha || "main"}, read-only; запись лишь в sandbox.` });
 
     def("delivery.recovery", { render: () =>
       "Это продолжение того же хода после сбоя доставки, не новая задача и не новая выдача. Сохрани все ID. Разбери снимок очереди и продолжи по правилам своей роли." });
@@ -11324,7 +11326,7 @@
       forbidden: ["queue.coordinator", "review.protocol"],
       budget: { overhead: 1500 },
     });
-    def("pilot.wotr", {
+    def("pilot.project", {
       audience: ["pilot"], marker: null,
       blocks: ["pilot.repo", "pilot.brief", "pilot.stop"],
       requiredFacts: ["pilot.brief", "pilot.startSha"],
@@ -11448,7 +11450,7 @@
         if (kind === "arbiter") return "continuation.arbiter";
         return "continuation.dispatch";
       }
-      if (kind === "pilot") return "pilot.wotr";
+      if (kind === "pilot") return "pilot.project";
       if (kind === "reminder") return "reminder.marker";
       if (kind === "plan") return tier === "recovery" || tier === "compact" ? "coordinator.recovery" : "coordinator.plan";
       if (kind === "review") return "reviewer.mission";
@@ -11544,7 +11546,7 @@
       const profileId = c.profileId || PROMPT_PROFILES.select(kind, fn, tier);
       const profile = PROMPT_PROFILES.profiles[profileId];
       if (!profile) return err("unknown_profile", `нет профиля для kind=${kind} fn=${fn} tier=${tier}`);
-      if (kind === "pilot" && !["pilot.wotr", "continuation.pilot"].includes(profileId)) return err("unknown_profile", "pilot обязан использовать pilot.wotr или continuation.pilot");
+      if (kind === "pilot" && !["pilot.project", "continuation.pilot"].includes(profileId)) return err("unknown_profile", "pilot обязан использовать pilot.project или continuation.pilot");
 
       for (const fact of profile.requiredFacts) {
         const v = get(c, fact);
@@ -11571,7 +11573,7 @@
         if (cond && !cond(c)) continue;
         // Аудитория: pilot-профиль не принимает командные блоки и наоборот.
         const aud = block.audience || [];
-        const isPilotProfile = profileId === "pilot.wotr" || profileId === "continuation.pilot";
+        const isPilotProfile = profileId === "pilot.project" || profileId === "continuation.pilot";
         const isPilotBlock = aud.includes("pilot");
         if (isPilotProfile !== isPilotBlock) {
           return err("forbidden_block", isPilotProfile ? `командный блок ${id} попал в pilot-профиль` : `pilot-блок ${id} попал в командный профиль`);
@@ -12171,7 +12173,7 @@
       .filter((value) => value !== undefined && value !== null && String(value).trim());
     const gap = (vals, expected) => {
       if (!vals.length) return "missing";
-      // WOTR-D-030: три исхода вместо двух. Не-UUID значение (обрезано «…»,
+      // внешний D-030: три исхода вместо двух. Не-UUID значение (обрезано «…»,
       // сдвинуто, записано словами) — формат-дефект той же природы, что и
       // отсутствие ID: чужая выдача не несёт обрезанный UUID, а напоминание
       // с точными ID закрывает такой ответ без остановки цикла. Conflict —
@@ -12240,7 +12242,7 @@
       const values = runValues(result);
       if (!values.length) return { checked: true, ok: false, reason: "absent" };
       if (!values.every((value) => looksLikeTypo(value, expect.runId))) {
-        // WOTR-D-030: причина отказа нужна журналу разбора: формат-дефект
+        // внешний D-030: причина отказа нужна журналу разбора: формат-дефект
         // (не-UUID) не должен представляться как «карточка несёт другие данные».
         const foreign = values.some((value) => isUuid(value) && norm(value) !== norm(expect.runId));
         return { checked: true, ok: false, reason: foreign ? "uuid" : "format" };
@@ -12338,7 +12340,7 @@
     let retained = false;
     if (!matchesDispatch(hit.result)) {
       retained = retainRejectedResult(expect, "dispatch-identity", replies);
-      // D-040 / WOTR-D-030: ID не указаны или присланы не в виде UUID —
+      // D-040 / внешний D-030: ID не указаны или присланы не в виде UUID —
       // формат-дефект, а не чужой ответ: напоминаем с точными ID (лестница
       // markerReminders), работу не повторяем. Полный чужой UUID — по-прежнему
       // сразу пауза для разбора.
@@ -12363,7 +12365,7 @@
           retainRejectedResult(expect, "dispatch-typo", replies);
           hit = { ...hit, result: { ...alignRunValues(hit.result, expect), run_id_typo: runValues(hit.result)[0] } };
         } else if (tied.checked) {
-          // WOTR-D-030: причина отказа называется честно: обрезанный ID —
+          // внешний D-030: причина отказа называется честно: обрезанный ID —
           // формат-дефект, а не «карточка несёт другие данные» (разбор K4).
           const sent = runValues(hit.result)[0]
             || [hit.result?.dispatch_id, hit.result?.dispatch, hit.result?.dispatchId]
@@ -13127,7 +13129,7 @@
       // Миссия нужна, чтобы ОТФИЛЬТРОВАТЬ чужие строки и закрыть просроченные.
       // Она не может быть условием самой передачи: без активной миссии (или
       // после ошибки её чтения) очередь приёмки стояла молча — строка
-      // остановки транспорта 22.11 не ушла адресату именно так (WOTR-D-023).
+      // остановки транспорта 22.11 не ушла адресату именно так (внешний D-023).
       let wanted = "";
       {
         let active = null;
@@ -13199,7 +13201,7 @@
                 if (tries > C.answerRehandoffMax) {
                   // Предел повторных передач — это уже не «очередь подождёт», а
                   // потерянная доставка: строка каждый раз остаётся без хода.
-                  // Разбирает транспорт по таблице классов (WOTR-D-019).
+                  // Разбирает транспорт по таблице классов (внешний D-019).
                   pause(
                     `Строка «${title}» передаётся приёмке ${tries} раз и каждый раз остаётся без хода: ` +
                       "в очереди ответа её нет, живого хода ответа, неотправленного задания и квитанции возврата тоже.",
@@ -13258,7 +13260,7 @@
   function watchQuestions() {
     // Интервал ставится и без допуска: вкладка, открытая до «Разрешить
     // работу», иначе так и не начинала передавать вопросы, а в журнале не
-    // было ни строки (WOTR-D-023).
+    // было ни строки (внешний D-023).
     if (questionsWatch) return;
     questionsWatch = window.setInterval(() => {
       if (!document.getElementById("cfn-projects")) refreshQuestions().catch(() => {});
@@ -13697,7 +13699,7 @@
     return Array.isArray(items) ? items : [];
   };
   /*
-   * Тело вопроса держит передачу приёмке ровно `C.questionBodyHoldMs` (WOTR-D-023).
+   * Тело вопроса держит передачу приёмке ровно `C.questionBodyHoldMs` (внешний D-023).
    * Пока запись тела живёт в очереди, строка «Ждёт» не уходит адресату: так и
    * должно, приёмка читает полный текст. Но прежнее ожидание не имело срока, и
    * любая ошибка PATCH (обрезанный ответ Notion, правка человека в теле,
@@ -13839,12 +13841,12 @@
     for (const item of questionBodies()) {
       // Одна битая строка не имеет права обрывать весь проход: раньше исключение
       // из этой петли выходило наружу, и очередь остальных вопросов в этом
-      // цикле не обрабатывалась вообще (WOTR-D-023).
+      // цикле не обрабатывалась вообще (внешний D-023).
       try {
       await withQuestionWriteLock(async () => {
         // Не `questionBodyPending` (он гаснет со сроком удержания), а факт
         // наличия записи: просроченную строку всё равно надо попробовать
-        // дописать, просто она больше не блокирует передачу (WOTR-D-023).
+        // дописать, просто она больше не блокирует передачу (внешний D-023).
         if (!questionBodyEntry(item.rowId)) return;
         const saved = await appendQuestionBody({ id: item.rowId }, item.q, item.ctx);
         if (!saved) return;
@@ -14143,7 +14145,7 @@
     // пришедший маркером), снова уходил бы «активному Reviewer», то есть
     // `need` жил бы только внутри одного хода.
     const named = blocks.match(/нужен ответ «([^»]+)»/i);
-    // WOTR-D-019: адресат читается из строки независимо от `gate`. `gate` решает,
+    // внешний D-019: адресат читается из строки независимо от `gate`. `gate` решает,
     // держать ли ход, а не кому отвечать; раньше метка «нужен ответ «X»» без
     // «ждёт ответа» терялась при первом же чтении из базы, и строка, которую
     // Мастер подписал Transport Maintainer'у, уходила Reviewer'у.
@@ -14724,7 +14726,7 @@
    * репозитория. Это факт, а не догадка.
    *
    * 09.11 (2-я редакция): ролей два репозитория, и документы лежат не там, где
-   * работает роль. У WOTR репозиторий один (`Creative36711/open-bfme`), и в
+   * работает роль. У проекта один репозиторий (задаёт профиль), и в
    * Notion «Репозиторий» роли-приёмки (`Warden`) назван именно он.
    * Поэтому читаем не `C.repo` (это репозиторий сессии роли), а
    * `C.docsRepo` → репозиторий роли-приёмки → `C.repo`. Иначе сверка ищет
@@ -14744,7 +14746,9 @@
     return String(C.repo || "");
   }
 
-  async function publishedTzVersion(file = C.queueDoc || "docs/PHASES.md") {
+  async function publishedTzVersion(file = C.queueDoc || "") {
+    // D-003: без явно заданного файла проекта сети нет — сверка неприменима.
+    if (!file) return null;
     const cache = GM_getValue("cfn-tz-published", null);
     const now = Date.now();
     const repo = canonicalTargetRepository(docsRepository());
@@ -15988,7 +15992,7 @@
         const why = `карточка «${taskTitle(card)}» не выдана: ${problem}`;
         if (misses >= 3) {
           GM_setValue("cfn-dispatch-miss", 0);
-          // WOTR-D-018: вид `redispatch` общий у двух причин, и адресат у них
+          // внешний D-018: вид `redispatch` общий у двух причин, и адресат у них
           // разный. Карточку отвергла повторная предполётная проверка — разошёлся
           // сам гейт транспорта, это его дефект и его разбор. Очередь правда
           // уехала (состояние, адресат, следы ответа) — решение за приёмкой.
@@ -16927,7 +16931,7 @@
       // сочетание не читал вовсе. Поле лежит в `q`, а не в `ctx`: так его
       // заполняет маркер, и так же его видят `askQuestion`/`startAnswer`.
       gate: q.gate === true,
-      // WOTR-D-019: адресат живёт в очереди и без `gate`. `gate` решает, держать ли
+      // внешний D-019: адресат живёт в очереди и без `gate`. `gate` решает, держать ли
       // ход, а не кому отвечать; раньше `need` обнулялся здесь, и строка,
       // подписанная в «Обратной связи» Transport Maintainer'у, теряла адресата
       // на пути в очередь и уходила Reviewer'у (или не уходила никуда).
@@ -17197,7 +17201,7 @@
         );
         return false;
       }
-      // WOTR-D-019: вопрос, который не держит ход, не имеет права занимать голову
+      // внешний D-019: вопрос, который не держит ход, не имеет права занимать голову
       // очереди. Прежний `return false` означал «строка висит, а цикл идёт»:
       // голова одна на всю очередь (`answerPending()`), и пока адресат не готов,
       // за ней не проходит ни одна другая строка. Отвечает приёмка; если решает
@@ -17712,7 +17716,7 @@
     // Durable return exists before the answer expectation and source queue are cleared.
     GM_setValue(K.expect, null);
     dropAnswer(expect.ref);
-    // WOTR-D-019: строка закрыта ответом — счётчик повторных передач больше не нужен.
+    // внешний D-019: строка закрыта ответом — счётчик повторных передач больше не нужен.
     // Без сброса следующая потеря доставки стартовала бы уже с предела.
     if (typeof resetAnswerRehandoff === "function") resetAnswerRehandoff(expect.ref);
     if (!answerRecorded) {
@@ -17947,7 +17951,7 @@
    *
    * В базе «Роли» зона пишется разными людьми и разным почерком: у Warden это
    * абзац («Решения по постановке и приёмке; код не трогает…»), у Locale
-   * Auditor — список с префиксом «open-bfme: ». Прежний разбор молча выбрасывал
+   * Auditor — список с префиксом имени репозитория. Прежний разбор молча выбрасывал
    * всё, что не похоже на glob, и зона превращалась в пустую: проверка
    * `scopeZoneIssue` тогда ничего не проверяла, а прозу читали как «зона есть».
    *
@@ -17960,7 +17964,7 @@
   const roleZoneGlobs = (roleZone) => {
     const out = [];
     for (const rawLine of String(roleZone || "").split(/[\n;]+/)) {
-      // Метка перед путями («open-bfme: », «Зона записи: ») — не путь, а подпись.
+      // Метка перед путями (имя репозитория, «Зона записи: ») — не путь, а подпись.
       // Раньше она приклеивалась к первому шаблону, и зона начиналась со
       // второго: у Locale Auditor `locales/**` молча выпадал.
       const line = rawLine.replace(/^\s*[^:\s][^:]{0,30}:\s*/, "").trim();
@@ -18299,7 +18303,7 @@
     // Перечтение проверяется ровно тем же гейтом, что и первый осмотр выше, —
     // включая зону адресата. Без третьего аргумента `unownedPaths` (D-092)
     // терял пропуск прозаической «Зоны записи» и отвергал карточку, которую
-    // первый осмотр пропустил: 21.11 WOTR-1.1 B0 встала на третьем таком
+    // первый осмотр пропустил: 21.11 внешняя карточка B0 встала на третьем таком
     // отказе, хотя её не меняли. Зона берётся из той же подтверждённой строки
     // «Ролей», что и при первом осмотре, — другой источник дал бы проверке
     // другой смысл.
@@ -18379,7 +18383,7 @@
     return true;
   }
 
-  // ───────────────────────── эфемерные пилоты WOTR-PILOT ─────────────────────────
+  // ───────────────────────── эфемерные пилоты проекта ─────────────────────────
   // Пилот — разовый прогон публичного брифа на отдельном Arena-агенте, URL
   // которого предоставляет Мастер вручную. Создание/клонирование агентов НЕ
   // реализовано (отдельное ТЗ). Состояние пилота живёт в собственном namespace
@@ -18418,7 +18422,7 @@
     let host = ""; let path = "";
     try { const u = new URL(clean); host = u.host; path = u.pathname; } catch { return { ok: false, error: "pilot URL не разбирается" }; }
     if (!/arena|e2b|app/i.test(host)) return { ok: false, error: "pilot URL не похож на страницу Arena-агента" };
-    if (!/^[0-9a-f]{40}$/i.test(String(startSha || ""))) return { ok: false, error: "startSha должен быть 40-hex SHA коммита WOTR target" };
+    if (!/^[0-9a-f]{40}$/i.test(String(startSha || ""))) return { ok: false, error: "startSha должен быть 40-hex SHA коммита target" };
     if (!pilotBriefClean(brief)) return { ok: false, error: "бриф содержит внутренние токены (CF_/Notion/aux-workspace/REGULATION/WARDEN/DECISIONS) или пуст" };
     const variant = pilotVariant(brief);
     if (!["A", "B", "C"].includes(variant)) return { ok: false, error: "бриф должен быть помечен вариантом A, B или C" };
@@ -18448,7 +18452,7 @@
     if (!pilot) return { ok: false, error: "пилот не зарегистрирован" };
     const envelope = PromptCompiler.compile({
       kind: "pilot", role: { fn: "pilot", name: `pilot-${pilot.variant}` },
-      pilot: { brief: pilot.brief, repo: "Creative36711/open-bfme", startSha: pilot.startSha },
+      pilot: { brief: pilot.brief, repo: (typeof C !== "undefined" && C.repo) || "", startSha: pilot.startSha },
       delivery: { tier: "full" },
     });
     if (!envelope.ok) return { ok: false, error: envelope.error.message };
@@ -18457,7 +18461,7 @@
       at: Date.now(), sentAt: 0, watermark: "", seen: [], status: "queued",
     });
     savePilots(listPilots().map((p) => (p.id === id ? { ...p, status: "queued" } : p)));
-    log(`Пилот ${pilot.variant} (${id.slice(0, 8)}) поставлен в очередь; перехожу на ${pilot.url}.`, true, { ntfy: "quiet", title: "Relay: пилот WOTR" });
+    log(`Пилот ${pilot.variant} (${id.slice(0, 8)}) поставлен в очередь; перехожу на ${pilot.url}.`, true, { ntfy: "quiet", title: "Relay: пилот проекта" });
     // D-045: очередь пилота и его статус доводим до хранилища до ухода со
     // страницы. Синхронный контракт сохраняем: вызывающий получает id сразу,
     // а переход выполняется по подтверждении записи.
@@ -18539,7 +18543,7 @@
   // задание, не шлём compact-retry и не напоминаем о маркере, не создаём новые
   // Run/turn/question IDs и не трогаем карточку Notion/PR/терминальные поля.
   //
-  // Числа продолжений не ограничены (WOTR-D-021): предупреждение о tool-call limit —
+  // Числа продолжений не ограничены (внешний D-021): предупреждение о tool-call limit —
   // штатная граница хода, а не ошибка, и останавливать цикл из-за счётчика значит
   // бросать начатую работу. Каждое продолжение требует нового статусного сообщения
   // и нового содержательного ответа, поэтому темп задаёт агент, а не цикл.
@@ -18629,7 +18633,7 @@
       return true;
     }
 
-    // Счётчика-предела нет (WOTR-D-021): предупреждение о лимите инструментов —
+    // Счётчика-предела нет (внешний D-021): предупреждение о лимите инструментов —
     // не ошибка, а штатная граница хода, и ход с прогрессом продолжат столько
     // раз, сколько он идёт. Единственные остановки здесь — отсутствие прогресса,
     // несобранный или недоставленный continuation и рабочая карточка Reviewer.
@@ -18719,7 +18723,7 @@
       pause(`Пилот ${pilot?.variant || ""}: ${why} Сырой транскрипт сохранён; нужен Мастер.`, { kind: "pilot-tool-limit", ref: wait.id });
       return true;
     };
-    // Предела по числу продолжений нет (WOTR-D-021); пилота останавливает только
+    // Предела по числу продолжений нет (внешний D-021); пилота останавливает только
     // отсутствие прогресса или несобранный continuation.
     if (done > 0) {
       const since = messagesAfter(wait.continuationWatermark || wait.watermark || "");
@@ -19855,7 +19859,7 @@
    *   • agent — создание агента в Arena, его Agent URL и доступы;
    *   • money — лицензии, ToS, деньги, секреты;
    *   • product — переход фазы, новая миссия, границы продукта.
-   * Код в `open-bfme` Мастеру не принадлежит — его пишет роль проекта; здесь его нет
+   * Код в репозитории проекта Мастеру не принадлежит — его пишет роль проекта; здесь его нет
    * намеренно, иначе «только человек» стало бы списком прав человека на код.
    */
   const MASTER_ONLY = ["install", "agent", "money", "product"];
@@ -20010,7 +20014,7 @@
     "answer-return-changed": "transport",
     "answer-return-lost": "transport",
     "orphan-answer-return": "transport",
-    // WOTR-D-019: строка «Обратной связи» передана приёмке и каждый раз остаётся без
+    // внешний D-019: строка «Обратной связи» передана приёмке и каждый раз остаётся без
     // хода — это потерянная доставка, а не решение Мастера. Цикл на ней не
     // стоит: разбор идёт Transport Maintainer'у, работа продолжается.
     "answer-orphan": "transport",
@@ -20073,7 +20077,7 @@
     "done-with-open": "master",
     "done-with-remarks": "master",
     // Вид общий у двух причин: петля перевыдач (её разматывает приёмка или
-    // арбитр — D-053) и отказ выдачи (WOTR-D-018). Класс описывает симптом,
+    // арбитр — D-053) и отказ выдачи (внешний D-018). Класс описывает симптом,
     // «нужен ход рассуждения»; адресат отказа повторной проверки поднимается
     // по тексту причины в `healDispatchDefectMatch` — там, где решение принимает
     // транспорт, приёмке писать нечего.
@@ -20218,7 +20222,7 @@
    * постановки. Тот же приём, что и с `reviewer-task-check`: признак берётся из
    * текста причины, потому что вид паузы `redispatch` общий у двух разных случаев.
    *
-   * 21.11 WOTR-1.1 B0: карточку выдать не удалось трижды. Каждый раз её
+   * 21.11 внешняя карточка B0: карточку выдать не удалось трижды. Каждый раз её
    * пропускал первый осмотр и отвергало перечтение перед созданием журнала —
    * «повторная предполётная проверка: пути Scope не входят в зону ни одной
    * активной роли». Карточку между этими двумя чтениями не трогали: разошёлся
@@ -21781,7 +21785,7 @@ function reviewPullRequest({ files, pr, zone } = {}) {
       return;
     }
     // Допуск есть — очередь обратной связи обязана жить, даже если панель
-    // монтировалась раньше, чем работа была разрешена (WOTR-D-023).
+    // монтировалась раньше, чем работа была разрешена (внешний D-023).
     if (typeof armFeedbackWatch === "function") armFeedbackWatch();
     if (typeof projectHeld === "function" && projectHeld()) {
       // fromToggle используется и отложенными автоматическими шагами: право
@@ -22071,7 +22075,7 @@ function reviewPullRequest({ files, pr, zone } = {}) {
       // Ответ на вопрос — не «чужой ход»: ход приёмки ставится отдельной
       // записью и снимает ожидание сам. Поэтому проверка идёт до ветки
       // ожидания и работает на любой странице.
-      // WOTR-D-019: очередь ответа не обгоняет живую выдачу — слот ожидания один, и
+      // внешний D-019: очередь ответа не обгоняет живую выдачу — слот ожидания один, и
       // это осознано. Неосознанным было молчание: пока слот занят, строка
       // приёмки могла ждать сутки, и в журнале про неё не было ни слова.
       if ((fromToggle || autoOn()) && expect && typeof noteAnswerStarved === "function") {

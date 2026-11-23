@@ -1,5 +1,5 @@
 {
-  "protocolVersion": "1.11",
+  "protocolVersion": "1.12",
   "sourceSha": "55517f6a79a0437921362537a0dd390f270df4f3",
   "generatedFrom": "tools/script-cat/contracts/agent-protocol.json",
   "markers": {
@@ -60,8 +60,8 @@
         "run_id": "8abe7712-1111-4a2b-9c3d-4e5f6a7b8c9d",
         "status": "submitted",
         "check": 0,
-        "report": "docs/reports/WOTR-1.1-K1.md",
-        "pr": "https://github.com/Creative36711/open-bfme/pull/41",
+        "report": "docs/reports/project-K1.md",
+        "pr": "https://github.com/example-org/fixture-source/pull/41",
         "merged": true
       },
       "invalid": [
@@ -2134,10 +2134,10 @@
       "wrongShape": "гейт сверки либо не находил опубликованный номер, либо сверял ответы с архивом"
     },
     "decision": [
-      "01-config: queueDoc = docs/PHASES.md — план фаз объявляет опубликованную редакцию",
+      "01-config: queueDoc — файл редакции очереди; с D-003 по умолчанию пусто (путь задаёт только явный вход проекта)",
       "25-legacy-adr: publishedTzVersion читает «ТЗ N.M», «редакция N.M» и «Версия N.M»",
-      "docs/PHASES.md: шапка «Версия **1.0**», правило фаз и миссий",
-      "docs/missions/TEMPLATE.md: шаблон ТЗ, номер которого сверяется с планом"
+      "план фаз проекта: шапка «Версия **1.0**», правило фаз и миссий",
+      "шаблон ТЗ проекта: номер которого сверяется с планом"
     ],
     "behaviour": [
       "ответ приёмки, объявляющий редакцию новее опубликованной, по-прежнему останавливается паузой answer-unpublished",
@@ -2198,11 +2198,11 @@
     "date": "2026-11-22",
     "decision": [
       "The relay-wotr workflow is one read-only aggregate check on PRs and pushes to main; checkout fetch-depth is zero so its preflight sees complete history and origin/main.",
-      "docs/DECISIONS.md is the transport D-### journal; docs/DECISIONS-UPSTREAM.md is the verbatim Open BFME WOTR decision mirror and excluded from transport decision counting."
+      "docs/DECISIONS.md is the transport D-### journal; foreign project journals are excluded from transport decision counting (the mirror path itself was removed by D-003)."
     ],
     "safety": [
       "No workflow secrets or write permissions; every external action is pinned to a full commit SHA.",
-      "Do not weaken preflight decision matching to accept WOTR-D headings; do not claim an absent public-tree auditor passed."
+      "Do not weaken preflight decision matching to accept foreign prefixed headings; do not claim an absent public-tree auditor passed."
     ],
     "evidence": {
       "workflow": ".github/workflows/scriptcat.yml",
@@ -2221,12 +2221,33 @@
     ],
     "safety": [
       "Ни одна проверка не выключается и не ослабляется: embedded-mirror зелёный до принятия нового пути; not run не становится pass, таймаут не становится skip; guard расширяется только добавлением паттернов.",
-      "Односторонняя зависимость: транспорт не знает о проектах; чужие номера WOTR-* не выделяются — журнал только D-###, чужие решения только цитатой; breaking-контракт = release + @version + новый D-###.",
+      "Односторонняя зависимость: транспорт не знает о проектах; чужие журнальные префиксы не выделяются — журнал только D-###, чужие решения только цитатой; breaking-контракт = release + @version + новый D-###.",
       "Секретов, токенов, retail-ссылок и персональных путей в git нет; новых capability нет — артефакты читаются существующим drive-gateway."
     ],
     "evidence": {
       "adr": "docs/DECISIONS.md#d-002",
       "report": "docs/evidence/TRANS-NEU-authority-adr.md"
+    }
+  },
+  "d003": {
+    "version": "1.17.0",
+    "title": "Транспорт без проектного содержимого: digest и профиль — вход сборки (шаг 2/2, вариант (б))",
+    "date": "2026-11-22",
+    "decision": [
+      "Одиннадцать проектных путей удалены из дерева транспорта: десять зеркальных процессных docs (регламент, краткий digest, план фаз, журнал решений проекта, два справочных файла агентов, три файла миссий) и файл профиля проекта в tools/script-cat. Их строк не остаётся ни в git-дереве, ни в собранном бандле, ни в guard-скане; полный список путей — в записи D-003 журнала docs/DECISIONS.md.",
+      "Сборка получает регламент входом: `node build.mjs [--check] [--digest <путь>]`. Без --digest бандл нейтральный (поле regulationDigest — пустая строка, placeholder остаётся в src). С --digest шапка «Версия N.N» обязана быть в самом файле, а сборка пишет contracts/build-manifest.json с {version, sha256}; --check сверяет bundle, coverage и manifest.",
+      "Проверка версии переехала на вход: assertDigestAgainstManifest сверяет шапку digest с build-manifest и возвращает null, когда manifest несёт digest: null — нейтральный бандл, проверка неприменима и показана явно, а не пропущена.",
+      "portability-guard расширен нейтральными паттернами проекта (имя, репозиторий, префиксы карточек, Notion/Drive id, процессные пути); прежние паттерны не выключены; UPSTREAM.md — единственное исключение для новых паттернов; всё, что на них падало, удалено тем же коммитом."
+    ],
+    "safety": [
+      "Ни одна проверка не выключается: прежние проверки guard действуют, not run не становится pass, таймаут не становится skip; удаление содержимого не удаляет оракул.",
+      "Транспорт не читает проектных репозиториев: вход только параметрами сборки; сверка редакции очереди без queueDoc не выполняет сетевых запросов.",
+      "Односторонняя зависимость: UPSTREAM.md — единственное исключение; чужие журнальные префиксы не выделяются, в журнале — только D-###.",
+      "Breaking-изменение оформлено своим release: @version 1.17.0, changelog в docs/scriptcat-update.md, protocolVersion 1.12, настоящая запись; правок в чужих репозиториях нет."
+    ],
+    "evidence": {
+      "adr": "docs/DECISIONS.md#d-003",
+      "report": "docs/evidence/TRANS-NEU-1.md"
     }
   }
 }

@@ -31,7 +31,7 @@ const bundle = readFileSync(join(scDir, 'relay.user.js'), 'utf8');
   assert.match(node, /export const CHECKS = \[/, 'список проверок записан в коде');
   assert.match(node, /shell: false/, 'оболочки нет: argv передаётся как есть');
   assert.equal(ALLOWED_PATHS.includes('tools/script-cat/'), true, 'зона правок названа явно');
-  assert.equal(ALLOWED_PATHS.includes('docs/'), true, 'WOTR process docs входят в transport release');
+  assert.equal(ALLOWED_PATHS.includes('docs/'), true, 'process docs входят в transport release');
   assert.equal(ALLOWED_PATHS.includes('AGENTS.md'), true, 'корневой агентный контракт входит в transport release');
   assert.equal(ALLOWED_PATHS.includes('tools/modeling/'), false, 'product tooling не маскируется под transport release');
 }

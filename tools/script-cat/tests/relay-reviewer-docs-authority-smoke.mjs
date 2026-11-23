@@ -46,7 +46,7 @@ assert.ok(!/ничего не правь — ни код, ни карточки,
 assert.match(reviewerBlock, /не правь чужую работу — ни код, ни карточки, ни постановку/,
   'запрет назван по предмету: чужая работа');
 assert.match(reviewerBlock, /Документы процесса в репозитории своей роли/, 'документы процесса — разрешены');
-assert.match(reviewerBlock, /docs\/missions\/\*\*/, 'граница названа путями, а не словом «документы»');
+assert.match(reviewerBlock, /docs\/DECISIONS\.md/, 'граница названа путями, а не словом «документы»');
 assert.match(reviewerBlock, /docs\/handoff\/\*\*/, 'очередь входит в ту же границу');
 assert.match(reviewerBlock, /опубликуй её отдельным PR до выдачи карточек/, 'сказано, что объявление ≠ публикация');
 
@@ -63,7 +63,7 @@ assert.match(gitDocs, /gh pr create --fill --base/, 'PR создаётся яв�
 assert.match(gitDocs, /gh pr merge <N> --merge/, 'мерж назван');
 assert.match(gitDocs, /Direct push в \$\{base\} запрещён/, 'прямой пуш запрещён и здесь');
 assert.match(gitDocs, /подними номер в шапке файла/, 'версия-ключ названа частью публикации');
-assert.match(gitDocs, /docs\/missions\/\*\*, docs\/handoff\/\*\*/, 'править можно только документы');
+assert.match(gitDocs, /правь только процессные docs проекта/, 'править можно только документы процесса');
 assert.match(gitDocs, /Карточки по неопубликованной редакции не выдаются/, 'связь с гейтом выдачи названа');
 assert.ok(!/annotations|код\b/.test(gitDocs.replace(/документы/g, '')), 'блок не открывает приёмке правку кода');
 

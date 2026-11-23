@@ -2,7 +2,7 @@
 // PromptCompiler; detectToolCallLimit и continueToolLimitTurn — из исходников.
 // Боевой цикл, Notion и Drive не используются: проверяется, что продолжение
 // сохраняет IDs и терминальные поля, дедуплицируется, идёт без счётчика-предела
-// (WOTR-D-021) и ставит паузу только на настоящем отказе.
+// (внешний D-021) и ставит паузу только на настоящем отказе.
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { PromptCompiler, UUID } from '../tests/helpers/prompt-env.mjs';
@@ -63,7 +63,7 @@ function buildEnv({ expect = null, pilots = [] } = {}) {
     GM_getValue: (k, d) => (store.has(k) ? store.get(k) : d),
     GM_setValue: (k, v) => store.set(k, v),
     K: { expect: 'expect', pending: 'pending', pilotWait: 'pw:', pilots: 'pilots' },
-    C: {}, // предела по числу продолжений нет (WOTR-D-021)
+    C: {}, // предела по числу продолжений нет (внешний D-021)
     pause: (text, ctx) => pauses.push({ text, ...(ctx || {}) }),
     log: (text, err) => logs.push({ text, err }),
     dbg: () => {},
@@ -144,7 +144,7 @@ const baseExpect = (over = {}) => ({
   assert.equal(env.journal.filter((x) => x.outcome === 'tool_limit_continued').length, 1);
 }
 
-// ── прогресс есть → продолжения идут и после прежнего предела (WOTR-D-021) ───
+// ── прогресс есть → продолжения идут и после прежнего предела (внешний D-021) ───
 {
   const env = buildEnv({ expect: baseExpect() });
   await env.api.handleToolCallLimit();
@@ -283,7 +283,7 @@ const baseExpect = (over = {}) => ({
 // ── pilot continuation: без CF_* и внутренних ссылок, свой namespace ─────────
 {
   const pilot = { id: 'pilot-1', variant: 'A', url: 'https://arena.ai/pilot' };
-  const wait = { id: 'pilot-1', url: 'https://arena.ai/pilot', sentAt: Date.now() - 1000, watermark: 'pwm-0', status: 'running', prompt: { profileId: 'pilot.wotr', metrics: { chars: 200, utf8Bytes: 200 } } };
+  const wait = { id: 'pilot-1', url: 'https://arena.ai/pilot', sentAt: Date.now() - 1000, watermark: 'pwm-0', status: 'running', prompt: { profileId: 'pilot.project', metrics: { chars: 200, utf8Bytes: 200 } } };
   const env = buildEnv({ pilots: [pilot] });
   env.store.set('pw:pilot-1', wait);
   const handled = await env.api.handleToolCallLimit();

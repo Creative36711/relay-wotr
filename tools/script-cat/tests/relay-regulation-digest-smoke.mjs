@@ -1,80 +1,104 @@
-// Проба краткого регламента: правила приходят агенту вместе с заданием.
+// Проба D-003: регламент проекта — вход сборки, а не содержимое репозитория.
 //
-// Зачем: транспорт отдавал регламент ссылкой, и агент читал ~50 блоков Notion
-// каждый ход. Дешевле (и надёжнее — не зависит от квоты и от обрезки ответов)
-// вшивать краткую версию в промпт. Опасность одна: вшитая копия устареет молча.
-// Поэтому проба сверяет три источника — текст, версию и бандл.
+// Обе границы проверяются честно:
+//   • закоммиченный бандл — нейтральный: поле regulationDigest пустое (явно,
+//     а не пропущено), placeholder остался в src, build-manifest несёт
+//     digest: null;
+//   • при digest: null сверка версии возвращает null — «неприменимо»
+//     показывается строкой в прогоне, не молчит и не становится pass;
+//   • переданный --digest подставляется в бандл, шапка «Версия N.N»
+//     сверяется с build-manifest этой же сборки, оба режима дают rc 0;
+//   • негативы: чужая версия — отказ сверки; файл без строки версии —
+//     отказ сборки (rc ≠ 0) с названной причиной.
 
-import { readFileSync } from 'node:fs';
 import { strict as assert } from 'node:assert';
 import {
-  DIGEST_MAX_CHARS,
-  assertDigestVersionMatches,
-  digestVersion,
-  normalizeDigest,
-  readEmbeddedDigest,
+  readFileSync, readdirSync, mkdtempSync, writeFileSync, rmSync, mkdirSync, copyFileSync,
+} from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, dirname } from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import {
+  assertDigestAgainstManifest, normalizeDigest, digestVersion, readEmbeddedDigest, DIGEST_PLACEHOLDER,
 } from '../regulation-oracle.mjs';
 
-const read = (path) => readFileSync(new URL(path, import.meta.url), 'utf8');
-const rawDigest = read('../../../docs/regulation-digest.md');
-const digest = normalizeDigest(rawDigest);
-const regulation = read('../../../docs/REGULATION.md');
-const bundle = read('../relay.user.js');
+const here = dirname(fileURLToPath(import.meta.url));
+const sc = join(here, '..');
 
-// ── 1. Источники совпадают ──────────────────────────────────────────────────
-assert.equal(
-  readEmbeddedDigest(bundle),
-  digest,
-  'вшитый регламент в relay.user.js разошёлся с docs/regulation-digest.md: пересоберите бандл',
-);
-assertDigestVersionMatches(digest, regulation);
-assert.match(digest, /## 1\. Архитектура/, 'в краткой версии есть архитектурные границы');
-assert.match(digest, /## 2\. Роли/, 'в краткой версии есть раздел ролей');
-assert.match(digest, /## 3\. Зоны и Git/, 'в краткой версии есть зоны и Git-гейты');
-assert.match(digest, /## 4\. Фазы и ход/, 'в краткой версии есть фазовый цикл');
+// ── 1. Закоммиченный бандл: нейтральный режим ──────────────────────────────
+const src = readFileSync(join(sc, 'relay.user.js'), 'utf8');
+assert.equal(readEmbeddedDigest(src), '', 'нейтральный бандл: блок регламента пуст');
+const manifest = JSON.parse(readFileSync(join(sc, 'contracts', 'build-manifest.json'), 'utf8'));
+assert.equal(manifest.schema, 'scriptcat-build-manifest', 'manifest пишет сборка');
+assert.equal(manifest.digest, null, 'build-manifest нейтральной сборки: digest null');
+const naVersion = assertDigestAgainstManifest('', manifest);
+assert.equal(naVersion, null, 'при digest: null сверка версии возвращает null — неприменима');
+console.log('неприменимо (явно): сверка версии регламента отсутствует — переданного digest нет (digest: null)');
 
-// 1.0. Агент обязан получить из промпта WOTR repo, transport gate и ключевые
-//      продуктовые границы — без обращения к прежнему проекту.
-assert.match(digest, /Creative36711\/open-bfme/, 'назван целевой репозиторий полным именем');
-assert.match(digest, /tools\/script-cat/, 'назван каталог транспорта');
-assert.match(digest, /npm run verify:scriptcat/, 'названа полная команда проверки транспорта');
-assert.match(digest, /WotrRemaster/, 'названо отдельное стратегическое ядро');
-assert.match(digest, /OpenBFME Godot Nightly/, 'назван tactical runtime');
-assert.match(digest, /Vanilla RotWK 2\.01/, 'назван первый tactical profile');
-assert.match(digest, /Retail assets не копируются/, 'retail boundary встроена');
+const cfg = readFileSync(join(sc, 'src', '01-config.js'), 'utf8');
+assert.ok(cfg.includes(DIGEST_PLACEHOLDER), 'placeholder @@REGULATION_DIGEST@@ остаётся в src');
+assert.ok(!src.includes('@@REGULATION_DIGEST@@'), 'в собранном бандле placeholder подставлен');
 
-// 1.1. Служебные заметки остаются в файле, но в промпт не попадают.
-assert.ok(rawDigest.includes('<!-- build:meta -->'), 'в файле есть маркер служебных заметок');
-assert.doesNotMatch(digest, /build:meta|Примечание для сопровождающего/, 'служебные заметки не идут в промпт');
-assert.doesNotMatch(digest, /Пересоберите|пересоберите бандл/, 'инструкции по сборке не путаются с правилами');
+// ── 2. Временная копия инструментов: режимы --digest и нейтральный ─────────
+const tmp = mkdtempSync(join(tmpdir(), 'd003-digest-'));
+try {
+  const fakePath = join(tmp, 'project-digest.md');
+  const fakeText = '# Краткий регламент проекта\n\nВерсия 9.9\n\n- Тестовое правило.\n';
+  writeFileSync(fakePath, fakeText, 'utf8');
+  assert.equal(digestVersion(fakeText), '9.9', 'шапка «Версия N.N» читается из самого файла');
+  assert.ok(normalizeDigest(fakeText).includes('Версия 9.9'), 'нормализация шапку сохраняет');
 
-// ── 2. Бюджет объёма ───────────────────────────────────────────────────────
-assert.ok(
-  digest.length <= DIGEST_MAX_CHARS,
-  `краткий регламент ${digest.length} знаков > ${DIGEST_MAX_CHARS}: вход хода обязан оставаться коротким`,
-);
-const fullLength = regulation.length;
-assert.ok(
-  digest.length * 2 < fullLength,
-  `краткая версия (${digest.length}) должна быть заметно короче полной (${fullLength})`,
-);
+  // Копия инструментов БЕЗ каталога docs: сборка не ищет и не читает docs.
+  const work = join(tmp, 'scriptcat');
+  mkdirSync(join(work, 'src'), { recursive: true });
+  mkdirSync(join(work, 'contracts'), { recursive: true });
+  for (const f of readdirSync(join(sc, 'src'))) copyFileSync(join(sc, 'src', f), join(work, 'src', f));
+  for (const f of readdirSync(join(sc, 'contracts'))) copyFileSync(join(sc, 'contracts', f), join(work, 'contracts', f));
+  copyFileSync(join(sc, 'build.mjs'), join(work, 'build.mjs'));
+  for (const f of ['version-oracle.mjs', 'regulation-oracle.mjs', 'coverage-oracle.mjs', 'fingerprint-oracle.mjs']) {
+    copyFileSync(join(sc, f), join(work, f));
+  }
+  const build = (args) => spawnSync(process.execPath, ['build.mjs', ...args], { cwd: work, encoding: 'utf8' });
 
-// ── 3. Правила регламента несут декларативные блоки, маркер — в конце ─────
-const { PromptCompiler, dispatchRequest, planRequest } = await import('./helpers/prompt-env.mjs');
-const exec = PromptCompiler.compile(dispatchRequest('Executor'));
-const coord = PromptCompiler.compile(planRequest());
-// Обязательные правила регламента покрыты ruleId блоков (K-14: версии раздельны).
-for (const id of ['R-PHASES', 'R-I18N', 'R-REPO-BOUNDARY', 'R-MARKER']) assert.ok(exec.ruleIds.includes(id), `executor: ${id}`);
-for (const id of ['R-QUEUE', 'R-MASTER-ONLY', 'R-D028']) assert.ok(coord.ruleIds.includes(id), `coordinator: ${id}`);
-// Маркер последней строкой — порядок часть контракта.
-assert.match(exec.text.trim().split('\n').at(-1), /^CF_AGENT_RESULT \{/);
-assert.match(coord.text.trim().split('\n').at(-1), /^CF_COORDINATOR_RESULT \{/);
+  // Положительный режим: регламент подставлен из входа, manifest несёт шапку и sha256.
+  const r1 = build(['--digest', fakePath]);
+  assert.equal(r1.status, 0, `сборка с --digest rc 0: ${r1.stderr}`);
+  assert.equal(readEmbeddedDigest(readFileSync(join(work, 'relay.user.js'), 'utf8')),
+    normalizeDigest(fakeText), 'регламент подставлен из входного файла');
+  const m1 = JSON.parse(readFileSync(join(work, 'contracts', 'build-manifest.json'), 'utf8'));
+  assert.equal(m1.digest.version, '9.9', 'manifest несёт шапку из входа');
+  assert.match(m1.digest.sha256, /^[0-9a-f]{64}$/, 'manifest несёт sha256');
+  assert.equal(assertDigestAgainstManifest(fakeText, m1), '9.9', 'digest сверяется с manifest (версия и sha)');
 
-// 3.2. Версия бандла поднята вместе с изменением промпта.
-assert.match(bundle, /\/\/ @version\s+1\.\d+\.\d+/, 'версия бандла поднята');
+  // --check той же сборки с тем же входом — rc 0.
+  const r2 = build(['--check', '--digest', fakePath]);
+  assert.equal(r2.status, 0, `--check с --digest rc 0: ${r2.stderr}`);
 
-assert.match(digest, /Формат финальной строки всегда стоит в самом конце задания/,
-  'правило «формат ответа — в конце задания» вшито в регламент');
-assert.equal(digestVersion(digest), digestVersion(regulation), 'версии копий совпадают');
+  // Негатив: чужая версия — сверка отказывает.
+  const foreignPath = join(tmp, 'foreign.md');
+  writeFileSync(foreignPath, '# Регламент\n\nВерсия 8.8\n\n- Другое правило.\n', 'utf8');
+  assert.throws(() => assertDigestAgainstManifest(readFileSync(foreignPath, 'utf8'), m1),
+    /не совпадает с build-manifest/, 'чужая версия отклоняется сверкой');
 
-console.log('OK: краткий регламент вшит в промпт, копии и версии совпадают');
+  // Негатив: нет строки «Версия N.N» — сборка отказывает с названной причиной.
+  const noVersionPath = join(tmp, 'no-version.md');
+  writeFileSync(noVersionPath, '# Регламент без версии\n\nПросто текст.\n', 'utf8');
+  const r3 = build(['--digest', noVersionPath]);
+  assert.notEqual(r3.status, 0, 'digest без шапки версии — сборка rc ≠ 0');
+  assert.match(String(r3.stderr), /Версия N\.N/, 'причина называет обязательную шапку');
+
+  // Нейтральный режим в той же копии (docs там отсутствует вовсе) — rc 0.
+  rmSync(join(work, 'relay.user.js'));
+  const r4 = build([]);
+  assert.equal(r4.status, 0, `нейтральная сборка без docs rc 0: ${r4.stderr}`);
+  assert.equal(readEmbeddedDigest(readFileSync(join(work, 'relay.user.js'), 'utf8')), '',
+    'без --digest регламент пуст');
+  const m4 = JSON.parse(readFileSync(join(work, 'contracts', 'build-manifest.json'), 'utf8'));
+  assert.equal(m4.digest, null, 'нейтральная сборка переписывает manifest в null');
+  assert.equal(assertDigestAgainstManifest('', m4), null, 'и сверка снова неприменима (null)');
+} finally {
+  rmSync(tmp, { recursive: true, force: true });
+}
+
+console.log('OK: регламент — вход сборки: нейтральный бандл пуст, --digest подставляется и сверяется, негативы отклоняются');

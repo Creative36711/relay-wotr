@@ -141,7 +141,7 @@
       .filter((value) => value !== undefined && value !== null && String(value).trim());
     const gap = (vals, expected) => {
       if (!vals.length) return "missing";
-      // WOTR-D-030: три исхода вместо двух. Не-UUID значение (обрезано «…»,
+      // внешний D-030: три исхода вместо двух. Не-UUID значение (обрезано «…»,
       // сдвинуто, записано словами) — формат-дефект той же природы, что и
       // отсутствие ID: чужая выдача не несёт обрезанный UUID, а напоминание
       // с точными ID закрывает такой ответ без остановки цикла. Conflict —
@@ -210,7 +210,7 @@
       const values = runValues(result);
       if (!values.length) return { checked: true, ok: false, reason: "absent" };
       if (!values.every((value) => looksLikeTypo(value, expect.runId))) {
-        // WOTR-D-030: причина отказа нужна журналу разбора: формат-дефект
+        // внешний D-030: причина отказа нужна журналу разбора: формат-дефект
         // (не-UUID) не должен представляться как «карточка несёт другие данные».
         const foreign = values.some((value) => isUuid(value) && norm(value) !== norm(expect.runId));
         return { checked: true, ok: false, reason: foreign ? "uuid" : "format" };
@@ -308,7 +308,7 @@
     let retained = false;
     if (!matchesDispatch(hit.result)) {
       retained = retainRejectedResult(expect, "dispatch-identity", replies);
-      // D-040 / WOTR-D-030: ID не указаны или присланы не в виде UUID —
+      // D-040 / внешний D-030: ID не указаны или присланы не в виде UUID —
       // формат-дефект, а не чужой ответ: напоминаем с точными ID (лестница
       // markerReminders), работу не повторяем. Полный чужой UUID — по-прежнему
       // сразу пауза для разбора.
@@ -333,7 +333,7 @@
           retainRejectedResult(expect, "dispatch-typo", replies);
           hit = { ...hit, result: { ...alignRunValues(hit.result, expect), run_id_typo: runValues(hit.result)[0] } };
         } else if (tied.checked) {
-          // WOTR-D-030: причина отказа называется честно: обрезанный ID —
+          // внешний D-030: причина отказа называется честно: обрезанный ID —
           // формат-дефект, а не «карточка несёт другие данные» (разбор K4).
           const sent = runValues(hit.result)[0]
             || [hit.result?.dispatch_id, hit.result?.dispatch, hit.result?.dispatchId]

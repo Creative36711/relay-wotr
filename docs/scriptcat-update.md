@@ -1,35 +1,35 @@
-# ScriptCat для WOTR Remaster
+# ScriptCat — журнал выпусков транспорта
 
-Сейчас **1.16.9**, локальная адаптация upstream 1.16.1.
+Сейчас **1.17.0**, локальная адаптация upstream 1.16.1.
 
 ## Источник и граница provenance
 
 Точный source repository, imported tree `fe8ec936…`, removal parent
 `eecb687…`, MIT license и команда воспроизведения находятся только в
 `tools/script-cat/UPSTREAM.md`. Это не operational target и не источник
-продуктовых правил. Текущий target задаёт только WOTR profile:
-`Creative36711/open-bfme@main`.
+продуктовых правил. Текущий target задаёт только профиль проекта: `owner/repo@branch` и связанные
+источники, передаваемые профилем; в git транспорта проектных значений нет.
 
 Regression fixtures сохраняют transport-семантику snapshot, но с 1.16.4
 обезличены до `CASE-*`/`fixture-*`: прежние product names, repositories и card
 prefixes не должны попадать ни в prompts, ни в comments/tests/contracts, где их
 может принять за текущие Transport Maintainer.
 
-## Выпуск 1.16.2 (WOTR-D-008)
+## Выпуск 1.16.2 (внешний D-008)
 
-Поведение доставки upstream 1.16.1 сохранено. Добавлены один WOTR target,
-`pilot.wotr`, WOTR roles/phases/retail/determinism gates и regulation 1.0.
+Поведение доставки upstream 1.16.1 сохранено. Добавлены один target проекта,
+профиль `pilot.project`, ролевые/фазовые/retail/determinism-гейты проекта и regulation 1.0.
 
-## Выпуск 1.16.3 (WOTR-D-014)
+## Выпуск 1.16.3 (внешний D-014)
 
 Transport protocol не менялся. Regulation 1.1 закрепил Upstream Integrator как
 Executor, единственного Transport Maintainer, declared build/retail Cost gates,
-точные локали `en`, `ru`, `zh-Hans`, `ja`, `pt-BR`, `de`, `fr`, `ko` и WOTR
-bootstrap preflight.
+точные локали `en`, `ru`, `zh-Hans`, `ja`, `pt-BR`, `de`, `fr`, `ko` и bootstrap
+preflight проекта.
 
-## Выпуск 1.16.4 (WOTR-D-017)
+## Выпуск 1.16.4 (внешний D-017)
 
-Transport protocol остаётся 1.11. Полная WOTR-адаптация source layer:
+Transport protocol остаётся 1.11. Полная адаптация source layer под проект:
 
 - embedded regulation 1.2 включает ADR-004 player entry, адаптацию существующего
   launcher/one-archive pipeline и миссию portable playtest;
@@ -44,10 +44,10 @@ Transport protocol остаётся 1.11. Полная WOTR-адаптация s
 - bundle regenerated из 45 source files и regulation digest; полный gate и
   artifact hash записаны в `docs/evidence/scriptcat-1.16.4.md`.
 
-## Выпуск 1.16.5 (WOTR-D-018)
+## Выпуск 1.16.5 (внешний D-018)
 
 Transport protocol остаётся 1.11; правила доставки, маркеры и бюджеты не менялись.
-Выпуск закрывает два дефекта выдачи, из-за которых WOTR-1.1 B0 трижды не выходила
+Выпуск закрывает два дефекта выдачи, из-за которых внешняя карточка B0 трижды не выходила
 на Integration Auditor, а разбор уезжал не тому адресату:
 
 - `27-review-answers.dispatchTask` перечитывает карточку перед созданием журнала тем
@@ -65,7 +65,7 @@ Transport protocol остаётся 1.11; правила доставки, ма�
 
 Полный gate и hashes сборки — в `docs/evidence/scriptcat-1.16.5.md`.
 
-## Выпуск 1.16.6 (WOTR-D-019)
+## Выпуск 1.16.6 (внешний D-019)
 
 Transport protocol остаётся 1.11; маркеры, профили, бюджеты и краткий регламент не менялись.
 Выпуск закрывает «цикл идёт, а вопрос в «Обратной связи» висит»: очередь адресата обязана
@@ -89,7 +89,7 @@ Transport protocol остаётся 1.11; маркеры, профили, бюд
 
 Полный gate и hashes сборки — в `docs/evidence/scriptcat-1.16.6.md`.
 
-## Выпуск 1.16.7 (WOTR-D-021)
+## Выпуск 1.16.7 (внешний D-021)
 
 Transport protocol остаётся 1.11; маркеры, профили, бюджеты и краткий регламент не менялись.
 Выпуск меняет одну политику остановки: предупреждение Arena о достижении лимита вызовов
@@ -117,7 +117,7 @@ Transport protocol остаётся 1.11; маркеры, профили, бюд
 
 Полный gate и hashes сборки — в `docs/evidence/scriptcat-1.16.7.md`.
 
-## Выпуск 1.16.8 (WOTR-D-023)
+## Выпуск 1.16.8 (внешний D-023)
 
 Transport protocol остаётся 1.11; маркеры, профили, бюджеты, гейты и краткий регламент не
 менялись. Выпуск закрывает класс «тихий простой транспорта»: строка «Обратной связи» могла
@@ -180,27 +180,49 @@ Godot World Engineer прислал обрезанный `run_id`, разбор 
 D-054 остаются зелёными. Сборка 1.16.9 (`@version` + `SCRIPT_VERSION`), бандл
 пересобран `node tools/script-cat/build.mjs`, полный `verify:scriptcat` зелёный.
 
-Запись выпуска — транспортная, настоящая секция выше. `docs/DECISIONS-UPSTREAM.md`
-транспорта — дословная зеркальная копия `open-bfme/docs/DECISIONS.md` (проверено:
-sha256 совпадает), и по WOTR-D-028 расходиться с ней задним числом нельзя; чужие
-номера `WOTR-*` как свои не выделяются (D-002, инвариант 3) — внешние решения
-допускаются только цитатой, а их канонические записи, если они появятся в журнале
-Open BFME, приезжают следующим синхроном зеркала.
+Запись выпуска — транспортная, настоящая секция выше. Зеркало журнала проекта
+удалено решением D-003 (1.17.0): транспорт проектных журналов не хранит; чужие
+номера как свои не выделяются (D-002, инвариант 3) — внешние решения
+допускаются только цитатой.
+
+## Выпуск 1.17.0 (D-003)
+
+Transport protocol поднят до 1.12 (contractVersion в контракте); @version и
+SCRIPT_VERSION — 1.17.0. Транспорт больше не хранит и не читает проектное
+содержимое (вариант (б) D-002, шаг 2/2):
+
+- удалены одиннадцать проектных путей: десять зеркальных процессных docs и файл
+  профиля проекта; ни в git-дереве, ни в бандле их строк не остаётся;
+- сборка получает регламент входом `--digest <путь>`; без параметра бандл
+  нейтральный, блок регламента пуст, rc 0;
+- каждая сборка пишет `contracts/build-manifest.json`; `--check` сверяет bundle,
+  coverage и manifest; проверка версии digest'а живёт на входе
+  (`assertDigestAgainstManifest`) и при `digest: null` показывает
+  «неприменимо» явно, а не молчит;
+- portability-guard расширен нейтральными паттернами проекта (имя, репозиторий,
+  префиксы карточек, Notion/Drive id, процессные пути); прежние проверки не
+  выключены; `UPSTREAM.md` — единственное исключение;
+- профиль проекта импортируется извне: в git транспорта проектных
+  идентификаторов больше нет;
+- изоляция двух sanitized-проектов в одном рантайме и удаление одного без
+  ущерба другому закреплены пробами.
+
+Полный gate и hashes сборки — в `docs/evidence/TRANS-NEU-1.md`.
 
 ## Установка
 
-1. Импортировать `tools/script-cat/wotr-project.json` через окно проектов
-   ScriptCat.
-2. Убедиться, что активная вкладка показывает **War Of The Ring: Remaster**,
-   `Creative36711/open-bfme@main` и Drive folder `wotr-remaster`.
+1. Импортировать файл профиля проекта (format `scriptcat-project-config`) через
+   окно проектов ScriptCat; сам файл проект передаёт вне репозитория транспорта.
+2. Убедиться, что активная вкладка показывает имя проекта, `owner/repo@branch`
+   и Drive folder из импортированного профиля.
 3. Сохранить Notion/GitHub/Gateway connections локально; secrets не входят в
    profile file.
-4. Зарегистрировать Drive profile `wotr-remaster` только через Gateway flow.
+4. Зарегистрировать Drive profile проекта только через Gateway flow.
 5. Проверить подключения и вручную разрешить профиль. Автоцикл остаётся
    выключен до ручного включения.
 6. Userscript устанавливает человек из принятого
    `tools/script-cat/relay.user.js` после сравнения SHA-256 с build report.
-7. Старый browser profile можно хранить изолированно, но вкладка WOTR не должна
+7. Старый browser profile можно хранить изолированно, но вкладка проекта не должна
    быть открыта под ним; ScriptCat fail-closed не подменяет отсутствующий профиль.
 
 ## Gate
@@ -214,9 +236,10 @@ npm run test:scriptcat:tool-limit
 ```
 
 Либо `npm run verify:scriptcat`. Успех: каждый процесс rc 0, Node summary
-`# fail 0`, bundle version equals runtime fallback, embedded digest equals source,
-coverage contains all rule IDs, а full-tree guard не находит прежних product/card
-идентификаторов вне строго разрешённой provenance-записи.
+`# fail 0`, bundle version equals runtime fallback, build-manifest соответствует
+входу сборки (или digest null — сверка показана как неприменимая), coverage
+содержит все rule IDs, а full-tree guard не находит проектных и прежних
+product/card идентификаторов вне строго разрешённой provenance-записи.
 
 ## Обновление
 
@@ -233,8 +256,13 @@ No plain-semver bump is required when the only source changes are restoration of
 
 The 2026-11-22 operational mirror sync embeds regulation 1.3. The normalized digest is 7,588 characters (limit 9,000); the full regulation and digest versions must travel in the same change. Bundle SHA-256 after regeneration: `4d10f303cbfd9672daf3917c2f6c6a9a9aaeb6b22a980c7bc4ed66b2fa9924ac`. The digest-only change does not require a plain-semver bump because the version gate checks `src/**` only.
 
+(Историческая запись: механизм зеркала и digest-only исключение удалены решением
+D-003 — регламент проекта приходит входом `--digest`, без него бандл нейтральный.)
+
 ## Transport-local CI gate
 
 `.github/workflows/scriptcat.yml` is transport-owned, not part of the upstream docs mirror. It runs one aggregate check on pull requests and pushes to `main`, on GitHub-hosted runners with `contents: read`, no secrets and full-SHA-pinned actions. Checkout uses `fetch-depth: 0` and `persist-credentials: false`, so the zone preflight can see complete history and `origin/main` without repository write access. The workflow runs the full ScriptCat verification, installs `PyYAML==6.0.3` and validates its own YAML via `yaml.safe_load`, then invokes preflight. Making the aggregate check required in branch protection is a repository-owner setting.
 
-Transport-only decision/journal and workflow details live here; upstream `docs/**` mirrors are copied verbatim except the two paths explicitly excluded by the mirror rule.
+Transport-only decision/journal and workflow details live here; since D-003 the
+repository carries no project docs mirrors — foreign decisions appear in this
+journal only as citations (D-002, D-003).

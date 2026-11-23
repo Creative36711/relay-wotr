@@ -1,4 +1,4 @@
-# Notion contract · WOTR Remaster
+# Notion contract · проект
 
 IDs and URLs: `docs/setup/notion-ids.md`. ScriptCat uses data source IDs.
 
@@ -6,7 +6,7 @@ IDs and URLs: `docs/setup/notion-ids.md`. ScriptCat uses data source IDs.
 
 Source of role authority. Human-managed: role title, Status, Agent URL, Agent Admin and archive/delete. Warden/approved planning may define Function, write zone, gate and repository for non-admin roles. Agent State `запрошен` asks provisioning; it does not activate a role by itself.
 
-A working row needs exact Function understood by ScriptCat (`Executor`, `Auditor`, `Coordinator`, `Reviewer`, `Maintainer`), repository `Creative36711/open-bfme`, an explicit zone/gate, `Активна`, and a valid Arena URL. Only Warden is an admin/reviewer role for mission acceptance; engineering roles never receive that privilege by name.
+A working row needs exact Function understood by ScriptCat (`Executor`, `Auditor`, `Coordinator`, `Reviewer`, `Maintainer`), repository `owner/repo` (задаёт профиль), an explicit zone/gate, `Активна`, and a valid Arena URL. Only Warden is an admin/reviewer role for mission acceptance; engineering roles never receive that privilege by name.
 
 ## Миссии
 

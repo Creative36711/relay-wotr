@@ -1,12 +1,12 @@
-# Агентный контур WOTR Remaster
+# Агентный контур транспорта
 
-ScriptCat 1.16.8 доставляет карточки между четырьмя базами Notion и Arena-агентами. Он не заменяет регламент, GitHub или продуктовый oracle.
+ScriptCat 1.17.0 доставляет карточки между четырьмя базами Notion и Arena-агентами. Он не заменяет регламент, GitHub или продуктовый oracle.
 
 ## Источники истины
 
-1. `docs/REGULATION.md` — полномочия и запреты.
-2. `docs/PHASES.md` — продуктовая последовательность.
-3. `docs/missions/<ID>.md` — версия намерения, invariants, Scope и финальный oracle.
+1. Регламент проекта — полномочия и запреты (в репозитории проекта).
+2. План фаз проекта — продуктовая последовательность (в репозитории проекта).
+3. ТЗ миссии `<ID>` — версия намерения, invariants, Scope и финальный oracle (в репозитории проекта).
 4. Notion «Роли» — живой состав, zones, gates and Agent URLs.
 5. Notion «Миссии/Запросы» — состояние очереди.
 6. GitHub commit/PR/merge and reproducible artifacts — факт работы.
@@ -17,11 +17,9 @@ ScriptCat 1.16.8 доставляет карточки между четырьм
 - `markers.md` — exact machine markers;
 - `notion.md` — базы и authority;
 - `drive.md` — logs/payloads/artifacts;
-- `cost-gates.md` — declared build/retail tiers, full-build triggers and Drive hydration policy;
 - `pr-rules.md` — Git safety and preflight;
 - `onboarding.md` — подключение роли;
-- `troubleshooting.md` — отказ без потери identity;
-- `roles/` — инструкции функций и WOTR specializations.
+- `roles/` — инструкции функций и специализации ролей проекта.
 
 ## Главный принцип
 

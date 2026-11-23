@@ -21,7 +21,7 @@
       Тихие (priority 2): задание отправлено, ответ записан, пауза снята.<br>
       Громкие (priority 5): только когда цикл остановлен. Громкий тест — тоже только на паузе или при выключенном цикле.</div>
       <label style="display:block;margin-bottom:6px">Топик или ссылка<br>
-        <input id="cfn-ntfy-topic" placeholder="arena-wotr-remaster" style="${inputStyle()}"></label>
+        <input id="cfn-ntfy-topic" placeholder="arena-project-topic" style="${inputStyle()}"></label>
       <label style="display:block;margin-bottom:6px">Access token (необязательно)<br>
         <input id="cfn-ntfy-token" type="password" placeholder="tk_…" style="${inputStyle()}"></label>
       <div style="display:flex;gap:6px;flex-wrap:wrap">

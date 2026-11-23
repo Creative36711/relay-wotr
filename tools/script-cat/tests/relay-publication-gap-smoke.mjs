@@ -34,7 +34,7 @@ const sliceBetween = (start, end) => {
 const published = {
   version: '1.5',
   queue: '1.7',
-  file: 'docs/PHASES.md',
+  file: 'docs/queue-plan.md',
 };
 
 // Границы берём по задачам, а не по комментариям: границы блоков — якоря сборки,
@@ -67,19 +67,22 @@ assert.equal(publicationGaps('ТЗ 1.6, но опубликованного не
 const tzFrom = src.indexOf('async function publishedTzVersion(');
 const readTz = src.slice(tzFrom, src.indexOf('\n  /**', tzFrom + 10));
 assert.ok(readTz.length > 400, 'блок чтения редакции найден');
-assert.match(readTz, /api\.github\.com\/repos\/\$\{repo\}\/contents\//, 'читается файл репозитория, а не Notion');
+assert.match(readTz, /if \(!file\) return null;/, 'D-003: без явного файла проекта сети нет — сверка неприменима');
+assert.match(readTz, /api\.github\.com\/repos\/\$\{repo\}\/contents\//, 'с явным файлом читается файл репозитория, а не Notion');
 assert.match(readTz, /ref=\$\{encodeURIComponent\(C\.branch \|\| "main"\)\}/, 'ветка по умолчанию — main');
 assert.match(readTz, /редакция\\s\*\\\*\*\\s\*\(\\d\+\\\.\\d\+\)/, 'номер редакции очереди разбирается из шапки');
 assert.match(readTz, /cfn-tz-published/, 'результат кешируется, чтобы не долбить API');
 assert.match(readTz, /return cache && cache\.file === file \? cache : null;/, 'сбой чтения не выдумывает версию');
 
-// ── 4. Шапка документа действительно в таком виде ───────────────────────────
-// D-108: до первой миссии гейт читает план фаз; формы «редакция»/«ТЗ» остаются
-// теми же, что у очереди миссии, поэтому проверка не ослаблена — она про форму.
-const doc = readFileSync(new URL('../../../docs/PHASES.md', import.meta.url), 'utf8');
-const head = doc.split('\n').slice(0, 6).join('\n');
-assert.match(head, /Редакция\s*\**\s*1\.\d+/i, 'в шапке плана есть номер редакции');
-assert.match(doc.slice(0, 2000), /Ф0|фаза/i, 'план называет фазы');
+// ── 4. Транспорт не хранит план проекта ─────────────────────────────────────
+// D-003: зеркальный план фаз удалён; сверка живёт только на явно заданном
+// входе, по умолчанию — неприменимо (проверено выше по src).
+{
+  const cfgSrc = readFileSync(new URL('../src/01-config.js', import.meta.url), 'utf8');
+  assert.match(cfgSrc, /queueDoc: ""/, 'по умолчанию проектных файлов нет');
+  const banned = ['docs/', 'PHASES'].join('');
+  assert.equal(src.includes(banned), false, 'в бандле нет проектного пути плана фаз');
+}
 
 // ── 5. Гейт подключён к приёмке и классифицирован ────────────────────────────
 assert.match(
@@ -91,7 +94,7 @@ assert.match(src, /kind: "answer-unpublished"/, 'пауза названа св�
 assert.match(src, /"answer-unpublished": "transport",/, 'пауза транспорта, а не Мастера');
 
 // ── 6. Канал публикации существует, а не подразумевается ─────────────────────
-assert.match(src, /queueDoc: "docs\/PHASES\.md"/, 'место редакции задано конфигом');
+assert.match(src, /queueDoc: ""/, 'D-003: место редакции задаёт только явный вход');
 assert.match(src, /telemetryRepo: ""/, 'служебные коммиты в проект не пишутся (D-086)');
 
 console.log('ok 1 - tests/relay-publication-gap-smoke.mjs');

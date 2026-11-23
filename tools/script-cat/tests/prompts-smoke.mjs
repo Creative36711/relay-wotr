@@ -13,7 +13,7 @@ const BUDGETS = {
   'executor.card': 2800, 'auditor.card': 2200, 'coordinator.plan': 3400, 'coordinator.recovery': 1500,
   'reviewer.mission': 2400, 'reviewer.answer': 1800, 'reviewer.card': 2000, 'reminder.marker': 700,
   'reviewer.arbiter': 2400, 'continuation.arbiter': 700,
-  'delivery.compact': 1500, 'pilot.wotr': 250,
+  'delivery.compact': 1500, 'pilot.project': 250,
 };
 const TOTALS = {
   'executor.card': 8000, 'auditor.card': 5500, 'coordinator.plan': 7500, 'reviewer.mission': 7000,
@@ -202,7 +202,7 @@ for (const req of cases) {
 // с короткой зоной; боевая зона Spec Auditor ~150 зн. и пробила бюджет. Лечение:
 // coordinator.prime/drive.artifacts урезаны, marker.agent аудитора не учит pr/merged.
 {
-  const longZone = 'docs/agents/**, tools/script-cat/**, contracts/**, docs/DECISIONS.md, docs/REGULATION.md, docs/design/**, docs/process/**, docs/agents/roles/**';
+  const longZone = 'docs/agents/**, tools/script-cat/**, contracts/**, docs/DECISIONS.md, docs/scriptcat-update.md, docs/design/**, docs/process/**, docs/agents/roles/**';
   const k20 = dispatchRequest('Auditor', {
     task: { ...task(), title: 'CASEB-1 · K-20 · Промежуточный независимый аудит O-8' },
     role: { name: 'Spec Auditor', fn: 'Auditor', zone: longZone },
@@ -219,7 +219,7 @@ for (const req of cases) {
 
 // 15. D-036: длинная зона Координатора + прайм маркера влезают в coordinator.plan.
 {
-  const longZone = 'docs/agents/**, tools/script-cat/**, contracts/**, docs/DECISIONS.md, docs/REGULATION.md, docs/design/**, docs/process/**, docs/agents/roles/**, docs/adr/**';
+  const longZone = 'docs/agents/**, tools/script-cat/**, contracts/**, docs/DECISIONS.md, docs/scriptcat-update.md, docs/design/**, docs/process/**, docs/agents/roles/**, docs/adr/**';
   const r = PromptCompiler.compile(planRequest({ role: { name: 'Coordinator', fn: 'Coordinator', zone: longZone } }));
   assert.ok(r.ok, `plan с длинной зоной компилируется: ${r.error?.message}`);
   // D-092: бюджет профиля 3400 — подъём за инструкцию о процессных полях «Ролей»
@@ -236,7 +236,7 @@ for (const req of cases) {
 // бюджет overhead защищает инструкции, а не длину данных Мастера. Здесь
 // проверяются именно предельные данные, а не фикстура.
 {
-  const zone = 'docs/agents/**, tools/script-cat/**, contracts/**, docs/DECISIONS.md, docs/REGULATION.md, docs/design/**, docs/process/**, docs/agents/roles/**, docs/adr/**';
+  const zone = 'docs/agents/**, tools/script-cat/**, contracts/**, docs/DECISIONS.md, docs/scriptcat-update.md, docs/design/**, docs/process/**, docs/agents/roles/**, docs/adr/**';
   const longMission = {
     id: '4126f0cf-5705-819c-89c3-c1566cf5b67a',
     name: 'CASEB-3 · Транспорт и укомплектованность миссии (D-063…D-075)',

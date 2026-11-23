@@ -13,7 +13,7 @@
 // (возможно, ответ прошлой выдачи → сразу пауза). Значения ID не
 // подменяются ни в одном случае; запись в Notion по неверному ID не идёт.
 //
-// WOTR-D-030 (22.11.2026): уточнение D-040. Значение, которое прислано, но не
+// внешний D-030 (22.11.2026): уточнение D-040. Значение, которое прислано, но не
 // является UUID (обрезано «…», сдвинуто, записано словами), — формат-дефект той
 // же природы, что и отсутствие ID: чужая выдача не несёт обрезанный UUID с тем
 // же префиксом времени. Инцидент K4: Godot World Engineer сдал работу и прислал
@@ -67,8 +67,8 @@ assert.equal(dispatchIdState({ status: 'submitted' }, expect), 'missing', 'ма�
 assert.equal(dispatchIdState({ dispatch_id: OTHER, run_id: RUN }, expect), 'conflict', 'чужой dispatch — пауза');
 assert.equal(dispatchIdState({ dispatch_id: CARD, run_id: OTHER }, expect), 'conflict', 'чужой run — пауза');
 assert.equal(dispatchIdState({ dispatch_id: CARD, dispatch: OTHER, run_id: RUN }, expect), 'conflict', 'противоречащий синоним — пауза');
-// WOTR-D-030: не-UUID значение — формат-дефект, лестница, не пауза.
-assert.equal(dispatchIdState({ dispatch_id: 'битый-id', run_id: RUN }, expect), 'missing', 'битый dispatch — лестница (WOTR-D-030)');
+// внешний D-030: не-UUID значение — формат-дефект, лестница, не пауза.
+assert.equal(dispatchIdState({ dispatch_id: 'битый-id', run_id: RUN }, expect), 'missing', 'битый dispatch — лестница (внешний D-030)');
 assert.equal(dispatchIdState({ dispatch_id: CARD, run_id: 'afdeaec4-…' }, expect), 'missing', 'обрезанный run — лестница (инцидент K4)');
 assert.equal(dispatchIdState({ dispatch_id: '41f6f0cf-…', run_id: RUN }, expect), 'missing', 'обрезанный dispatch — лестница');
 assert.equal(dispatchIdState({ dispatch_id: '41f6f0cf-…', run_id: 'afdeaec4-…' }, expect), 'missing', 'оба обрезаны — лестница');
@@ -86,7 +86,7 @@ assert.match(submit, /return markerMissing\(role, expect, "CF_AGENT_RESULT", man
 assert.match(submit, /kind: "marker-mismatch"/, 'чужие/битые ID по-прежнему пауза');
 // Напоминание идёт после сохранения копии ответа — работа не теряется.
 assert.ok(submit.indexOf('retainRejectedResult(expect, "dispatch-identity"') < submit.indexOf('dispatchIdState(hit.result'), 'копия ответа сохраняется до классификации');
-// WOTR-D-030: отказ в конфликтной ветке называет причину честно: формат-дефект
+// внешний D-030: отказ в конфликтной ветке называет причину честно: формат-дефект
 // не должен представляться как «карточка несёт другие данные» (разбор K4).
 assert.match(src, /reason: foreign \? "uuid" : "format"/, 'typoTiedToCard различает формат-дефект и чужие данные');
 assert.match(src, /прислал Run ID в неполном виде/, 'журнал видит обрезанный ID как «в неполном виде»');
@@ -104,6 +104,6 @@ assert.ok(reminder.text.includes(UUID.run), 'в напоминании есть 
 assert.ok(reminder.text.length <= 900, `reminder why=ids в тотал-бюджете 900 (${reminder.text.length})`);
 
 console.log(
-  `OK: relay ${V} — D-040/WOTR-D-030: маркер без dispatch_id/run_id и маркер с не-UUID ID напоминают с точными ID ` +
+  `OK: relay ${V} — D-040/внешний D-030: маркер без dispatch_id/run_id и маркер с не-UUID ID напоминают с точными ID ` +
     '(лестница markerReminders), полные чужие UUID — пауза, значения ID не подменяются',
 );

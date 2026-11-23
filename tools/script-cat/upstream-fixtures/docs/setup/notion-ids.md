@@ -44,15 +44,15 @@ Locale & UX Auditor
 
 | Что | page_id | Для чего |
 |---|---|---|
-| Регламент команды FixtureWorkspace (полный, v1.1) | страница в Notion создаётся Мастером из `docs/REGULATION.md` | справочник: человек и Warden |
-| **Регламент · краткая версия (вход для агентов)** | вшита в бандл; репозиторная копия `docs/regulation-digest.md` | вход агента в каждом ходе |
-| План фаз и журнал исходных решений | `docs/PHASES.md` | опубликованная редакция; шапку читает гейт D-086 |
-| ТЗ · V-1-1 · 3D-модели под бюджет телефона | `docs/missions/V-1-1.md` | ТЗ миссии фазы 1 |
-| V-1-1 · очередь карточек | `docs/missions/V-1-1-card-queue.md` | редакция очереди |
+| Регламент команды FixtureWorkspace (полный, v1.1) | страница в Notion создаётся Мастером из `docs/regulation.md` | справочник: человек и Warden |
+| **Регламент · краткая версия (вход для агентов)** | вшита в бандл; репозиторная копия `docs/regulation-brief.md` | вход агента в каждом ходе |
+| План фаз и журнал исходных решений | `docs/phases.md` | опубликованная редакция; шапку читает гейт D-086 |
+| ТЗ · V-1-1 · 3D-модели под бюджет телефона | `docs/tasks/V-1-1.md` | ТЗ миссии фазы 1 |
+| V-1-1 · очередь карточек | `docs/tasks/V-1-1-card-queue.md` | редакция очереди |
 
 Краткая версия с 1.8.0 приходит в промпте: страницу для этого открывать не нужно. `pageUrl` в
 профиле — ссылка на справочник (полная страница). Совпадение вшитого текста с
-`docs/regulation-digest.md` проверяет `npm run verify`.
+`docs/regulation-brief.md` проверяет `npm run verify`.
 
 ## 3. Профиль ScriptCat
 
@@ -105,7 +105,7 @@ Locale & UX Auditor
 
 | Роль | Функция | Зона записи |
 |---|---|---|
-| Warden | Reviewer | `docs/missions/**`, `docs/REGULATION.md`, `docs/DECISIONS.md` |
+| Warden | Reviewer | `docs/tasks/**`, `docs/regulation.md`, `docs/DECISIONS.md` |
 | Coordinator | Coordinator | Notion: «Миссии», «Запросы» |
 | Executor App | Executor | `frontend/**`, `bot/**`, `backend/src/api/**`, сервисы без платежей |
 | Executor Chain | Executor | `backend/src/services/ton.ts`, `services/chain/**`, админ-выводы |
@@ -123,13 +123,13 @@ Locale & UX Auditor
 
 `V-1-1 · 3D-модели и сцены под бюджет телефона`, `Состояние = Активна`, `Круг = 0`,
 `Координатор` — ссылка на строку Coordinator в «Ролях».
-ТЗ: `docs/missions/V-1-1.md` (Версия ТЗ 1.2), очередь: `docs/missions/V-1-1-card-queue.md`
+ТЗ: `docs/tasks/V-1-1.md` (Версия ТЗ 1.2), очередь: `docs/tasks/V-1-1-card-queue.md`
 (редакция 1.1, ТЗ 1.2).
-Строка `CASEC-1` из исходного планирования остаётся в корзине Notion как история; файлы — в `docs/missions/archive/`.
+Строка `CASEC-1` из исходного планирования остаётся в корзине Notion как история; файлы — в `docs/tasks/archive/`.
 
 **12.11 карточка активна** (по указанию Мастера): транспорт нарезал очередь, K1 `Draft` у
 Platform Architect, Мастер запускает цикл. Номер версии ТЗ в шапке обязан совпасть с
-`docs/PHASES.md` (сейчас 1.2) — это сверяет `relay-repo-visibility-smoke`.
+`docs/phases.md` (сейчас 1.2) — это сверяет `relay-repo-visibility-smoke`.
 
 ### «Обратная связь»
 

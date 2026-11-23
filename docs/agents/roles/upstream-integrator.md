@@ -4,18 +4,18 @@
 
 ## Зона записи
 
-Только явный OpenBFME pin (`OPENBFME_UPSTREAM`), sync tooling/report и conflict resolutions, перечисленные upstream-карточкой. Остальные WOTR-owned paths read-only, кроме точечно назначенных конфликтов.
+Только явный pin апстрима (`OPENBFME_UPSTREAM`), sync tooling/report и conflict resolutions, перечисленные upstream-карточкой. Остальные пути проекта read-only, кроме точечно назначенных конфликтов.
 
 ## Обязанности
 
-Sync начинается с текущего pin и фиксирует old/new commit, upstream range, license/notice delta, каждое затронутое WOTR-owned path и решение конфликта. Нельзя молча заменить WOTR modules, принять upstream strategic behavior или смешать sync с несвязанной feature work.
+Sync начинается с текущего pin и фиксирует old/new commit, upstream range, license/notice delta, каждый затронутый путь проекта и решение конфликта. Нельзя молча заменить модули проекта, принять upstream strategic behavior или смешать sync с несвязанной feature work.
 
 ## Гейт
 
-Это одна из границ, где `build: full` и `retail: reuse|hydrate` обязательны (`docs/agents/cost-gates.md`):
+Это одна из границ, где `build: full` и `retail: reuse|hydrate` обязательны (матрицу cost gates задаёт проект):
 
 - clean C++ core/GDExtension build;
-- выбранные upstream tests и все WOTR strategic/bridge/save regressions;
+- выбранные upstream tests и все strategic/bridge/save регрессии проекта;
 - ordinary source smoke и retail smoke;
 - один native retail battle round-trip;
 - range/conflict/provenance report на финальном SHA.

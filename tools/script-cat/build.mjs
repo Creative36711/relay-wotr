@@ -1,11 +1,19 @@
 // Склеивает части в одну closure. Изменение метаданных может создать новую
 // установку и новое хранилище; см. порядок переноса в INSTALL.md.
+//
+// D-003: регламент проекта — вход сборки, а не содержимое репозитория.
+//   node build.mjs                     → нейтральный бандл, пустой блок регламента;
+//   node build.mjs --digest <путь>     → регламент подставляется из входного файла;
+//   node build.mjs [--check] [--digest <путь>] → сверка с закоммиченными артефактами.
+// Каждая сборка записывает contracts/build-manifest.json: шапка и sha256
+// переданного digest'а (или null для нейтрального бандла).
 import { readFile, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { assertUserscriptVersionContract } from './version-oracle.mjs';
-import { assertDigestVersionMatches, inlineDigest, normalizeDigest } from './regulation-oracle.mjs';
+import { digestVersion, inlineDigest, normalizeDigest } from './regulation-oracle.mjs';
 import { assertPromptCoverage } from './coverage-oracle.mjs';
 import { buildFingerprint, inlineFingerprint } from './fingerprint-oracle.mjs';
 
@@ -24,20 +32,45 @@ const parts = [
   '28-cycle.js', '29-boot.js',
 ];
 const read = (name) => readFile(join(here, 'src', name), 'utf8');
-// Каталог docs ищем вверх от комплекта: так сборка работает и в репозитории,
-// и в изолированной временной копии, где docs лежит рядом с build.mjs.
-const findDocs = () => {
-  let dir = here;
-  for (let depth = 0; depth < 5; depth += 1) {
-    const candidate = join(dir, 'docs');
-    if (existsSync(join(candidate, 'regulation-digest.md'))) return candidate;
-    dir = dirname(dir);
+// D-003: регламент — вход сборки. `--digest <путь>` читает переданный файл и
+// требует шапку «Версия N.N» в самом файле; без параметра бандл нейтральный,
+// блок регламента пуст. Каталог docs сборка не ищет и проектных копий не читает.
+const parseArgv = (args) => {
+  const out = { check: false, digest: null };
+  for (let i = 0; i < args.length; i += 1) {
+    const arg = args[i];
+    if (arg === '--check') { out.check = true; continue; }
+    if (arg !== '--digest') throw new Error('Usage: node build.mjs [--check] [--digest <путь>]');
+    const value = args[i + 1];
+    if (out.digest !== null || value === undefined || value.startsWith('--')) {
+      throw new Error('Usage: node build.mjs [--check] [--digest <путь>]');
+    }
+    out.digest = value;
+    i += 1;
   }
-  throw new Error('docs/regulation-digest.md не найден: сборка без краткого регламента невозможна');
+  return out;
 };
-const docs = findDocs();
-const digest = normalizeDigest(await readFile(join(docs, 'regulation-digest.md'), 'utf8'));
-assertDigestVersionMatches(digest, await readFile(join(docs, 'REGULATION.md'), 'utf8'));
+const { check, digest: digestArg } = parseArgv(process.argv.slice(2));
+let digest = '';
+let digestMeta = null; // null | {version, sha256} — то, что уходит в build-manifest
+if (digestArg !== null) {
+  const digestRaw = await readFile(digestArg, 'utf8');
+  const digestHeaderVersion = digestVersion(digestRaw);
+  if (!digestHeaderVersion) {
+    throw new Error(`${digestArg}: в шапке digest'а нет строки «Версия N.N» — версия не сверяема`);
+  }
+  digest = normalizeDigest(digestRaw);
+  digestMeta = {
+    version: digestHeaderVersion,
+    sha256: createHash('sha256').update(digestRaw).digest('hex'),
+  };
+}
+// Manifest — то, что сверяет последующая сборка с этой: digest в нём либо
+// описан целиком (version + sha256), либо null — «нейтральный бандл, регламент
+// не передавался» (сверка в этом случае неприменима, а не пропущена).
+const manifest = { schema: 'scriptcat-build-manifest', version: 1, digest: digestMeta };
+const manifestJson = `${JSON.stringify(manifest, null, 2)}\n`;
+const manifestPath = join(here, 'contracts', 'build-manifest.json');
 // D-073: отпечаток считается по источнику ДО подстановки самого отпечатка и
 // регламента — иначе он зависел бы от собственного значения. Номер версии и
 // отпечаток независимы: номер говорит «какой выпуск», отпечаток — «какая сборка».
@@ -69,21 +102,31 @@ const coverageJson = JSON.stringify(coverageMap, null, 2) + '\n';
 const coveragePath = join(here, 'contracts', 'prompt-coverage.json');
 
 const output = join(here, 'relay.user.js');
-if (process.argv.slice(2).some((arg) => arg !== '--check')) throw new Error('Usage: node build.mjs [--check]');
-if (process.argv.includes('--check')) {
+if (check) {
   const current = await readFile(output, 'utf8');
   if (source !== current) {
-    console.error('relay.user.js устарел: выполните node _tools/ScriptCat/build.mjs');
+    console.error('relay.user.js устарел: выполните node tools/script-cat/build.mjs');
     process.exitCode = 1;
   } else console.log(`ScriptCat bundle соответствует ${parts.length + 1} исходным файлам.`);
   const currentCoverage = existsSync(coveragePath) ? await readFile(coveragePath, 'utf8') : '';
   if (coverageJson !== currentCoverage) {
-    console.error('contracts/prompt-coverage.json устарел: выполните node build.mjs');
+    console.error('contracts/prompt-coverage.json устарел: выполните node tools/script-cat/build.mjs');
     process.exitCode = 1;
   } else console.log(`Coverage: ${Object.keys(coverageMap.ruleToBlocks).length} ruleId покрыты блоками и профилями.`);
+  const currentManifest = existsSync(manifestPath) ? await readFile(manifestPath, 'utf8') : '';
+  if (manifestJson !== currentManifest) {
+    console.error('contracts/build-manifest.json устарел: выполните node tools/script-cat/build.mjs');
+    process.exitCode = 1;
+  } else {
+    console.log(manifest.digest
+      ? `Build-manifest: digest ${manifest.digest.version} (sha256 сверяется по мере поступления входа).`
+      : 'Build-manifest: digest null — нейтральный бандл, сверка digest неприменима (показана явно).');
+  }
 } else {
   await writeFile(output, source, 'utf8');
   await writeFile(coveragePath, coverageJson, 'utf8');
-  console.log(`Собран ${output} из ${parts.length + 1} исходных файлов.`);
+  await writeFile(manifestPath, manifestJson, 'utf8');
+  console.log(`Собран ${output} из ${parts.length + 1} исходных файлов${digestArg === null ? ' (нейтральный регламент: --digest не передан)' : ` (регламент: ${digestArg}, ${digestMeta.version})`}.`);
   console.log(`Coverage: ${Object.keys(coverageMap.ruleToBlocks).length} ruleId → blocks → profiles записан в contracts/prompt-coverage.json.`);
+  console.log(`Build-manifest: ${manifest.digest ? `digest ${manifest.digest.version}, sha256 ${manifest.digest.sha256}` : 'digest null (нейтральный бандл)'} → contracts/build-manifest.json.`);
 }
