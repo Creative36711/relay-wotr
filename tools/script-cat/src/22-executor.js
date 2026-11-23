@@ -141,7 +141,14 @@
       .filter((value) => value !== undefined && value !== null && String(value).trim());
     const gap = (vals, expected) => {
       if (!vals.length) return "missing";
-      if (!isUuid(expected) || vals.some((value) => !isUuid(value) || norm(value) !== norm(expected))) return "conflict";
+      // WOTR-D-030: три исхода вместо двух. Не-UUID значение (обрезано «…»,
+      // сдвинуто, записано словами) — формат-дефект той же природы, что и
+      // отсутствие ID: чужая выдача не несёт обрезанный UUID, а напоминание
+      // с точными ID закрывает такой ответ без остановки цикла. Conflict —
+      // только полный чужой UUID (в любом поле) или несверяемое ожидание.
+      if (!isUuid(expected)) return "conflict";
+      if (vals.some((value) => isUuid(value) && norm(value) !== norm(expected))) return "conflict";
+      if (vals.some((value) => !isUuid(value))) return "missing";
       return "ok";
     };
     const d = gap(values(["dispatch_id", "dispatch", "dispatchId"]), expect.ref);
@@ -198,11 +205,15 @@
       const page = await notion("GET", `pages/${expect.ref}`);
       const run = rt(page?.properties?.["Run ID"]).trim();
       const owner = rt(page?.properties?.["Recipient Agent ID"]).trim();
-      if (!run || norm(run) !== norm(expect.runId)) return { checked: true, ok: false };
-      if (role?.id && owner && norm(owner) !== norm(role.id)) return { checked: true, ok: false };
+      if (!run || norm(run) !== norm(expect.runId)) return { checked: true, ok: false, reason: "card" };
+      if (role?.id && owner && norm(owner) !== norm(role.id)) return { checked: true, ok: false, reason: "card" };
       const values = runValues(result);
-      if (!values.length || !values.every((value) => looksLikeTypo(value, expect.runId))) {
-        return { checked: true, ok: false };
+      if (!values.length) return { checked: true, ok: false, reason: "absent" };
+      if (!values.every((value) => looksLikeTypo(value, expect.runId))) {
+        // WOTR-D-030: причина отказа нужна журналу разбора: формат-дефект
+        // (не-UUID) не должен представляться как «карточка несёт другие данные».
+        const foreign = values.some((value) => isUuid(value) && norm(value) !== norm(expect.runId));
+        return { checked: true, ok: false, reason: foreign ? "uuid" : "format" };
       }
       return { checked: true, ok: true };
     } catch {
@@ -297,9 +308,10 @@
     let retained = false;
     if (!matchesDispatch(hit.result)) {
       retained = retainRejectedResult(expect, "dispatch-identity", replies);
-      // D-040: маркер есть, но ID выдачи не указаны — это формат-дефект, а не
-      // чужой ответ. Напоминаем с точными ID (лестница markerReminders), работу
-      // не повторяем. Чужие/битые ID — по-прежнему сразу пауза для разбора.
+      // D-040 / WOTR-D-030: ID не указаны или присланы не в виде UUID —
+      // формат-дефект, а не чужой ответ: напоминаем с точными ID (лестница
+      // markerReminders), работу не повторяем. Полный чужой UUID — по-прежнему
+      // сразу пауза для разбора.
       if (dispatchIdState(hit.result, expect) === "missing") {
         return markerMissing(role, expect, "CF_AGENT_RESULT", manual, "ids");
       }
@@ -321,12 +333,25 @@
           retainRejectedResult(expect, "dispatch-typo", replies);
           hit = { ...hit, result: { ...alignRunValues(hit.result, expect), run_id_typo: runValues(hit.result)[0] } };
         } else if (tied.checked) {
-          log(
-            `${role.name} прислал Run ID не этой выдачи (${runValues(hit.result)[0]} вместо ${expect.runId}) — ` +
-              "это не опечатка: карточка несёт другие данные. Ответ не принимаю.",
-            true,
-            { ntfy: "quiet" },
-          );
+          // WOTR-D-030: причина отказа называется честно: обрезанный ID —
+          // формат-дефект, а не «карточка несёт другие данные» (разбор K4).
+          const sent = runValues(hit.result)[0]
+            || [hit.result?.dispatch_id, hit.result?.dispatch, hit.result?.dispatchId]
+              .map((value) => (value == null ? "" : String(value).trim())).find(Boolean)
+            || "—";
+          const detail = tied.reason === "format"
+            ? "значение не UUID (обрезано или искажено), карточка этой выдачи согласована — ответ не принимаю: нужен повтор маркера с полными ID этой выдачи."
+            : tied.reason === "absent"
+              ? "в маркере нет run_id — ответ не принимаю."
+              : tied.reason === "uuid"
+                ? "это не опечатка: полный UUID, не совпадающий с выдачей — ответ не принимаю."
+                : "это не опечатка: карточка несёт другие данные. Ответ не принимаю.";
+          const subject = tied.reason === "format"
+            ? `прислал Run ID в неполном виде (${sent} вместо ${expect.runId})`
+            : tied.reason === "absent"
+              ? `не прислал run_id (dispatch_id ${sent} вместо ${expect.ref})`
+              : `прислал Run ID не этой выдачи (${sent} вместо ${expect.runId})`;
+          log(`${role.name} ${subject} — ${detail}`, true, { ntfy: "quiet" });
         }
       }
     }

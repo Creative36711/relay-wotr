@@ -319,8 +319,8 @@ const makeHarness = ({ activeMission, maxTries = 3, holdMs = 1800000 }) => {
 }
 
 // ── 5. Оформление выпуска и настройки ───────────────────────────────────────
-assert.match(src, /^\/\/ @version\s+1\.16\.8\s*$/m, 'WOTR-сборка 1.16.8 объявлена');
-assert.match(src, /\|\| "1\.16\.8";/, 'SCRIPT_VERSION совпадает с @version');
+assert.match(src, /^\/\/ @version\s+1\.16\.9\s*$/m, 'WOTR-сборка 1.16.9 объявлена');
+assert.match(src, /\|\| "1\.16\.9";/, 'SCRIPT_VERSION совпадает с @version');
 {
   const from = at('  const C = {');
   const cfg = src.slice(from, src.indexOf('\n  };', from));
