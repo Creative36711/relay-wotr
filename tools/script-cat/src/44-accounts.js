@@ -504,21 +504,6 @@
       : { wrong: true, seen, expected, label: accountLabel(label), why: `роль «${role?.name || role?.id}» закреплена за «${accountLabel(label)}» (${expected}), а вкладка на ${seen}` };
   }
 
-  /**
-   * Пауза «вкладка не на том аккаунте».
-   *
-   * Переключение аккаунта — действие в браузере (контейнер), а не в скрипте:
-   * поэтому пауза адресована Мастеру и говорит, какой контейнер открыть. Автоподмена
-   * `location` тут была бы вредна: она уводит вкладку в чужой контейнер молча.
-   */
-  function accountMismatchPause(verdict, ref = "") {
-    pause(
-      `${verdict.why}. Откройте эту роль в контейнере «${verdict.label}», затем нажмите «Продолжить»; ` +
-        "адрес входа в базе не хранится, а вкладку скрипт не переключает.",
-      { kind: "account-wrong", ref },
-    );
-  }
-
   /** Короткая проверка без ожидания подписи: для мест, где пауза была бы шумом. */
   const accountLimitBlocks = (role) => {
     const hit = accountBlocked(roleAccount(role));

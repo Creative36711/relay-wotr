@@ -195,9 +195,10 @@ const roleRow = (name, extra = {}) => ({
     'лимит административного аккаунта — класс master');
   assert.equal(HEAL_MASTER_ONLY['account-limit-admin'], 'money',
     'адресат — пункт money: квота аккаунта');
-  assert.equal(HEAL_PAUSE_CLASS['account-wrong'], 'master',
-    'вкладка не на том аккаунте — решение принимает человек');
-  assert.equal(HEAL_MASTER_ONLY['account-wrong'], 'agent', 'контейнер открывает Мастер');
+  // Расхождение аккаунтов паузой не ставится: контейнер меняет человек, а
+  // `pause` общая на все вкладки — остановка одной погасила бы остальные три.
+  assert.equal(HEAL_PAUSE_CLASS['account-wrong'], undefined, 'расхождение аккаунтов — не общая пауза');
+  assert.equal(HEAL_MASTER_ONLY['account-wrong'], undefined, 'и не попадает в адресаты пауз');
   assert.ok(HEAL_HOLDING.includes('account-limit-admin'), 'административный лимит держит цикл');
   assert.ok(!HEAL_HOLDING.includes('account-limit'), 'лимит рабочего аккаунта не пауза');
   assert.equal(healHoldsCycle('account-limit-admin', 'Лимит аккаунта account-1'), true,
