@@ -100,4 +100,44 @@ const cycle = src('28-cycle.js');
   assert.match(idle, /wakeOnce\(/, 'уход из-за чужого аккаунта будит нужную вкладку');
 }
 
-console.log('OK: D-007 (1.18.3) — задание уносит только своя вкладка: перед переходом спрашиваем, чья страница');
+// ── 6. Возврат хода Координатору — та же проверка ──────────────────────────
+//
+// 24.11, 22:25: ход возвращался Координатору, а вкладка стояла на странице
+// UX & Modding Auditor (другой контейнер). Подпись сайдбара была свёрнута до
+// иконок (`icon-collapsed`), прежняя проверка ответила «сравнивать нечего», и
+// переход открыл адрес Координатора чужим аккаунтом — тот же отказ, что D-007
+// вылечил для отправки задания, только в другой двери.
+{
+  const navSrc = cycle.slice(cycle.indexOf('async function navigateTo(role, why) {'));
+  const navBlock = navSrc.slice(0, navSrc.indexOf('const from = location.pathname'));
+
+  // Подпись сайдбара остаётся первым свидетелем…
+  assert.match(navBlock, /accountMismatchSync\(role\)/, 'прежняя проверка по подписи сайдбара осталась');
+  // …но не единственным: когда подписи нет, спрашиваем страницу.
+  assert.match(navBlock, /typeof accountPageCheck === "function"/, 'переход спрашивает, чья страница');
+  assert.match(navBlock, /page\.verdict === "foreign"/, 'чужой аккаунт — отдельная ветка');
+  const assignAt = navSrc.indexOf('location.assign(role.url)');
+  const checkAt = navSrc.indexOf('await accountPageCheck(role)');
+  assert.ok(checkAt > 0 && assignAt > 0 && checkAt < assignAt, 'проверка идёт до открытия страницы');
+  // Отказ не забывает разбудить нужную вкладку: иначе ход ждал бы Мастера.
+  const refuse = navSrc.slice(checkAt, assignAt);
+  assert.match(refuse, /wakeOnce\(/, 'отказ будит вкладку, чей это аккаунт');
+  assert.match(refuse, /return false;/, 'страница не открывается');
+  // Своя страница проверку проходит: адрес роли в своём контейнере — норма.
+  assert.match(navBlock, /norm\(roleFromPath\(\)\) !== norm\(role\.id\)/, 'страница-владелец проверку пропускает');
+}
+
+// ── 7. Очередь не снимается до того, как переход разрешён ──────────────────
+{
+  const goToSrc = polls.slice(polls.indexOf('async function goTo(role)'));
+  const goToBlock = goToSrc.slice(0, goToSrc.indexOf('\n  }') + 4);
+  const checkAt = goToBlock.indexOf('accountPageCheck(role)');
+  const clearAt = goToBlock.indexOf('GM_setValue(K.pending, null)');
+  assert.ok(checkAt > 0, 'возврат хода спрашивает, чья страница');
+  assert.ok(clearAt > checkAt, 'очередь чистится только после разрешённого перехода');
+  const refuse = goToBlock.slice(checkAt, clearAt);
+  assert.match(refuse, /return false;/, 'на чужой странице очередь и карточка остаются');
+  assert.match(refuse, /Очередь и карточку не трогаю|не трогаю/, 'Мастеру сказано, что ход не потерян');
+}
+
+console.log('OK: D-007/D-008 (1.18.4) — задание уносит только своя вкладка: перед переходом спрашиваем, чья страница');

@@ -53,6 +53,32 @@
         return false;
       }
     }
+    // D-008: подпись сайдбара — не единственный свидетель.
+    //
+    // 24.11, 22:25: ход возвращался Координатору, а вкладка стояла на странице
+    // UX & Modding Auditor (другой контейнер). Подпись там была свёрнута до
+    // иконок (`icon-collapsed`), проверка выше ответила «сравнивать нечего», и
+    // переход открыл адрес Координатора ЧУЖИМ аккаунтом — ровно тот же отказ,
+    // что D-007 вылечил для отправки задания.
+    //
+    // Здесь спрашиваем то же, что и перед отправкой: чья страница? Это не
+    // запрет на переход, а выбор: чужая страница отдаёт ход своей вкладке
+    // (её будит `wakeOnce`), своя — переходит как обычно.
+    if (role && norm(roleFromPath()) !== norm(role.id) && typeof accountPageCheck === "function") {
+      const page = await accountPageCheck(role).catch(() => ({ verdict: "unknown" }));
+      if (page.verdict === "foreign") {
+        logThrottled(
+          `page-nav:${role.id}`,
+          `Не открываю «${role.name}»: страница открыта аккаунтом ${page.seen}, а роль закреплена за ` +
+            `«${page.label}» (${page.expected}). Переход внутри контейнера не переключает аккаунт — ` +
+            "ход заберёт вкладка этого аккаунта.",
+          false,
+          600_000,
+        );
+        if (typeof wakeOnce === "function") wakeOnce(`nav:${role.id}`, `роль «${role.name}» живёт в другой вкладке`);
+        return false;
+      }
+    }
     const from = location.pathname || "/";
     const last = GM_getValue("cfn-nav", null);
     const recent =

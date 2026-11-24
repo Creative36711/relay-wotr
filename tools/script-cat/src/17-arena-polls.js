@@ -1456,10 +1456,33 @@
 
   /** Перейти на страницу роли без задания: используется для возврата хода. */
   async function goTo(role) {
+    // D-008: страница не наша — очередь не трогаем.
+    //
+    // `goTo` живёт в ветке «ответ записан, ход возвращается Координатору», и
+    // раньше она снимала очередь ДО перехода. На чужой странице переход
+    // запрещён (D-008), и снятая очередь означала бы потерянный ход: работа
+    // просто исчезла бы. Поэтому сначала спрашиваем, чья страница, и только
+    // потом чистим.
+    const hereMe = typeof roleFromPath === "function" ? roleFromPath() : "";
+    if (norm(hereMe) !== norm(role.id) && typeof accountPageCheck === "function") {
+      const page = await accountPageCheck(role).catch(() => ({ verdict: "unknown" }));
+      if (page.verdict === "foreign") {
+        logThrottled(
+          `goto-foreign:${role.id}`,
+          `Ход возвращается «${role.name}», но страница открыта аккаунтом ${page.seen}, а роль закреплена за ` +
+            `«${page.label}» (${page.expected}). Очередь и карточку не трогаю: ход заберёт вкладка этого аккаунта.`,
+          false,
+          600_000,
+        );
+        if (typeof wakeOnce === "function") wakeOnce(`nav:${role.id}`, `ход возвращается «${role.name}»`);
+        return false;
+      }
+    }
     GM_setValue(K.pending, null);
     GM_setValue("cfn-me", role.name);
     setStatus();
     await navigateTo(role, "туда возвращается ход");
+    return true;
   }
 
   // Одно и то же ожидание не должно заливать журнал каждые пару секунд.
