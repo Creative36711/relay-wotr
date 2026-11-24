@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Relay — передача хода между агентами
 // @namespace    https://arena.ai/
-// @version      1.18.3
+// @version      1.18.4
 // @description  Цикл Координатор → исполнитель → Координатор: агент сам коммитит, пушит и мержит PR; ScriptCat ждёт мерж и нажимает Continue.
 // @match        https://arena.ai/*
 // @match        https://www.arena.ai/*
@@ -93,7 +93,7 @@
     // D-073: отпечаток сборки вшивает build.mjs (SHA-256 источника). Номер версии
     // говорит «какой выпуск», отпечаток — «какая именно сборка»: без него проверка
     // «работает новая версия, а не прежняя под новым номером» невозможна.
-    buildFingerprint: "3ee7ef17d2f78ed2",
+    buildFingerprint: "3fbe245d5d3c0e48",
     repo: "", // для ссылки на PR из номера
     tickMs: 15000,
     mergeGraceMs: 90000, // сколько ждём мерж, прежде чем нажать кнопки за агента
@@ -798,7 +798,7 @@
 
   const NTFY_BASE = "https://ntfy.sh";
   const SCRIPT_VERSION =
-    (typeof GM_info !== "undefined" && GM_info?.script?.version) || "1.18.3";
+    (typeof GM_info !== "undefined" && GM_info?.script?.version) || "1.18.4";
 
   /** «https://ntfy.sh/topic?x=1» и «topic» одинаково дают topic. */
   function normalizeNtfyTopic(raw) {
@@ -8408,10 +8408,33 @@
 
   /** Перейти на страницу роли без задания: используется для возврата хода. */
   async function goTo(role) {
+    // D-008: страница не наша — очередь не трогаем.
+    //
+    // `goTo` живёт в ветке «ответ записан, ход возвращается Координатору», и
+    // раньше она снимала очередь ДО перехода. На чужой странице переход
+    // запрещён (D-008), и снятая очередь означала бы потерянный ход: работа
+    // просто исчезла бы. Поэтому сначала спрашиваем, чья страница, и только
+    // потом чистим.
+    const hereMe = typeof roleFromPath === "function" ? roleFromPath() : "";
+    if (norm(hereMe) !== norm(role.id) && typeof accountPageCheck === "function") {
+      const page = await accountPageCheck(role).catch(() => ({ verdict: "unknown" }));
+      if (page.verdict === "foreign") {
+        logThrottled(
+          `goto-foreign:${role.id}`,
+          `Ход возвращается «${role.name}», но страница открыта аккаунтом ${page.seen}, а роль закреплена за ` +
+            `«${page.label}» (${page.expected}). Очередь и карточку не трогаю: ход заберёт вкладка этого аккаунта.`,
+          false,
+          600_000,
+        );
+        if (typeof wakeOnce === "function") wakeOnce(`nav:${role.id}`, `ход возвращается «${role.name}»`);
+        return false;
+      }
+    }
     GM_setValue(K.pending, null);
     GM_setValue("cfn-me", role.name);
     setStatus();
     await navigateTo(role, "туда возвращается ход");
+    return true;
   }
 
   // Одно и то же ожидание не должно заливать журнал каждые пару секунд.
@@ -22812,6 +22835,32 @@ function reviewPullRequest({ files, pr, zone } = {}) {
         // D-006: нажали «Шаг»/«Все вкладки» не в том контейнере — работа не
         // теряется. Ровно этот отказ раньше оставлял Мастера гадать, почему
         // нажатие ничего не сделало; теперь нужная вкладка узнаёт о работе.
+        if (typeof wakeOnce === "function") wakeOnce(`nav:${role.id}`, `роль «${role.name}» живёт в другой вкладке`);
+        return false;
+      }
+    }
+    // D-008: подпись сайдбара — не единственный свидетель.
+    //
+    // 24.11, 22:25: ход возвращался Координатору, а вкладка стояла на странице
+    // UX & Modding Auditor (другой контейнер). Подпись там была свёрнута до
+    // иконок (`icon-collapsed`), проверка выше ответила «сравнивать нечего», и
+    // переход открыл адрес Координатора ЧУЖИМ аккаунтом — ровно тот же отказ,
+    // что D-007 вылечил для отправки задания.
+    //
+    // Здесь спрашиваем то же, что и перед отправкой: чья страница? Это не
+    // запрет на переход, а выбор: чужая страница отдаёт ход своей вкладке
+    // (её будит `wakeOnce`), своя — переходит как обычно.
+    if (role && norm(roleFromPath()) !== norm(role.id) && typeof accountPageCheck === "function") {
+      const page = await accountPageCheck(role).catch(() => ({ verdict: "unknown" }));
+      if (page.verdict === "foreign") {
+        logThrottled(
+          `page-nav:${role.id}`,
+          `Не открываю «${role.name}»: страница открыта аккаунтом ${page.seen}, а роль закреплена за ` +
+            `«${page.label}» (${page.expected}). Переход внутри контейнера не переключает аккаунт — ` +
+            "ход заберёт вкладка этого аккаунта.",
+          false,
+          600_000,
+        );
         if (typeof wakeOnce === "function") wakeOnce(`nav:${role.id}`, `роль «${role.name}» живёт в другой вкладке`);
         return false;
       }

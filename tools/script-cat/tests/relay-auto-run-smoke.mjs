@@ -106,7 +106,8 @@ const makeNav = ({ store, path = '/', now = Date.now() }) => {
   const fn = new Function(
     'GM_getValue', 'GM_setValue', 'norm', 'pause', 'log', 'location', 'Date',
     // D-045: переход ждёт подтверждения записей; проверяем и порядок.
-    'flushBeforeNavigate', 'handoffKeys',
+    // D-008: переход спрашивает, чья страница; здесь аккаунт не размечен.
+    'flushBeforeNavigate', 'handoffKeys', 'roleFromPath', 'accountPageCheck', 'wakeOnce',
     `${navSrc}; return navigateTo;`,
   );
   const navigateTo = fn(
@@ -119,6 +120,10 @@ const makeNav = ({ store, path = '/', now = Date.now() }) => {
     clock,
     async (keys) => { flushes.push({ keys: [...keys], assigned: assigned.length, nav: store.get('cfn-nav') }); return true; },
     () => ['cfn-expect', 'cfn-pending', 'cfn-nav'],
+    // D-008: роль страницы не читается, аккаунт не размечен — проверка молчит.
+    () => '',
+    async () => ({ verdict: 'no-label' }),
+    () => null,
   );
   return { navigateTo, pauses, logs, assigned, flushes };
 };
