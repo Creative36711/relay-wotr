@@ -93,7 +93,7 @@
     // D-073: отпечаток сборки вшивает build.mjs (SHA-256 источника). Номер версии
     // говорит «какой выпуск», отпечаток — «какая именно сборка»: без него проверка
     // «работает новая версия, а не прежняя под новым номером» невозможна.
-    buildFingerprint: "a3f98ed4a477a1ef",
+    buildFingerprint: "1a9dc575111cd3ec",
     repo: "", // для ссылки на PR из номера
     tickMs: 15000,
     mergeGraceMs: 90000, // сколько ждём мерж, прежде чем нажать кнопки за агента
@@ -2612,6 +2612,18 @@
         // молчала: `Тип` был в живой базе, но не здесь, и код писал его в пустоту.
         const extra = Object.keys(source.properties || {}).filter((name) => !(name in fields) && !["Repository", "Репозиторий"].includes(name));
         if (extra.length) warnings.push(`«${label}»: лишние поля — ${extra.join(", ")} (схема их не знает; правьте схему в Notion только сами).`);
+        // D-004: поля аккаунтов аддитивны — база без них работает по-старому.
+        // Но «работает по-старому» значит «лимит аккаунта не отслеживается», и
+        // человек, вписывающий «Аккаунт» в пустоту, должен узнать об этом здесь,
+        // а не по тому, что роль не перестаёт выдаваться.
+        if (label === "Роли") {
+          const absent = ["Аккаунт", "Доступность"].filter((name) => !source.properties[name]);
+          if (absent.length)
+            warnings.push(
+              `«${label}»: нет полей ${absent.join(", ")} — квоты по аккаунтам не отслеживаются. ` +
+                "Добавьте их сами в Notion (select) или возьмите схему из шаблона; транспорт схему не правит.",
+            );
+        }
         if (errors.length) throw new Error(`«${label}»: ${errors.join(", ")}.`);
         schemas[label] = source.properties;
         await new Promise((resolve) => setTimeout(resolve, 350));

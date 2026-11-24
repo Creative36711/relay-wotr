@@ -130,6 +130,18 @@
         // молчала: `Тип` был в живой базе, но не здесь, и код писал его в пустоту.
         const extra = Object.keys(source.properties || {}).filter((name) => !(name in fields) && !["Repository", "Репозиторий"].includes(name));
         if (extra.length) warnings.push(`«${label}»: лишние поля — ${extra.join(", ")} (схема их не знает; правьте схему в Notion только сами).`);
+        // D-004: поля аккаунтов аддитивны — база без них работает по-старому.
+        // Но «работает по-старому» значит «лимит аккаунта не отслеживается», и
+        // человек, вписывающий «Аккаунт» в пустоту, должен узнать об этом здесь,
+        // а не по тому, что роль не перестаёт выдаваться.
+        if (label === "Роли") {
+          const absent = ["Аккаунт", "Доступность"].filter((name) => !source.properties[name]);
+          if (absent.length)
+            warnings.push(
+              `«${label}»: нет полей ${absent.join(", ")} — квоты по аккаунтам не отслеживаются. ` +
+                "Добавьте их сами в Notion (select) или возьмите схему из шаблона; транспорт схему не правит.",
+            );
+        }
         if (errors.length) throw new Error(`«${label}»: ${errors.join(", ")}.`);
         schemas[label] = source.properties;
         await new Promise((resolve) => setTimeout(resolve, 350));
