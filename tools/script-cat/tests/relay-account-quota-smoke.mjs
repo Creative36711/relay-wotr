@@ -362,20 +362,21 @@ const roleRow = (name, extra = {}) => ({
 {
   const cycle = src('28-cycle.js');
   assert.match(cycle, /await accountsTick\(\)/, 'тик проверяет аккаунты до любых решений');
-  assert.match(cycle, /accountStop !== "worker"/, 'рабочий аккаунт не заканчивает тик: ход идёт дальше');
+  assert.match(cycle, /accountStop !== "worker"/, 'рабочий аккаунт не заканчивает тик паузой');
   assert.match(cycle, /await accountVerdict\(me\)/, 'роль страницы сверяется со своим аккаунтом');
   // «Шаг» и автоцикл идут через один tick: отдельной ветки в кнопке нет.
   assert.doesNotMatch(cycle, /accountVerdict\([^)]*\)[\s\S]{0,200}fromToggle === false/,
     'паритет не зависит от способа запуска');
-  const nav = cycle.slice(cycle.indexOf('  async function navigateTo('), cycle.indexOf('  async function huntAnotherAccount('));
+  const nav = cycle.slice(cycle.indexOf('  async function navigateTo('), cycle.indexOf('  function idleWrongAccount('));
   assert.match(nav, /accountBlocked\(roleAccount\(role\)\)/, 'переход не ведёт на лимитированный аккаунт');
-  // Почта вкладки в переходе НЕ сверяется: адрес роли из другого контейнера —
-  // это рабочий путь к нужному аккаунту, а не ошибка. Пауза там превратила бы
-  // каждый шаг в ручной клик Мастера.
-  assert.doesNotMatch(nav, /accountMismatchPause/, 'расхождение аккаунтов не превращает переход в паузу');
-  assert.match(cycle, /return await navigateTo\(me, /, 'вкладка не на своём аккаунте уходит адресом роли');
-  assert.match(cycle, /accountIsAdministrativeFn\(role\.fn\)/, 'поиск не уводит вкладку к административным ролям');
-  assert.match(cycle, /accountIdleAskedMark|accountLiveMismatch/, 'расхождение аккаунтов не остаётся без последствий');
+  // Вкладка живёт в контейнере, а location.assign контейнер не меняет: переход
+  // на роль чужого аккаунта открыл бы её страницу чужим аккаунтом.
+  assert.match(nav, /accountMismatchSync\(role\)/, 'переход сверяет аккаунт цели с контейнером вкладки');
+  assert.doesNotMatch(cycle, /huntAnotherAccount/, 'из вкладки нельзя «уйти на другой аккаунт»');
+  assert.match(cycle, /function idleLimitedAccount/, 'лимит рабочего аккаунта — тихий отдых вкладки, без общей паузы');
+  assert.match(cycle, /function idleWrongAccount/, 'чужой контейнер — тоже отдых, а не пауза на все вкладки');
+  const idle = cycle.slice(cycle.indexOf('  function idleWrongAccount('), cycle.indexOf('  function idleLimitedAccount('));
+  assert.doesNotMatch(idle, /\bpause\(/, '«эта роль не здесь» не останавливает другие аккаунты');
 
   const send = src('17-arena-polls.js');
   assert.match(send, /accountLimitBlocks\(role\)/, 'очередь не ставит задание роли в лимите');

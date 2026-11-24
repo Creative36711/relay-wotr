@@ -20,18 +20,29 @@
    */
   async function navigateTo(role, why) {
     if (typeof projectRoleAllowed === "function" && !projectRoleAllowed(role)) return false;
-    // D-004: лимитированный аккаунт задание не примет вовсе — проверка стоит до
-    // записи отметки перехода, чтобы «петли навигации» не было.
-    //
-    // Почта вкладки здесь НЕ сверяется. Переход из контейнера A на адрес роли из
-    // контейнера B — трудоёмкий, но рабочий путь: страница откроется на нужном
-    // аккаунте, и следующий шаг уже увидит правильную подпись. Пауза «откройте
-    // вручную», поставленная до перехода, сделала бы этот путь недостижимым и
-    // требовала бы от Мастера одного и того же клика на каждый шаг.
-    if (role && typeof accountVerdict === "function" && roleAccount(role)) {
+    // D-004: аккаунт цели. Вкладка живёт в контейнере (`location.assign` не
+    // меняет контейнер), поэтому переход на роль другого аккаунта откроет её
+    // страницу ЧУЖИМ аккаунтом — задание ушло бы не туда. Поэтому чужой аккаунт
+    // и доказанный лимит одинаково запрещают переход.
+    if (role && typeof roleAccount === "function" && roleAccount(role)) {
       const hit = typeof accountBlocked === "function" ? accountBlocked(roleAccount(role)) : null;
       if (hit && !hit.expired) {
-        log(`Не открываю «${role.name}»: «${roleAccount(role)}» в лимите до ${accountResetText(hit.until)}. Ход выберет другой аккаунт.`, true, { ntfy: "quiet" });
+        log(`Не открываю «${role.name}»: «${roleAccount(role)}» в лимите до ${accountResetText(hit.until)}.`, true, { ntfy: "quiet" });
+        return false;
+      }
+      const current = typeof accountMismatchSync === "function" ? accountMismatchSync(role) : { wrong: false };
+      if (current.wrong) {
+        // Адрес роли из другого контейнера открывается в этом: страница
+        // откроется чужим аккаунтом. Это не поломка, а «здесь эта роль не
+        // живёт»: вкладка переключается руками, а ход ждёт своего контейнера.
+        logThrottled(
+          `account-nav:${role.id}`,
+          `Не открываю «${role.name}»: роль закреплена за «${current.label}» (${current.expected}), ` +
+            `а вкладка в контейнере ${current.seen}. Переход внутри контейнера не переключает аккаунт — ` +
+            "эту роль открывает её собственная вкладка.",
+          false,
+          600_000,
+        );
         return false;
       }
     }
@@ -61,63 +72,45 @@
   }
 
   /**
-   * D-004: роль на лимитированном аккаунте — ход ищет другой аккаунт.
+   * D-004: вкладка стоит в контейнере другого аккаунта.
    *
-   * Порядок остаётся последовательным: открывается ровно одна следующая страница,
-   * и задание уходит только ей. Приоритет — уже сохранённый ход: неотправленная
-   * очередь или ожидание другой роли важнее «свободной» страницы, иначе задание
-   * потеряется. Роли административного аккаунта не выбираются: на нём работают
-   * Координатор и приёмка, а не исполнители.
-   *
-   * Если идти некуда, функция говорит об этом один раз: молчаливое «Шаг не
-   * выполнен» Мастер читал как поломку кнопки.
+   * Ни паузы, ни перехода: контейнер меняет человек, а `pause` общая на все
+   * вкладки — «эта роль не здесь» остановило бы и те аккаунты, где работа идёт.
+   * Шаг просто пропускается; в журнале сказано один раз, что именно не так.
    */
-  async function huntAnotherAccount(list, me, fromToggle) {
-    // Своя страница не на своём аккаунте — повод уйти адресом, а не паузой:
-    // адрес роли из «Ролей» открывается на своём аккаунте, и это ровно тот шаг,
-    // который чинит ошибку. Паузой отвечаем только ниже, когда уходить некуда.
-    const mismatch = await accountLiveMismatch(me).catch(() => null);
-    if (mismatch)
-      logThrottled(`account-hunt-mismatch:${me.id}`, `Вкладка не на своём аккаунте: ${mismatch.why}. Открываю адрес роли другого аккаунта.`, false, 600_000);
-    // Роли административного аккаунта из поиска исключены не по прихоти: адрес
-    // Координатора принимает только его аккаунт, а уводить вкладку к нему из
-    // чужого контейнера — это отказ Arena, а не ход.
-    const usable = (list || []).filter((role) => role && role.url && !accountIsAdministrativeFn(role.fn) &&
-      (!role.account || !accountLimitBlocks(role)) && norm(role.id) !== norm(me.id));
-    if (!usable.length) {
-      // Уходить некуда: если вкладка ещё и на чужом аккаунте, следующий шаг снова
-      // упрётся в то же самое — это и есть повод позвать Мастера.
-      if (mismatch) {
-        accountMismatchPause(mismatch, me.id);
-        return true;
-      }
-      const lines = accountLimitLines();
+  function idleWrongAccount(me, verdict, fromToggle) {
+    if (fromToggle)
+      log(`Шаг не выполнен: ${verdict.why}. Эта вкладка в контейнере другого аккаунта — откройте роль в её контейнере.`, true);
+    else
+      logThrottled(`account-wrong:${me.id}`, `Шаг пропущен: ${verdict.why}. Вкладка в контейнере другого аккаунта; переключить его может только человек.`, false, 600_000);
+    return false;
+  }
+
+  /**
+   * D-004: роль на лимитированном аккаунте — эта вкладка отдыхает.
+   *
+   * Аккаунты разделены контейнерами Firefox, а `location.assign` контейнер не
+   * меняет: уйти «на другой аккаунт» из этой вкладки нельзя — откроется та же
+   * учётная запись. Уходят не вкладки, а ход: остальные контейнеры крутят свои
+   * шаги сами, и общая очередь (`K.pending`, `K.expect`) достаётся тому, кто
+   * может её взять.
+   *
+   * Поэтому здесь пауза не ставится: `pause` общая на все вкладки, и «лимит
+   * рабочего аккаунта» остановил бы ровно то, ради чего всё затевалось —
+   * работу остальных. Вкладка молчит до сброса окна и говорит об этом один раз.
+   */
+  function idleLimitedAccount(me, fromToggle) {
+    if (fromToggle)
+      log(`Шаг не выполнен: «${me.name}» на аккаунте в лимите${accountLimitLines().length ? ` (${accountLimitLines().join("; ")})` : ""}. Работа идёт во вкладках других аккаунтов.`, true);
+    else
       logThrottled(
-        `account-hunt:none:${me.id}`,
-        "Ход искать негде: все активные роли на лимитированных аккаунтах. Продолжу после сброса окна" +
-          `${lines.length ? ` (${lines.join("; ")})` : ""}.`,
+        `account-idle:${me.id}`,
+        `Ход этой вкладки ждёт сброса окна: «${me.name}» на лимитированном аккаунте` +
+          `${accountLimitLines().length ? ` (${accountLimitLines().join("; ")})` : ""}. Другие аккаунты работают своими вкладками.`,
         false,
         600_000,
       );
-      return false;
-    }
-    const pending = GM_getValue(K.pending, null);
-    const expect = GM_getValue(K.expect, null);
-    const byId = (id) => (id ? usable.find((role) => norm(role.id) === norm(id)) || null : null);
-    const pendingRole = byId(pending && pending.roleId);
-    const expectRole = byId(expect && expect.roleId);
-    // Координатор здесь не ищется намеренно: он на административном аккаунте, и
-    // такой аккаунт либо доступен (тогда поиск не нужен), либо стоит паузой.
-    const target = pendingRole || expectRole || usable[0];
-    if (!target) return false;
-    const why = pendingRole
-      ? "там ждёт отправки задание"
-      : expectRole
-        ? `ждём ответа «${target.name}»`
-        : "продолжаю на доступном аккаунте";
-    log(`Роль «${me.name}» недоступна по лимиту аккаунта — ход идёт дальше: ${why}.`);
-    if (fromToggle) GM_setValue(K.step, true);
-    return navigateTo(target, why);
+    return false;
   }
 
   // Ожидание, снятое как фантом, — чтобы тик мог вернуть его карточку в Ready.
@@ -528,38 +521,23 @@
       {
         const verdict = await accountVerdict(me).catch(() => ({ ok: true }));
         if (!verdict.ok && verdict.kind === "wrong-account") {
-          // Своя страница не на своём аккаунте — уходим адресом роли, а не
-          // стоим: страница откроется в нужном контейнере, и это ровно тот шаг,
-          // который чинит ошибку. Перед уходом: страница недогружена — знак, что
-          // адрес роли только что открыт и подпись сайдбара ещё от прошлой
-          // страницы. Тогда не уходим (петля навигации), а ждём дорисовки.
-          const shell = appReady();
-          if (!shell.ok) {
-            logThrottled(
-              `account-shell:${me.id}`,
-              `Аккаунт вкладки не сверен (${shell.why}) — жду загрузки страницы, чтобы не прыгать по кругу.`,
-              false,
-              C.tickMs * 4,
-            );
-            return;
-          }
-          log(`Вкладка не на своём аккаунте: ${verdict.why}. Открываю адрес роли «${me.name}» — он ведёт в нужный контейнер.`);
-          forgetAccountRead();
-          return await navigateTo(me, "вкладка была не на своём аккаунте");
+          // Вкладка в чужом контейнере для этой роли. Перейти «в свой» нельзя:
+          // контейнер меняет только человек. Это не поломка — просто здесь эта
+          // роль не живёт, и шаг пропускается молча (в журнале — один раз).
+          idleWrongAccount(me, verdict, fromToggle);
+          return;
         }
         if (!verdict.ok) {
-          // Лимит: свою роль не выдаём, но цикл не останавливаем — на этой
-          // странице делать нечего, ход ищет другой аккаунт. Единственное
-          // исключение — незакрытый ход: ответ агента читается только здесь,
-          // и увести вкладку значит потерять его (D-045).
+          // Лимит: эта роль не выдаётся, и увести ход из этой вкладки некуда —
+          // она в контейнере своего аккаунта. Исключение — незакрытый ход: ответ
+          // агента читается только здесь и ждёт сброса окна (D-045).
           const live = GM_getValue(K.expect, null);
-          if (live && Number(live.sentAt) && norm(live.roleId) === norm(me.id)) {
+          if (live && Number(live.sentAt) && norm(live.roleId) === norm(me.id))
             logThrottled(`account-limit-live:${me.id}`,
-              `Шаг этой ролью пропущен: ${verdict.why}; незакрытый ход сохранён и ждёт сброса окна.`, false, C.tickMs * 4);
-            return;
-          }
-          logThrottled(`account-limit:${me.id}`, `Шаг этой ролью пропущен: ${verdict.why}; ход ищет другой аккаунт.`, false, C.tickMs * 4);
-          return await huntAnotherAccount(list, me, fromToggle);
+              `Шаг этой ролью пропущен: ${verdict.why}; незакрытый ход сохранён и ждёт сброса окна.`, false, 600_000);
+          else
+            idleLimitedAccount(me, fromToggle);
+          return;
         }
         if (verdict.warn) logThrottled(`account-warn:${me.id}`, `Аккаунт вкладки: ${verdict.warn}.`, false, 600_000);
       }
