@@ -191,9 +191,24 @@
     return false;
   }
 
+  /**
+   * Развернуть сайдбар один раз на страницу, а не на каждое чтение.
+   *
+   * Клик по «Expand sidebar» — действие в интерфейсе Мастера: если он свернул
+   * панель намеренно, повторный разворот каждые пятнадцать секунд был бы дракой
+   * с ним. Флаг снимается при смене адреса: там панель могла снова свернуться
+   * сама.
+   */
+  let accountExpandTried = { path: "", at: 0 };
   /** Кеш чтения: подпись рисуется асинхронно, но живой DOM перечитывать незачем. */
   let accountPageRead = { path: "", at: 0, value: null };
+  /**
+   * Неудача кешируется короче удачи: подпись могла не отрисоваться в момент
+   * первого чтения, и минутный кеш «missing» держал бы сверку выключенной ровно
+   * на том тике, где она нужна.
+   */
   const ACCOUNT_READ_TTL_MS = 60 * 1000;
+  const ACCOUNT_READ_FAIL_MS = 15 * 1000;
 
   /**
    * Прочитать аккаунт вкладки. `why` называет исход, а не только неудачу:
@@ -204,17 +219,20 @@
   async function readAccountEmail({ expand = true, force = false } = {}) {
     if (typeof document === "undefined") return { email: "", why: "no-dom" };
     const path = typeof location !== "undefined" ? String(location.pathname || "") : "";
-    const fresh = force || accountPageRead.path !== path ||
-      Date.now() - Number(accountPageRead.at || 0) > ACCOUNT_READ_TTL_MS;
+    const last = accountPageRead.value;
+    const ttl = last && last.email ? ACCOUNT_READ_TTL_MS : ACCOUNT_READ_FAIL_MS;
+    const fresh = force || accountPageRead.path !== path || Date.now() - Number(accountPageRead.at || 0) > ttl;
     if (!fresh && accountPageRead.value) return accountPageRead.value;
     let value = { email: accountEmailFromDom(document), why: "label" };
     if (!value.email) {
       if (accountIconCollapsed(document)) value = { email: "", why: "icon-collapsed" };
       else if (!expand) value = { email: "", why: "missing" };
       else {
-        const button = accountExpandButton(document);
+        const tried = accountExpandTried.path === path;
+        const button = tried ? null : accountExpandButton(document);
         if (!button || typeof button.click !== "function") value = { email: "", why: "missing" };
         else {
+          accountExpandTried = { path, at: Date.now() };
           button.click();
           value = { email: "", why: "missing" };
           for (let i = 0; i < 3; i += 1) {
@@ -501,6 +519,27 @@
     );
   }
 
+  /**
+   * Вкладку доказанно увели на чужой аккаунт?
+   *
+   * Нужно перед поиском другой роли: если аккаунт текущей роли чужой, следующая
+   * страница откроется в том же контейнере и ход уйдёт не тому аккаунту. Тогда
+   * поиск заканчивается паузой Мастеру, а не «следующей ролью». Непрочитанная
+   * подпись — не расхождение: возвращается null.
+   */
+  async function accountLiveMismatch(role) {
+    const label = roleAccount(role);
+    const expected = accountMailFor(label);
+    if (!expected) return null;
+    const read = await readAccountEmail();
+    const seen = accountMail(read.email);
+    if (!seen || seen === expected) return null;
+    return {
+      label: accountLabel(label),
+      why: `роль «${role?.name || role?.id}» закреплена за «${accountLabel(label)}» (${expected}), а вкладка на ${read.email}`,
+    };
+  }
+
   /** Короткая проверка без ожидания подписи: для мест, где пауза была бы шумом. */
   const accountLimitBlocks = (role) => {
     const hit = accountBlocked(roleAccount(role));
@@ -553,8 +592,11 @@
    *   • административный аккаунт останавливает цикл паузой, рабочий — нет:
    *     смысл раскладки по аккаунтам как раз в том, чтобы работа продолжалась.
    *
-   * Возвращает `true`, если тик должен на этом закончиться (лимит на этой
-   * странице: отправлять нечего и некуда).
+   * Возвращает вид остановки, а не «да/нет»: `admin` — административный аккаунт,
+   * тик заканчивается; `worker` — рабочий аккаунт, роль не выдаётся, но ход
+   * должен уйти другим аккаунтом; `unbound` — лимит без метки, прежняя пауза;
+   * пустая строка — лимита нет. Различие принципиальное: раньше рабочий аккаунт
+   * возвращал `true`, и тик молча заканчивался вместо обещанного перехода.
    */
   async function accountsTick() {
     const role = accountRoleForPath();
@@ -585,25 +627,34 @@
           { ntfy: "quiet", title: "Relay: лимит аккаунта" },
         );
       }
-      if (label && accountRolesFromCache(label).some((row) => accountIsAdministrativeFn(row.fn))) {
+      // Только активные административные роли: отключённая роль ничего не
+      // спрашивает, и называть её в паузе — пугать Мастера зря.
+      const adminRoles = accountRolesFromCache(label)
+        .filter((row) => accountIsAdministrativeFn(row.fn) && (!row.status || row.status === "Активна"));
+      if (label && adminRoles.length) {
         pause(
           `Лимит аккаунта «${accountLabel(label)}»: на нём административные роли ` +
-            `(${accountRolesFromCache(label).filter((row) => accountIsAdministrativeFn(row.fn)).map((row) => row.name).join(", ")}), ` +
+            `(${adminRoles.map((row) => row.name).join(", ")}), ` +
             `поэтому спросить Координатора некем — спросить его нечем. Окно заканчивается в ${accountResetText(moscowMidnight(Date.now()))}: ` +
             "после сброса нажмите «Продолжить». До сброса повторная попытка снова остановит цикл.",
           { kind: "account-limit-admin", ref: role?.id || "" },
         );
-        return true;
+        return "admin";
       }
-      return true;
+      // Рабочий аккаунт: цикл не останавливается — ход уходит другим аккаунтом.
+      // `false` здесь не значит «можно работать этой ролью»: выдачу роли
+      // проверяют `accountLimitBlocks` и `accountVerdict`, а тик должен дойти до
+      // поиска другого аккаунта. Прежний `true` останавливал страницу молча:
+      // обещанного «хода дальше» не наступало до самой полуночи.
+      return "worker";
     }
 
     // 3. Индикатор без привязки к аккаунту (страница не роль, кеш «Ролей» пуст или
     //    роль без метки) — прежнее поведение: лимит считается лимитом вкладки.
     if (blocked) {
-      if (typeof monitorDailyLimit === "function" && monitorDailyLimit()) return true;
+      if (typeof monitorDailyLimit === "function" && monitorDailyLimit()) return "unbound";
     }
-    return false;
+    return "";
   }
 
   /**
@@ -628,8 +679,11 @@
    * Условие: в Ready есть карточки, и у КАЖДОЙ роль с недоступным аккаунтом.
    * Тогда в план добавляются оба хода, которые есть у Координатора: взять другую
    * карточку (если появится на доступном аккаунте) или поставить миссию на паузу.
+   *
    * Спрашиваем один раз на окно лимита: повтор вопроса — это расход квоты на
-   * «нам всё ещё плохо».
+   * «нам всё ещё плохо». Отметка ставится при ФАКТИЧЕСКОЙ отправке плана
+   * (`accountIdleAsked`), а не при сборке текста: план мог не уйти (капча, пауза,
+   * ожидание), и тогда вопрос потерялся бы вместе с ним.
    */
   function accountIdleNote(ready = [], { missionId = "" } = {}) {
     if (!ready.length) return "";
@@ -643,10 +697,7 @@
       return role ? accountLimitBlocks(role) : false;
     });
     if (!blocked) return "";
-    const key = `idle:${missionId}:${Object.keys(accountLimits()).sort().join(",")}`;
-    const asked = accountAsk(key);
-    if (asked) return "";
-    GM_setValue(K.accountIdle, { key, at: Date.now() });
+    if (accountIdleAsked(accountIdleKey(missionId))) return "";
     return (
       `Готовые карточки (${ready.length}) все на лимитированных аккаунтах: ${lines.join("; ")}. ` +
       "Работать нечем до сброса окна. Реши сам: взять другую карточку на доступном аккаунте " +
@@ -655,7 +706,14 @@
     );
   }
 
-  const accountAsk = (key) => {
+  /** Ключ окна: миссия плюс состав лимитированных аккаунтов. */
+  const accountIdleKey = (missionId) => `idle:${missionId}:${Object.keys(accountLimits()).sort().join(",")}`;
+  const accountIdleAsked = (key) => {
     const state = GM_getValue(K.accountIdle, null);
     return Boolean(state && String(state.key || "") === String(key));
   };
+  /** План ушёл — теперь вопрос считается заданным. Вызывается после отправки. */
+  function accountIdleAskedMark(missionId) {
+    if (!missionId || !accountLimitLines().length) return;
+    GM_setValue(K.accountIdle, { key: accountIdleKey(missionId), at: Date.now() });
+  }

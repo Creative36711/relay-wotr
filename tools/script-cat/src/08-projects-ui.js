@@ -199,6 +199,12 @@
       }
       const branch = await request("GET", `https://api.github.com/repos/${C.repo}/branches/${encodeURIComponent(C.branch)}`, githubHeaders(settings.github));
       if (!branch || branch.name !== C.branch) throw new Error(`GitHub не подтвердил ветку ${C.branch}.`);
+      // D-004: раскладка ролей по аккаунтам задаётся человеком, но проверяется
+      // здесь: иначе лимит исполнителей отрезал бы Координатора и приёмку, а
+      // причина была бы видна только по журналу одного контейнера.
+      if (typeof accountLayoutProblems === "function") {
+        for (const problem of accountLayoutProblems(mapped)) warnings.push(`«Роли»: ${problem.text}.`);
+      }
       const base = "Основные поля, варианты select, роли и базовая ветка читаются. Права записи и содержимое старых карточек не проверялись.";
       return { ok: true, text: warnings.length ? `${base} ${warnings.join(" ")}` : base };
     } catch (e) {

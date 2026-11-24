@@ -1555,5 +1555,9 @@
       },
     );
     if (sent) await markDelivered(briefing.fresh);
+    // D-004: «работать нечем» считается заданным только теперь — когда план
+    // действительно ушёл. Отмечать при сборке текста значило бы потерять вопрос
+    // вместе с неотправленным планом (капча, пауза, ожидание).
+    if (sent && idleLine && typeof accountIdleAskedMark === "function") accountIdleAskedMark(mission.id);
     return true;
   }

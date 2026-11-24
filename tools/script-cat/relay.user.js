@@ -93,7 +93,7 @@
     // D-073: отпечаток сборки вшивает build.mjs (SHA-256 источника). Номер версии
     // говорит «какой выпуск», отпечаток — «какая именно сборка»: без него проверка
     // «работает новая версия, а не прежняя под новым номером» невозможна.
-    buildFingerprint: "1a9dc575111cd3ec",
+    buildFingerprint: "712a45dc96d06b2a",
     repo: "", // для ссылки на PR из номера
     tickMs: 15000,
     mergeGraceMs: 90000, // сколько ждём мерж, прежде чем нажать кнопки за агента
@@ -2681,6 +2681,12 @@
       }
       const branch = await request("GET", `https://api.github.com/repos/${C.repo}/branches/${encodeURIComponent(C.branch)}`, githubHeaders(settings.github));
       if (!branch || branch.name !== C.branch) throw new Error(`GitHub не подтвердил ветку ${C.branch}.`);
+      // D-004: раскладка ролей по аккаунтам задаётся человеком, но проверяется
+      // здесь: иначе лимит исполнителей отрезал бы Координатора и приёмку, а
+      // причина была бы видна только по журналу одного контейнера.
+      if (typeof accountLayoutProblems === "function") {
+        for (const problem of accountLayoutProblems(mapped)) warnings.push(`«Роли»: ${problem.text}.`);
+      }
       const base = "Основные поля, варианты select, роли и базовая ветка читаются. Права записи и содержимое старых карточек не проверялись.";
       return { ok: true, text: warnings.length ? `${base} ${warnings.join(" ")}` : base };
     } catch (e) {
@@ -14477,14 +14483,6 @@
           );
           return null;
         }
-        // D-004: «работать нечем — жду сброса квоты» спрашивается один раз на
-        // окно лимита. Признак едет в вопросе (`q.once`), а не в счётчике
-        // вызывающего: строка может уже существовать, и повторный вопрос съел
-        // бы квоту того самого аккаунта, которого и ждём.
-        if (q.once && askedBefore) {
-          log(`Вопрос «${oneLine(q.text, 90)}» уже задан на это окно лимита — второй раз не спрашиваю.`, false, { ntfy: false, skip: true });
-          return q.gate ? { id: "", text: q.text, gate: true, need: q.need || "", repeat: true } : null;
-        }
         // До POST сохраняем намерение: при обрыве ответа и перезапуске
         // сначала найдём созданную строку и допишем материал, не создавая дубль.
         rememberQuestionIntent(q, ctx);
@@ -16287,6 +16285,10 @@
       },
     );
     if (sent) await markDelivered(briefing.fresh);
+    // D-004: «работать нечем» считается заданным только теперь — когда план
+    // действительно ушёл. Отмечать при сборке текста значило бы потерять вопрос
+    // вместе с неотправленным планом (капча, пауза, ожидание).
+    if (sent && idleLine && typeof accountIdleAskedMark === "function") accountIdleAskedMark(mission.id);
     return true;
   }
 
@@ -21951,9 +21953,24 @@ function reviewPullRequest({ files, pr, zone } = {}) {
     return false;
   }
 
+  /**
+   * Развернуть сайдбар один раз на страницу, а не на каждое чтение.
+   *
+   * Клик по «Expand sidebar» — действие в интерфейсе Мастера: если он свернул
+   * панель намеренно, повторный разворот каждые пятнадцать секунд был бы дракой
+   * с ним. Флаг снимается при смене адреса: там панель могла снова свернуться
+   * сама.
+   */
+  let accountExpandTried = { path: "", at: 0 };
   /** Кеш чтения: подпись рисуется асинхронно, но живой DOM перечитывать незачем. */
   let accountPageRead = { path: "", at: 0, value: null };
+  /**
+   * Неудача кешируется короче удачи: подпись могла не отрисоваться в момент
+   * первого чтения, и минутный кеш «missing» держал бы сверку выключенной ровно
+   * на том тике, где она нужна.
+   */
   const ACCOUNT_READ_TTL_MS = 60 * 1000;
+  const ACCOUNT_READ_FAIL_MS = 15 * 1000;
 
   /**
    * Прочитать аккаунт вкладки. `why` называет исход, а не только неудачу:
@@ -21964,17 +21981,20 @@ function reviewPullRequest({ files, pr, zone } = {}) {
   async function readAccountEmail({ expand = true, force = false } = {}) {
     if (typeof document === "undefined") return { email: "", why: "no-dom" };
     const path = typeof location !== "undefined" ? String(location.pathname || "") : "";
-    const fresh = force || accountPageRead.path !== path ||
-      Date.now() - Number(accountPageRead.at || 0) > ACCOUNT_READ_TTL_MS;
+    const last = accountPageRead.value;
+    const ttl = last && last.email ? ACCOUNT_READ_TTL_MS : ACCOUNT_READ_FAIL_MS;
+    const fresh = force || accountPageRead.path !== path || Date.now() - Number(accountPageRead.at || 0) > ttl;
     if (!fresh && accountPageRead.value) return accountPageRead.value;
     let value = { email: accountEmailFromDom(document), why: "label" };
     if (!value.email) {
       if (accountIconCollapsed(document)) value = { email: "", why: "icon-collapsed" };
       else if (!expand) value = { email: "", why: "missing" };
       else {
-        const button = accountExpandButton(document);
+        const tried = accountExpandTried.path === path;
+        const button = tried ? null : accountExpandButton(document);
         if (!button || typeof button.click !== "function") value = { email: "", why: "missing" };
         else {
+          accountExpandTried = { path, at: Date.now() };
           button.click();
           value = { email: "", why: "missing" };
           for (let i = 0; i < 3; i += 1) {
@@ -22261,6 +22281,27 @@ function reviewPullRequest({ files, pr, zone } = {}) {
     );
   }
 
+  /**
+   * Вкладку доказанно увели на чужой аккаунт?
+   *
+   * Нужно перед поиском другой роли: если аккаунт текущей роли чужой, следующая
+   * страница откроется в том же контейнере и ход уйдёт не тому аккаунту. Тогда
+   * поиск заканчивается паузой Мастеру, а не «следующей ролью». Непрочитанная
+   * подпись — не расхождение: возвращается null.
+   */
+  async function accountLiveMismatch(role) {
+    const label = roleAccount(role);
+    const expected = accountMailFor(label);
+    if (!expected) return null;
+    const read = await readAccountEmail();
+    const seen = accountMail(read.email);
+    if (!seen || seen === expected) return null;
+    return {
+      label: accountLabel(label),
+      why: `роль «${role?.name || role?.id}» закреплена за «${accountLabel(label)}» (${expected}), а вкладка на ${read.email}`,
+    };
+  }
+
   /** Короткая проверка без ожидания подписи: для мест, где пауза была бы шумом. */
   const accountLimitBlocks = (role) => {
     const hit = accountBlocked(roleAccount(role));
@@ -22313,8 +22354,11 @@ function reviewPullRequest({ files, pr, zone } = {}) {
    *   • административный аккаунт останавливает цикл паузой, рабочий — нет:
    *     смысл раскладки по аккаунтам как раз в том, чтобы работа продолжалась.
    *
-   * Возвращает `true`, если тик должен на этом закончиться (лимит на этой
-   * странице: отправлять нечего и некуда).
+   * Возвращает вид остановки, а не «да/нет»: `admin` — административный аккаунт,
+   * тик заканчивается; `worker` — рабочий аккаунт, роль не выдаётся, но ход
+   * должен уйти другим аккаунтом; `unbound` — лимит без метки, прежняя пауза;
+   * пустая строка — лимита нет. Различие принципиальное: раньше рабочий аккаунт
+   * возвращал `true`, и тик молча заканчивался вместо обещанного перехода.
    */
   async function accountsTick() {
     const role = accountRoleForPath();
@@ -22345,25 +22389,34 @@ function reviewPullRequest({ files, pr, zone } = {}) {
           { ntfy: "quiet", title: "Relay: лимит аккаунта" },
         );
       }
-      if (label && accountRolesFromCache(label).some((row) => accountIsAdministrativeFn(row.fn))) {
+      // Только активные административные роли: отключённая роль ничего не
+      // спрашивает, и называть её в паузе — пугать Мастера зря.
+      const adminRoles = accountRolesFromCache(label)
+        .filter((row) => accountIsAdministrativeFn(row.fn) && (!row.status || row.status === "Активна"));
+      if (label && adminRoles.length) {
         pause(
           `Лимит аккаунта «${accountLabel(label)}»: на нём административные роли ` +
-            `(${accountRolesFromCache(label).filter((row) => accountIsAdministrativeFn(row.fn)).map((row) => row.name).join(", ")}), ` +
+            `(${adminRoles.map((row) => row.name).join(", ")}), ` +
             `поэтому спросить Координатора некем — спросить его нечем. Окно заканчивается в ${accountResetText(moscowMidnight(Date.now()))}: ` +
             "после сброса нажмите «Продолжить». До сброса повторная попытка снова остановит цикл.",
           { kind: "account-limit-admin", ref: role?.id || "" },
         );
-        return true;
+        return "admin";
       }
-      return true;
+      // Рабочий аккаунт: цикл не останавливается — ход уходит другим аккаунтом.
+      // `false` здесь не значит «можно работать этой ролью»: выдачу роли
+      // проверяют `accountLimitBlocks` и `accountVerdict`, а тик должен дойти до
+      // поиска другого аккаунта. Прежний `true` останавливал страницу молча:
+      // обещанного «хода дальше» не наступало до самой полуночи.
+      return "worker";
     }
 
     // 3. Индикатор без привязки к аккаунту (страница не роль, кеш «Ролей» пуст или
     //    роль без метки) — прежнее поведение: лимит считается лимитом вкладки.
     if (blocked) {
-      if (typeof monitorDailyLimit === "function" && monitorDailyLimit()) return true;
+      if (typeof monitorDailyLimit === "function" && monitorDailyLimit()) return "unbound";
     }
-    return false;
+    return "";
   }
 
   /**
@@ -22388,8 +22441,11 @@ function reviewPullRequest({ files, pr, zone } = {}) {
    * Условие: в Ready есть карточки, и у КАЖДОЙ роль с недоступным аккаунтом.
    * Тогда в план добавляются оба хода, которые есть у Координатора: взять другую
    * карточку (если появится на доступном аккаунте) или поставить миссию на паузу.
+   *
    * Спрашиваем один раз на окно лимита: повтор вопроса — это расход квоты на
-   * «нам всё ещё плохо».
+   * «нам всё ещё плохо». Отметка ставится при ФАКТИЧЕСКОЙ отправке плана
+   * (`accountIdleAsked`), а не при сборке текста: план мог не уйти (капча, пауза,
+   * ожидание), и тогда вопрос потерялся бы вместе с ним.
    */
   function accountIdleNote(ready = [], { missionId = "" } = {}) {
     if (!ready.length) return "";
@@ -22403,10 +22459,7 @@ function reviewPullRequest({ files, pr, zone } = {}) {
       return role ? accountLimitBlocks(role) : false;
     });
     if (!blocked) return "";
-    const key = `idle:${missionId}:${Object.keys(accountLimits()).sort().join(",")}`;
-    const asked = accountAsk(key);
-    if (asked) return "";
-    GM_setValue(K.accountIdle, { key, at: Date.now() });
+    if (accountIdleAsked(accountIdleKey(missionId))) return "";
     return (
       `Готовые карточки (${ready.length}) все на лимитированных аккаунтах: ${lines.join("; ")}. ` +
       "Работать нечем до сброса окна. Реши сам: взять другую карточку на доступном аккаунте " +
@@ -22415,10 +22468,17 @@ function reviewPullRequest({ files, pr, zone } = {}) {
     );
   }
 
-  const accountAsk = (key) => {
+  /** Ключ окна: миссия плюс состав лимитированных аккаунтов. */
+  const accountIdleKey = (missionId) => `idle:${missionId}:${Object.keys(accountLimits()).sort().join(",")}`;
+  const accountIdleAsked = (key) => {
     const state = GM_getValue(K.accountIdle, null);
     return Boolean(state && String(state.key || "") === String(key));
   };
+  /** План ушёл — теперь вопрос считается заданным. Вызывается после отправки. */
+  function accountIdleAskedMark(missionId) {
+    if (!missionId || !accountLimitLines().length) return;
+    GM_setValue(K.accountIdle, { key: accountIdleKey(missionId), at: Date.now() });
+  }
 
   // ───────────────────────────── цикл ─────────────────────────────
   let busy = false;
@@ -22442,17 +22502,18 @@ function reviewPullRequest({ files, pr, zone } = {}) {
    */
   async function navigateTo(role, why) {
     if (typeof projectRoleAllowed === "function" && !projectRoleAllowed(role)) return false;
-    // D-004: аккаунт цели. Переход в чужой контейнер увёл бы ход другому
-    // аккаунту, а лимитированный аккаунт задание не примет вовсе — проверка
-    // стоит до записи отметки перехода, чтобы «петли навигации» не было.
+    // D-004: лимитированный аккаунт задание не примет вовсе — проверка стоит до
+    // записи отметки перехода, чтобы «петли навигации» не было.
+    //
+    // Почта вкладки здесь НЕ сверяется. Переход из контейнера A на адрес роли из
+    // контейнера B — трудоёмкий, но рабочий путь: страница откроется на нужном
+    // аккаунте, и следующий шаг уже увидит правильную подпись. Пауза «откройте
+    // вручную», поставленная до перехода, сделала бы этот путь недостижимым и
+    // требовала бы от Мастера одного и того же клика на каждый шаг.
     if (role && typeof accountVerdict === "function" && roleAccount(role)) {
-      const verdict = await accountVerdict(role).catch(() => ({ ok: true }));
-      if (!verdict.ok && verdict.kind === "wrong-account") {
-        accountMismatchPause(verdict, role.id);
-        return true;
-      }
-      if (!verdict.ok) {
-        log(`Не открываю «${role.name}»: ${verdict.why}. Ход выберет другой аккаунт.`, true, { ntfy: "quiet" });
+      const hit = typeof accountBlocked === "function" ? accountBlocked(roleAccount(role)) : null;
+      if (hit && !hit.expired) {
+        log(`Не открываю «${role.name}»: «${roleAccount(role)}» в лимите до ${accountResetText(hit.until)}. Ход выберет другой аккаунт.`, true, { ntfy: "quiet" });
         return false;
       }
     }
@@ -22494,9 +22555,24 @@ function reviewPullRequest({ files, pr, zone } = {}) {
    * выполнен» Мастер читал как поломку кнопки.
    */
   async function huntAnotherAccount(list, me, fromToggle) {
-    const usable = (list || []).filter((role) => role && role.url &&
+    // Своя страница не на своём аккаунте — повод уйти адресом, а не паузой:
+    // адрес роли из «Ролей» открывается на своём аккаунте, и это ровно тот шаг,
+    // который чинит ошибку. Паузой отвечаем только ниже, когда уходить некуда.
+    const mismatch = await accountLiveMismatch(me).catch(() => null);
+    if (mismatch)
+      logThrottled(`account-hunt-mismatch:${me.id}`, `Вкладка не на своём аккаунте: ${mismatch.why}. Открываю адрес роли другого аккаунта.`, false, 600_000);
+    // Роли административного аккаунта из поиска исключены не по прихоти: адрес
+    // Координатора принимает только его аккаунт, а уводить вкладку к нему из
+    // чужого контейнера — это отказ Arena, а не ход.
+    const usable = (list || []).filter((role) => role && role.url && !accountIsAdministrativeFn(role.fn) &&
       (!role.account || !accountLimitBlocks(role)) && norm(role.id) !== norm(me.id));
     if (!usable.length) {
+      // Уходить некуда: если вкладка ещё и на чужом аккаунте, следующий шаг снова
+      // упрётся в то же самое — это и есть повод позвать Мастера.
+      if (mismatch) {
+        accountMismatchPause(mismatch, me.id);
+        return true;
+      }
       const lines = accountLimitLines();
       logThrottled(
         `account-hunt:none:${me.id}`,
@@ -22512,16 +22588,15 @@ function reviewPullRequest({ files, pr, zone } = {}) {
     const byId = (id) => (id ? usable.find((role) => norm(role.id) === norm(id)) || null : null);
     const pendingRole = byId(pending && pending.roleId);
     const expectRole = byId(expect && expect.roleId);
-    const coord = usable.find((role) => role.fn === "Coordinator");
-    const target = pendingRole || expectRole || coord || usable[0];
+    // Координатор здесь не ищется намеренно: он на административном аккаунте, и
+    // такой аккаунт либо доступен (тогда поиск не нужен), либо стоит паузой.
+    const target = pendingRole || expectRole || usable[0];
     if (!target) return false;
     const why = pendingRole
       ? "там ждёт отправки задание"
       : expectRole
         ? `ждём ответа «${target.name}»`
-        : target.fn === "Coordinator"
-          ? "там начинается ход на доступном аккаунте"
-          : "продолжаю на доступном аккаунте";
+        : "продолжаю на доступном аккаунте";
     log(`Роль «${me.name}» недоступна по лимиту аккаунта — ход идёт дальше: ${why}.`);
     if (fromToggle) GM_setValue(K.step, true);
     return navigateTo(target, why);
@@ -22782,9 +22857,11 @@ function reviewPullRequest({ files, pr, zone } = {}) {
       // D-106 + D-004: дневной лимит токенов важнее любого хода — индикатор в
       // поле ввода блокирует отправку целиком, и продолжение хода, и новое
       // задание не уйдут. Лимит принадлежит АККАУНТУ страницы: рабочий аккаунт
-      // останавливает только свой ход, административный — цикл целиком
-      // (спрашивать некого). Индикатор без метки аккаунта — прежняя пауза.
-      if (await accountsTick()) return;
+      // останавливает только свою роль (тик идёт дальше и уводит ход), а
+      // административный — цикл целиком, потому что спрашивать некого.
+      // Индикатор без метки аккаунта — прежняя пауза.
+      const accountStop = await accountsTick();
+      if (accountStop && accountStop !== "worker") return;
       // Tool-call limit — продолжение того же хода, раньше общей паузы по ошибке.
       if (await handleToolCallLimit()) return;
       // Ошибка на экране важнее любого шага: сначала остановиться.
@@ -22884,7 +22961,9 @@ function reviewPullRequest({ files, pr, zone } = {}) {
         const byId = (id) => (id ? list.find((r) => norm(r.id) === norm(id)) || null : null);
         const pendingRole = pendingNow ? byId(pendingNow.roleId) : null;
         const waitingRole = waitingNow ? byId(waitingNow.roleId) : null;
-        const coord = list.find((r) => r.fn === "Coordinator");
+        // Координатор — только если он не стоит по лимиту: его аккаунт
+        // административный, и переход туда упёрся бы в отказ отправки.
+        const coord = list.find((r) => r.fn === "Coordinator" && !accountLimitBlocks(r));
         const target = pendingRole || waitingRole || coord;
         if (!target) {
           log(
@@ -22931,8 +23010,24 @@ function reviewPullRequest({ files, pr, zone } = {}) {
       {
         const verdict = await accountVerdict(me).catch(() => ({ ok: true }));
         if (!verdict.ok && verdict.kind === "wrong-account") {
-          accountMismatchPause(verdict, me.id);
-          return;
+          // Своя страница не на своём аккаунте — уходим адресом роли, а не
+          // стоим: страница откроется в нужном контейнере, и это ровно тот шаг,
+          // который чинит ошибку. Перед уходом: страница недогружена — знак, что
+          // адрес роли только что открыт и подпись сайдбара ещё от прошлой
+          // страницы. Тогда не уходим (петля навигации), а ждём дорисовки.
+          const shell = appReady();
+          if (!shell.ok) {
+            logThrottled(
+              `account-shell:${me.id}`,
+              `Аккаунт вкладки не сверен (${shell.why}) — жду загрузки страницы, чтобы не прыгать по кругу.`,
+              false,
+              C.tickMs * 4,
+            );
+            return;
+          }
+          log(`Вкладка не на своём аккаунте: ${verdict.why}. Открываю адрес роли «${me.name}» — он ведёт в нужный контейнер.`);
+          forgetAccountRead();
+          return await navigateTo(me, "вкладка была не на своём аккаунте");
         }
         if (!verdict.ok) {
           // Лимит: свою роль не выдаём, но цикл не останавливаем — на этой

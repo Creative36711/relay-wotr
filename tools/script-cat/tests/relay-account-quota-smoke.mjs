@@ -49,7 +49,7 @@ function makeAccounts({ initial = {}, dom = null } = {}) {
        accountLimit, accountBlocked, accountLimitText, accountLimitLines, markAccountLimit,
        clearAccountLimit, accountVerdict, accountLimitBlocks, accountHoldsExpect,
        accountLayoutProblems, markTouched: markAccountLimit, accountsTick, accountPlanNote,
-       accountIdleNote, accountRoleForPath, ACCOUNT_RECONCILE: null };`,
+       accountIdleNote, accountIdleAskedMark, accountRoleForPath, ACCOUNT_RECONCILE: null };`,
   )(
     GM_getValue,
     GM_setValue,
@@ -217,7 +217,8 @@ const roleRow = (name, extra = {}) => ({
     dom: { document: { querySelectorAll: () => [] }, location: { pathname: `/agent/${slug('AI & Simulation Engineer')}-0000` }, blocked: () => true },
   });
   const held = await worker.api.accountsTick();
-  assert.equal(held, true, 'на этой странице отправлять нечего: тик заканчивается');
+  assert.equal(held, 'worker', 'рабочий аккаунт не останавливает тик: ход должен уйти другому аккаунту');
+  assert.notEqual(held, true, 'прежний `true` молча заканчивал страницу до полуночи — этого быть не должно');
   assert.equal(worker.pauses.filter((p) => p.kind === 'daily-limit').length, 0,
     'прежней паузы daily-limit нет: лимит принадлежит аккаунту, а не вкладке');
   assert.ok(worker.api.accountLimitBlocks({ account: 'account-2' }), 'аккаунт отмечен лимитом');
@@ -227,7 +228,7 @@ const roleRow = (name, extra = {}) => ({
     dom: { document: { querySelectorAll: () => [] }, location: { pathname: `/agent/${slug('Coordinator')}-0000` }, blocked: () => true },
   });
   const stopped = await admin.api.accountsTick();
-  assert.equal(stopped, true, 'административный аккаунт останавливает тик');
+  assert.equal(stopped, 'admin', 'административный аккаунт останавливает тик');
   const adminPause = admin.pauses.find((p) => p.kind === 'account-limit-admin');
   assert.ok(adminPause, 'пауза account-limit-admin поставлена');
   assert.match(adminPause.reason, /Coordinato?r|Coordinator/, 'в паузе названы административные роли');
@@ -338,8 +339,15 @@ const roleRow = (name, extra = {}) => ({
   const idle = api.accountIdleNote(ready, { missionId: 'm-1' });
   assert.match(idle, /Работать нечем/, 'когда вся работа на лимитированных аккаунтах — это сказано прямо');
   assert.match(idle, /blocked/, 'Координатору дан второй ход: пауза миссии');
+  // «Один раз на окно» считается при отправке, а не при сборке текста: план мог
+  // не уйти (капча, пауза), и вопрос потерялся бы вместе с ним.
+  assert.match(api.accountIdleNote(ready, { missionId: 'm-1' }), /Работать нечем/,
+    'пока план не ушёл, вопрос остаётся в тексте — его отправит следующая попытка');
+  api.accountIdleAskedMark('m-1');
   const second = api.accountIdleNote(ready, { missionId: 'm-1' });
-  assert.equal(second, '', 'второй раз на то же окно не спрашиваем: это квота Координатора');
+  assert.equal(second, '', 'после отправки второй раз на то же окно не спрашиваем: это квота Координатора');
+  assert.match(api.accountIdleNote(ready, { missionId: 'm-2' }), /Работать нечем/,
+    'другая миссия — другое окно');
 
   // Есть работа на доступном аккаунте — вопрос не нужен вовсе.
   const mixed = [
@@ -354,13 +362,20 @@ const roleRow = (name, extra = {}) => ({
 {
   const cycle = src('28-cycle.js');
   assert.match(cycle, /await accountsTick\(\)/, 'тик проверяет аккаунты до любых решений');
+  assert.match(cycle, /accountStop !== "worker"/, 'рабочий аккаунт не заканчивает тик: ход идёт дальше');
   assert.match(cycle, /await accountVerdict\(me\)/, 'роль страницы сверяется со своим аккаунтом');
   // «Шаг» и автоцикл идут через один tick: отдельной ветки в кнопке нет.
   assert.doesNotMatch(cycle, /accountVerdict\([^)]*\)[\s\S]{0,200}fromToggle === false/,
     'паритет не зависит от способа запуска');
   const nav = cycle.slice(cycle.indexOf('  async function navigateTo('), cycle.indexOf('  async function huntAnotherAccount('));
-  assert.match(nav, /accountVerdict\(role\)/, 'переход проверяет аккаунт цели');
-  assert.match(nav, /accountMismatchPause\(verdict, role\.id\)/, 'чужой аккаунт — пауза, а не переход');
+  assert.match(nav, /accountBlocked\(roleAccount\(role\)\)/, 'переход не ведёт на лимитированный аккаунт');
+  // Почта вкладки в переходе НЕ сверяется: адрес роли из другого контейнера —
+  // это рабочий путь к нужному аккаунту, а не ошибка. Пауза там превратила бы
+  // каждый шаг в ручной клик Мастера.
+  assert.doesNotMatch(nav, /accountMismatchPause/, 'расхождение аккаунтов не превращает переход в паузу');
+  assert.match(cycle, /return await navigateTo\(me, /, 'вкладка не на своём аккаунте уходит адресом роли');
+  assert.match(cycle, /accountIsAdministrativeFn\(role\.fn\)/, 'поиск не уводит вкладку к административным ролям');
+  assert.match(cycle, /accountIdleAskedMark|accountLiveMismatch/, 'расхождение аккаунтов не остаётся без последствий');
 
   const send = src('17-arena-polls.js');
   assert.match(send, /accountLimitBlocks\(role\)/, 'очередь не ставит задание роли в лимите');
