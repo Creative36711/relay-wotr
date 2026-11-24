@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Relay — передача хода между агентами
 // @namespace    https://arena.ai/
-// @version      1.18.0
+// @version      1.18.1
 // @description  Цикл Координатор → исполнитель → Координатор: агент сам коммитит, пушит и мержит PR; ScriptCat ждёт мерж и нажимает Continue.
 // @match        https://arena.ai/*
 // @match        https://www.arena.ai/*
@@ -93,7 +93,7 @@
     // D-073: отпечаток сборки вшивает build.mjs (SHA-256 источника). Номер версии
     // говорит «какой выпуск», отпечаток — «какая именно сборка»: без него проверка
     // «работает новая версия, а не прежняя под новым номером» невозможна.
-    buildFingerprint: "f4363b803280fc63",
+    buildFingerprint: "e78099739793d9f1",
     repo: "", // для ссылки на PR из номера
     tickMs: 15000,
     mergeGraceMs: 90000, // сколько ждём мерж, прежде чем нажать кнопки за агента
@@ -452,11 +452,10 @@
     // доказать, а предохранитель обнулялся бы при каждом переходе страницы.
     heal: "cfn-heal-state",
     heartbeat: "cfn-heartbeat",
-    // D-004: аккаунты Arena. Метка аккаунта живёт в «Ролях», адрес входа — только
-    // здесь: база общая, а почта — это вход. Лимиты — состояние АККАУНТА, поэтому
-    // ключ общий для вкладок и контейнеров: у каждой вкладки своя сессия, а квота
-    // у аккаунта одна.
-    accountMap: "cfn-account-map",
+    // D-004: аккаунты Arena. Лимиты — состояние АККАУНТА, поэтому ключ общий
+    // для вкладок и контейнеров: у каждой вкладки своя сессия, а квота у
+    // аккаунта одна. Почта аккаунта — поле «Аккаунт» в Notion (D-005):
+    // локального ключа под адрес больше нет.
     accountLimits: "cfn-account-limits",
     accountSeen: "cfn-account-seen-v1",
     accountIdle: "cfn-account-idle-ask",
@@ -793,7 +792,7 @@
 
   const NTFY_BASE = "https://ntfy.sh";
   const SCRIPT_VERSION =
-    (typeof GM_info !== "undefined" && GM_info?.script?.version) || "1.18.0";
+    (typeof GM_info !== "undefined" && GM_info?.script?.version) || "1.18.1";
 
   /** «https://ntfy.sh/topic?x=1» и «topic» одинаково дают topic. */
   function normalizeNtfyTopic(raw) {
@@ -1971,39 +1970,9 @@
   }
 
   // ───────────────────────────── подключения ─────────────────────────────
-  /**
-   * D-004: адреса входа по меткам аккаунтов Arena.
-   *
-   * Только локально и только здесь: база «Роли» общая на команду, а почта — это
-   * вход. Пустое значение означает «связки нет»: аккаунт вкладки тогда не
-   * сверяется, и роль работает как раньше.
-   */
-  function accountMapText() {
-    const map = accountMap();
-    return Object.keys(map)
-      .sort()
-      .filter((key) => accountLabel(map[key]))
-      .map((key) => `${key} = ${accountLabel(map[key])}`)
-      .join("\n");
-  }
-  function parseAccountMap(text) {
-    const map = {};
-    for (const line of String(text || "").split(/\n+/)) {
-      const raw = line.trim();
-      if (!raw || raw.startsWith("#")) continue;
-      const cut = raw.indexOf("=");
-      if (cut < 1) throw new Error(`Строка «${oneLine(raw, 60)}» не в виде «метка = почта».`);
-      const label = accountLabel(raw.slice(0, cut));
-      const mail = accountMail(raw.slice(cut + 1));
-      // Метка из Notion может содержать пробел («Основной аккаунт»): сравнивать
-      // их строго значило бы запретить то, что человек уже вписал в базу. Знак
-      // «=» в метке запрещён — иначе строка разбирается не туда.
-      if (!label || label.includes("=")) throw new Error(`Метка «${oneLine(label, 40)}» не годится: пустая или со знаком «=».`);
-      if (!mail) throw new Error(`У метки «${label}» не почта, а «${oneLine(raw.slice(cut + 1), 60)}».`);
-      map[normAccount(label)] = mail;
-    }
-    return map;
-  }
+  // D-005: адреса аккаунтов вводить не нужно — почта живёт в поле «Аккаунт»
+  // базы «Роли» (Notion) и читается оттуда. Окно лишь сообщает, откуда брать
+  // адреса; локальной связки «метка → почта» больше нет (D-004 п.1 отменён).
 
   /** Старые ключи остаются источником истины: обновление не сбрасывает доступ. */
   function connectionSettings() {
@@ -2012,15 +1981,11 @@
       gwUrl: String(GM_getValue(K.gwUrl, "") || "").trim(),
       gwKey: String(GM_getValue(K.gwKey, "") || "").trim(),
       github: String(GM_getValue(K.ghToken, "") || "").trim(),
-      // D-004: текст, а не объект: сравнение «изменилось ли» и откат должны быть
-      // такими же простыми, как у остальных полей окна.
-      accounts: accountMapText(),
     };
   }
 
   const sameConnections = (a, b) =>
-    a.notion === b.notion && a.gwUrl === b.gwUrl && a.gwKey === b.gwKey && a.github === b.github &&
-    a.accounts === b.accounts;
+    a.notion === b.notion && a.gwUrl === b.gwUrl && a.gwKey === b.gwKey && a.github === b.github;
 
   /** Не отправлять ключ по HTTP или на похожий на Google чужой адрес без согласия. */
   function connectionEndpoint(value) {
@@ -2198,11 +2163,8 @@
             <button id="cfn-connection-github-open" type="button" style="${action};margin-top:7px">Открыть настройки токенов GitHub ↗</button>
           </section>
           <section style="${card}" aria-labelledby="cfn-connection-accounts-title">
-            <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap"><strong id="cfn-connection-accounts-title" style="font-size:15px;color:#fff">Аккаунты Arena</strong><span style="${quiet}">метка из «Ролей» → почта входа</span></div>
-            <div style="${quiet};margin:4px 0 8px">Метки («account-1»…) стоят в поле «Аккаунт» базы «Роли». Здесь — только соответствие метки и почты: оно остаётся в этом браузере и в Notion не пишется. Скрипт входит только за вас и аккаунты не переключает — по адресу он проверяет, что вкладка открыта в нужном контейнере.</div>
-            <label for="cfn-connection-accounts" style="font-weight:600">Соответствие меток</label>
-            <textarea id="cfn-connection-accounts" rows="4" spellcheck="false" style="${field};resize:vertical" placeholder="account-1 = mail@example.com&#10;account-2 = other@example.com"></textarea>
-            <div id="cfn-connection-accounts-note" role="status" style="${quiet};margin-top:6px"></div>
+            <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap"><strong id="cfn-connection-accounts-title" style="font-size:15px;color:#fff">Аккаунты Arena</strong><span style="${quiet}">почта — из Notion</span></div>
+            <div style="${quiet};margin:4px 0 8px">Почта каждого аккаунта читается из поля «Аккаунт» базы «Роли»: здесь вводить нечего. Адрес поменяли в Notion — транспорт возьмёт его при следующем чтении «Ролей», в браузере править нечего. Скрипт входит только за вас и аккаунты не переключает — по адресу он проверяет, что вкладка открыта в нужном контейнере.</div>
           </section>
           <details style="${card}"><summary style="cursor:pointer;font-weight:600">Восстановление и уведомления</summary>
             <div style="${quiet};margin:8px 0">Восстановление использует сохранённые настройки и может изменить карточку Notion и журнал Drive. Применяйте на остановленном цикле.</div>
@@ -2226,11 +2188,10 @@
     const find = (id) => box.querySelector(`#cfn-connection-${id}`);
     const notionInput = find("notion"), urlInput = find("url"), keyInput = find("key"), githubInput = find("github");
     const notionRemove = find("notion-remove"), driveRemove = find("drive-remove"), githubRemove = find("github-remove");
-    const trust = find("trust"), trustWrap = find("trust-wrap"), accountsInput = find("accounts");
+    const trust = find("trust"), trustWrap = find("trust-wrap");
     const checkButton = box.querySelector("#cfn-connections-check"), saveButton = box.querySelector("#cfn-connections-save");
     const note = box.querySelector("#cfn-connections-note");
     find("repo").textContent = C.repo;
-    accountsInput.value = saved.accounts;
     find("project-name").textContent = C.projectName || "Relay";
     urlInput.value = saved.gwUrl;
 
@@ -2253,7 +2214,6 @@
       gwUrl: driveRemove.checked ? "" : urlInput.value.trim(),
       gwKey: driveRemove.checked ? "" : keyInput.value.trim() || saved.gwKey,
       github: githubRemove.checked ? "" : githubInput.value.trim() || saved.github,
-      accounts: accountsInput.value,
     });
     const needsTrust = (settings, endpoint = connectionEndpoint(settings.gwUrl)) =>
       endpoint.ok && Boolean(settings.gwUrl) && (!endpoint.standard ||
@@ -2267,7 +2227,6 @@
       urlInput.disabled = locked || driveRemove.checked;
       keyInput.disabled = locked || driveRemove.checked;
       githubInput.disabled = locked || githubRemove.checked;
-      accountsInput.disabled = locked;
       for (const element of [notionRemove, driveRemove, githubRemove, trust, checkButton, saveButton,
         find("recover"), find("adopt"), find("ntfy")]) element.disabled = locked;
       const stopAuto = find("stop-auto");
@@ -2310,7 +2269,7 @@
         event.preventDefault(); first.focus();
       }
     };
-    for (const element of [notionInput, urlInput, keyInput, githubInput, accountsInput, notionRemove, driveRemove, githubRemove, trust]) {
+    for (const element of [notionInput, urlInput, keyInput, githubInput, notionRemove, driveRemove, githubRemove, trust]) {
       const invalidate = (event) => {
         // Подтверждение привязано к адресу и ключу, а не к следующему вводу.
         if (event.target === urlInput || event.target === keyInput || event.target === driveRemove) trust.checked = false;
@@ -2385,21 +2344,9 @@
         say("Подключения не изменены; очередь и ожидание сохранены.");
         return;
       }
-      // D-004: соответствие «метка → почта» проверяется до записи. Ошибка в
-      // строке не должна оставить окно с половиной сохранённых настроек.
-      let accountsNext = null;
-      if (next.accounts !== saved.accounts) {
-        try {
-          accountsNext = JSON.stringify(parseAccountMap(next.accounts));
-        } catch (e) {
-          say(`Аккаунты: ${e.message}`, true);
-          return;
-        }
-      }
       const updates = [
         [K.notion, saved.notion, next.notion], [K.gwUrl, saved.gwUrl, next.gwUrl],
         [K.gwKey, saved.gwKey, next.gwKey], [K.ghToken, saved.github, next.github],
-        [K.accountMap, JSON.stringify(accountMap()), accountsNext],
       ].filter(([, before, after]) => before !== after);
       if (!updates.length) { say("Изменений для сохранения нет."); return; }
       // Допуск привязан к проверенным данным. Меняем доступ — сначала снимаем
@@ -2425,7 +2372,7 @@
         say(restored ? "Не удалось сохранить; прежние значения восстановлены." : "Не удалось полностью сохранить или восстановить настройки. Проверьте их перед запуском.", true);
         return;
       }
-      saved = { ...next, accounts: accountMapText() };
+      saved = next;
       notionInput.value = ""; keyInput.value = ""; githubInput.value = ""; urlInput.value = saved.gwUrl;
       notionRemove.checked = false; driveRemove.checked = false; githubRemove.checked = false; trust.checked = false;
       placeholders(); resetStatuses(); refreshForm();
@@ -2596,7 +2543,7 @@
         }
         // D-004: поля аккаунтов аддитивны, как Repository. База без них работает
         // по-старому (лимит аккаунта не отслеживается), но если поле есть, оно
-        // должно быть select: иначе транспорт не прочитает метку и промолчит.
+        // должно быть select: иначе транспорт не прочитает адрес и промолчит.
         // Имена — литералами, а не константами модуля аккаунтов: эту функцию
         // пробы вырезают из бандла и исполняют отдельно, внешних `const` там нет.
         if (label === "Роли") {
@@ -3935,9 +3882,10 @@
       agentJobId: rt(p.properties["Agent Job ID"]),
       agentCreatedAt: p.properties["Agent Created At"]?.date?.start || "",
       previousAgentUrl: p.properties["Previous Agent URL"]?.url || "",
-      // D-004: метка аккаунта Arena («account-1»…), непрозрачная строка. Пустое
-      // значение — «аккаунт не размечен»: роль работает как раньше, но лимит её
-      // аккаунта не отслеживается. «Доступность» пишет только транспорт.
+      // D-005: почта аккаунта Arena — значение поля «Аккаунт» (Notion,
+      // единственный источник; D-004 держал метку здесь, а адрес — локально).
+      // Пустое значение — «аккаунт не размечен»: роль работает как раньше, но
+      // лимит её аккаунта не отслеживается. «Доступность» пишет только транспорт.
       account: sel(p.properties["Аккаунт"]),
       available: sel(p.properties["Доступность"]),
     };
@@ -21765,8 +21713,9 @@ function reviewPullRequest({ files, pr, zone } = {}) {
   //
   // Три правила, на которых держится всё остальное:
   //
-  //  1. Метка аккаунта живёт в «Ролях» (поле «Аккаунт»), адрес входа — только
-  //     локально в ⚙: база общая, а почта — это вход.
+  //  1. Почта аккаунта живёт в «Ролях» (поле «Аккаунт») — Notion единственный
+  //     источник (D-005): локальной связки «метка → почта» нет, дублировать
+  //     адрес в ⚙ не нужно. Пустое поле — «аккаунт не размечен».
   //  2. Лимит — это состояние АККАУНТА, а не вкладки. Признак один и достоверный:
   //     видимый индикатор в поле ввода (см. `dailyUsageLimitBlocked`). Текст
   //     ошибки, тишина агента и tool-call limit лимитом аккаунта не считаются.
@@ -21774,10 +21723,15 @@ function reviewPullRequest({ files, pr, zone } = {}) {
   //     «Статус» нельзя: возврат «Активна» затёр бы собственное решение Мастера,
   //     принятое за эти часы, а в «Статус» пишет ещё и provisioning.
   //
-  // Проверка адреса вкладки — вспомогательная: пока метка не сверена с почтой,
-  // скрипт работает, как раньше (иначе свёрнутый сайдбар останавливал бы цикл).
+  // Проверка адреса вкладки — вспомогательная: пока поле «Аккаунт» не сверено
+  // с почтой вкладки, скрипт работает, как раньше (иначе свёрнутый сайдбар
+  // останавливал бы цикл). Смена почты в Notion подхватывается при следующем
+  // чтении «Ролей» — в браузере ничего править не нужно (D-005).
 
-  /** Поле «Роли» с меткой аккаунта. Значение — непрозрачная метка, не адрес. */
+  /**
+   * Поле «Роли» с аккаунтом. Значение — почта входа (D-005): она же метка
+   * аккаунта, ключ лимитов и ожидаемый адрес сверки вкладки.
+   */
   const ACCOUNT_FIELD = "Аккаунт";
   /** Поле «Роли», которое пишет только транспорт: «ОК» или «Лимит». */
   const ACCOUNT_AVAIL_FIELD = "Доступность";
@@ -21827,12 +21781,8 @@ function reviewPullRequest({ files, pr, zone } = {}) {
 
   const accountObj = (value) => (value && typeof value === "object" && !Array.isArray(value) ? value : {});
 
-  /** Метка → почта. Только локально: в Notion адреса входа не пишутся. */
-  const accountMap = () => accountObj(GM_getValue(K.accountMap, null));
-  function accountMailFor(label) {
-    const map = accountMap();
-    return accountMail(map[normAccount(label)] || "");
-  }
+  // D-005: локальной связки «метка → почта» больше нет. Ожидаемый адрес берётся
+  // прямо из поля «Аккаунт» роли (см. accountVerdict и accountMismatchSync).
 
   /** Отметки лимитов: метка → { until, roleId, roleName, rows: [pageId], touched }. */
   const accountLimits = () => accountObj(GM_getValue(K.accountLimits, null));
@@ -22068,7 +22018,7 @@ function reviewPullRequest({ files, pr, zone } = {}) {
   }
 
   /**
-   * Роли одного аккаунта — свежим чтением, если оно доступно.
+   * Свежие «Роли» целиком — для снятия лимита.
    *
    * Кеш «Ролей» живёт десять минут и не знает о нашей же записи: к моменту
    * снятия лимита в нём всё ещё «ОК», и снятие пропустило бы все строки.
@@ -22076,21 +22026,21 @@ function reviewPullRequest({ files, pr, zone } = {}) {
    * аккаунт — это дешевле, чем оставить роль в «Лимит» до правки руками.
    * Отказ чтения не отменяет снятие: тогда работает кеш, а строка, где
    * «Доступность» не «Лимит», всё равно не трогается.
+   *
+   * Строки для возврата ищутся по pageId, а не по текущему адресу роли (D-005):
+   * смена почты в Notion посреди окна не должна терять нашу отметку.
    */
-  async function accountRolesFresh(label) {
-    const key = normAccount(label);
-    if (!key) return [];
+  async function accountRolesAllFresh() {
     if (typeof roleRows === "function") {
       try {
         const rows = await roleRows({ fresh: true });
-        if (Array.isArray(rows) && rows.length) {
-          return rows.filter((row) => normAccount(roleAccount(row)) === key);
-        }
+        if (Array.isArray(rows) && rows.length) return rows;
       } catch (e) {
-        log(`Свежее чтение «Ролей» для аккаунта «${accountLabel(label)}» не удалось (${e.message}): снимаю лимит по кешу.`, false, { ntfy: "quiet" });
+        log(`Свежее чтение «Ролей» не удалось (${e.message}): снимаю лимит по кешу.`, false, { ntfy: "quiet" });
       }
     }
-    return accountRolesFromCache(label);
+    const cache = GM_getValue(K.rolesCache, null);
+    return cache && Array.isArray(cache.rows) ? cache.rows : [];
   }
 
   /** Роли одного аккаунта из кеша «Ролей»: без сети, для отметок и сверок. */
@@ -22140,8 +22090,27 @@ function reviewPullRequest({ files, pr, zone } = {}) {
       touched: sameWindow && Array.isArray(previous.touched) ? previous.touched.slice() : [],
     };
     limits[key] = entry;
-    GM_setValue(K.accountLimits, limits);
+    // D-005: смена почты в Notion посреди окна. Строки уже «Лимит» — это могла
+    // быть наша отметка под прежним адресом: не перезаписываем её (чужое не
+    // трогаем), но забираем в новую запись — иначе под новым ключом снимать
+    // будет нечего, а «Доступность» осталась бы «Лимит» до правки руками.
     const rows = accountRolesFromCache(label);
+    const limitedNow = new Set(
+      rows
+        .filter((row) => row.pageId && normAccount(roleAvailableLabel(row)) === normAccount(ACCOUNT_LIMIT))
+        .map((row) => String(row.pageId)),
+    );
+    for (const [otherKey, other] of Object.entries(limits)) {
+      if (otherKey === key || !other || !Array.isArray(other.touched)) continue;
+      const moved = other.touched.filter((item) => limitedNow.has(String(item.pageId || "")));
+      if (!moved.length) continue;
+      const movedIds = new Set(moved.map((item) => String(item.pageId || "")));
+      entry.touched.push(...moved);
+      if (Array.isArray(other.rows)) entry.rows.push(...other.rows.filter((id) => movedIds.has(String(id))));
+      other.touched = other.touched.filter((item) => !movedIds.has(String(item.pageId || "")));
+      if (Array.isArray(other.rows)) other.rows = other.rows.filter((id) => !movedIds.has(String(id)));
+      limits[otherKey] = other;
+    }
     for (const row of rows) {
       if (!row.pageId || normAccount(roleAvailableLabel(row)) === normAccount(ACCOUNT_LIMIT)) continue;
       try {
@@ -22171,7 +22140,7 @@ function reviewPullRequest({ files, pr, zone } = {}) {
     const entry = limits[key];
     if (!entry) return 0;
     const ours = Array.isArray(entry.touched) ? entry.touched : [];
-    const fresh = await accountRolesFresh(entry.label || label);
+    const fresh = await accountRolesAllFresh();
     const byPage = new Map(fresh.map((row) => [String(row.pageId || ""), row]));
     let restored = 0;
     for (const item of ours) {
@@ -22220,8 +22189,11 @@ function reviewPullRequest({ files, pr, zone } = {}) {
         why: `«${accountLabel(label)}» в лимите до ${accountResetText(hit.until)}`,
       };
     }
-    const expected = accountMailFor(label);
-    if (!expected) return { ok: true, warn: `для «${accountLabel(label)}» не задан адрес в ⚙ «Подключениях»: аккаунт вкладки не сверяется` };
+    // D-005: ожидаемый адрес — значение поля «Аккаунт» (Notion), без локальной
+    // связки. Не адрес — значит «связки нет»: сверка пропущена, работа идёт.
+    const expected = accountMail(label);
+    if (!expected)
+      return { ok: true, warn: `в поле «${ACCOUNT_FIELD}» роли нет адреса почты («${accountLabel(label)}»): сверка аккаунта пропущена` };
     const read = await readAccountEmail();
     const seen = accountMail(read.email);
     if (!seen) {
@@ -22234,7 +22206,7 @@ function reviewPullRequest({ files, pr, zone } = {}) {
       return {
         ok: false,
         kind: "wrong-account",
-        why: `роль «${role?.name || role?.id}» закреплена за «${accountLabel(label)}» (${expected}), а вкладка на ${read.email}`,
+        why: `роль «${role?.name || role?.id}» закреплена за «${accountLabel(label)}», а вкладка на ${read.email}`,
         seen: read.email,
         expected,
       };
@@ -22253,14 +22225,15 @@ function reviewPullRequest({ files, pr, zone } = {}) {
   function accountMismatchSync(role) {
     const label = roleAccount(role);
     if (!label) return { wrong: false };
-    const expected = accountMailFor(label);
+    // D-005: ожидаемый адрес — поле «Аккаунт» роли; не адрес — сверять нечего.
+    const expected = accountMail(label);
     if (!expected) return { wrong: false };
     const read = accountPageRead.value;
     const seen = accountMail(read && read.email);
     if (!seen) return { wrong: false, unknown: true };
     return seen === expected
       ? { wrong: false, email: seen }
-      : { wrong: true, seen, expected, label: accountLabel(label), why: `роль «${role?.name || role?.id}» закреплена за «${accountLabel(label)}» (${expected}), а вкладка на ${seen}` };
+      : { wrong: true, seen, expected, label: accountLabel(label), why: `роль «${role?.name || role?.id}» закреплена за «${accountLabel(label)}», а вкладка на ${seen}` };
   }
 
   /** Короткая проверка без ожидания подписи: для мест, где пауза была бы шумом. */
@@ -22327,12 +22300,17 @@ function reviewPullRequest({ files, pr, zone } = {}) {
     const label = roleAccount(role);
     const blocked = typeof dailyUsageLimitBlocked === "function" ? dailyUsageLimitBlocked() : false;
 
-    // 1. Сброс: окно прошло, и мы как раз на странице этого аккаунта.
+    // 1. Сброс: окно прошло, и мы как раз на странице этого аккаунта. Подходит
+    //    и текущий адрес, и прежний (по roleId роли): смена почты в Notion
+    //    посреди окна не оставляет отметку-сироту под старым ключом (D-005).
     if (label && !blocked) {
-      const hit = accountLimit(label);
-      if (hit && Number(hit.until) && Date.now() >= Number(hit.until)) {
-        await clearAccountLimit(label, { reason: "индикатор лимита на странице погас" }).catch((e) =>
-          log(`Снятие лимита «${accountLabel(label)}» не удалось: ${e.message}`, true, { ntfy: "quiet" }));
+      const myRole = role?.id ? norm(role.id) : "";
+      for (const [key, entry] of Object.entries(accountLimits())) {
+        if (!entry || !(Number(entry.until) && Date.now() >= Number(entry.until))) continue;
+        const ours = key === normAccount(label) || Boolean(myRole && entry.roleId && norm(entry.roleId) === myRole);
+        if (!ours) continue;
+        await clearAccountLimit(entry.label || key, { reason: "индикатор лимита на странице погас" }).catch((e) =>
+          log(`Снятие лимита «${accountLabel(entry.label || key)}» не удалось: ${e.message}`, true, { ntfy: "quiet" }));
       }
     }
 

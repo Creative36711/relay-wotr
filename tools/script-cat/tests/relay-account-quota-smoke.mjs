@@ -2,8 +2,9 @@
 // последовательной.
 //
 // Мастер: «один аккаунт упёрся — остальные работают; админский аккаунт только
-// Coordinator, Warden и Transport Maintainer; метки — заглушки, адреса входа он
-// вписывает сам; вопрос "как узнать, на каком аккаунте вкладка"». Здесь
+// Coordinator, Warden и Transport Maintainer; адреса аккаунтов — в Notion
+// (поле «Аккаунт»), в транспорт их вводить не надо; вопрос "как узнать, на
+// каком аккаунте вкладка"». Здесь
 // проверяется поведение, а не строки:
 //   1) подпись аккаунта читается по DOM и переживает свёрнутый сайдбар;
 //   2) полночь сброса считается по Москве, а не по поясу браузера;
@@ -13,7 +14,9 @@
 //   5) задача на лимитированном аккаунте не выдаётся и не отправляется, а
 //      незакрытый ход не снимается уборкой фантомов;
 //   6) вернувшиеся роли подхватывают прежние карточки — очередь не переставляется;
-//   7) «Шаг» и автоцикл идут одним путём (проверка в `tick`, а не в кнопке).
+//   7) «Шаг» и автоцикл идут одним путём (проверка в `tick`, а не в кнопке);
+//   8) почта аккаунта — из Notion (D-005): ввода в ⚙ нет, смена адреса
+//      посреди окна лимита не теряет отметку и не требует правок в браузере.
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -33,7 +36,7 @@ function makeAccounts({ initial = {}, dom = null } = {}) {
   const pauses = [];
   const clicks = [];
   const K = {
-    accountMap: 'cfn-account-map', accountLimits: 'cfn-account-limits',
+    accountLimits: 'cfn-account-limits',
     accountSeen: 'cfn-account-seen-v1', accountIdle: 'cfn-account-idle-ask',
     rolesCache: 'cfn-roles-cache',
   };
@@ -45,7 +48,7 @@ function makeAccounts({ initial = {}, dom = null } = {}) {
     'dailyUsageLimitBlocked', 'monitorDailyLimit', 'roleRows',
     `${accountsSrc}
      return { moscowMidnight, accountResetText, accountEmailFromDom, accountIconCollapsed,
-       accountExpandButton, readAccountEmail, forgetAccountRead, accountMapForTest: accountMap,
+       accountExpandButton, readAccountEmail, forgetAccountRead,
        accountLimit, accountBlocked, accountLimitText, accountLimitLines, markAccountLimit,
        clearAccountLimit, accountVerdict, accountLimitBlocks, accountHoldsExpect,
        accountLayoutProblems, markTouched: markAccountLimit, accountsTick, accountPlanNote,
@@ -186,6 +189,43 @@ const roleRow = (name, extra = {}) => ({
   assert.equal(restored, 2, 'снятие вернуло «Доступность» нашим ролям');
   assert.ok(patches.every((p) => !('Статус' in p.properties)), 'снятие тоже не трогает «Статус»');
   assert.ok(!api.accountLimit('account-2'), 'отметка лимита удалена');
+  delete globalThis.__relayRoleRows;
+}
+
+// ── 3б. Смена почты в Notion посреди окна лимита ──────────────────────────
+{
+  // D-005: адрес меняется в Notion — в браузере править нечего, а отметка
+  // лимита не должна стать сиротой под старым ключом.
+  const oldEntry = {
+    label: 'old@example.com', until: Date.now() + 3600_000,
+    rows: ['page-a'], touched: [{ pageId: 'page-a', before: 'ОК' }],
+  };
+  const rows = [
+    roleRow('A', { account: 'new@example.com', available: 'Лимит', pageId: 'page-a' }),
+    roleRow('B', { account: 'new@example.com', available: 'ОК', pageId: 'page-b' }),
+  ];
+  const { api, patches, store, K } = makeAccounts({
+    initial: {
+      'cfn-roles-cache': { at: Date.now(), rows },
+      'cfn-account-limits': { 'old@example.com': oldEntry },
+    },
+  });
+  await api.markAccountLimit('new@example.com', rows[0]);
+  assert.deepEqual(patches.map((p) => p.pageId), ['page-b'],
+    'строка под прежней отметкой «Лимит» не перезаписывается');
+  const limits = store.get(K.accountLimits);
+  assert.ok(limits['new@example.com'].touched.some((t) => t.pageId === 'page-a'),
+    'прежняя отметка забрана в новый ключ — снимать будет нечего');
+  assert.ok(!limits['old@example.com'].touched.some((t) => t.pageId === 'page-a'),
+    'старая запись отметку отдала');
+
+  // Снятие ищет строки по pageId, а не по прежнему адресу роли.
+  patches.length = 0;
+  globalThis.__relayRoleRows = async () => rows.map((r) => ({ ...r, available: 'Лимит' }));
+  const restored = await api.clearAccountLimit('new@example.com', { reason: 'окно прошло' });
+  assert.equal(restored, 2, 'обе строки вернулись, хотя адрес менялся');
+  assert.ok(!api.accountLimit('new@example.com'), 'отметка снята');
+  delete globalThis.__relayRoleRows;
 }
 
 // ── 4. Классификация пауз и удержание цикла ────────────────────────────────
@@ -214,7 +254,7 @@ const roleRow = (name, extra = {}) => ({
     roleRow('Coordinator', { account: 'account-1', fn: 'Coordinator' }),
   ];
   const worker = makeAccounts({
-    initial: { 'cfn-roles-cache': { at: Date.now(), rows }, 'cfn-account-map': { 'account-2': 'w@example.com' } },
+    initial: { 'cfn-roles-cache': { at: Date.now(), rows } },
     dom: { document: { querySelectorAll: () => [] }, location: { pathname: `/agent/${slug('AI & Simulation Engineer')}-0000` }, blocked: () => true },
   });
   const held = await worker.api.accountsTick();
@@ -238,11 +278,9 @@ const roleRow = (name, extra = {}) => ({
 
 // ── 6. Сверка вкладки с ожидаемым аккаунтом ───────────────────────────────
 {
-  const role = roleRow('Godot World Engineer', { account: 'account-2' });
-  const base = {
-    'cfn-roles-cache': { at: Date.now(), rows: [role] },
-    'cfn-account-map': { 'account-2': 'right@example.com' },
-  };
+  // D-005: почта роли — прямо в Notion (поле «Аккаунт»), локальной связки нет.
+  const role = roleRow('Godot World Engineer', { account: 'right@example.com' });
+  const base = { 'cfn-roles-cache': { at: Date.now(), rows: [role] } };
   const wrong = makeAccounts({
     initial: base,
     dom: {
@@ -275,11 +313,12 @@ const roleRow = (name, extra = {}) => ({
   assert.equal(blindVerdict.ok, true, 'неизвестность не блокирует работу');
   assert.match(blindVerdict.warn || '', /не прочитан|не сверяется/, 'но говорит об этом');
 
-  // Связки нет — сверять нечего, роль работает как раньше.
-  const noMap = makeAccounts({ initial: { 'cfn-roles-cache': { at: Date.now(), rows: [role] } } });
-  const noMapVerdict = await noMap.api.accountVerdict(role);
-  assert.equal(noMapVerdict.ok, true, 'без связки метка→почта работа не блокируется');
-  assert.match(noMapVerdict.warn || '', /не задан адрес/, 'и причина названа');
+  // В поле «Аккаунт» не адрес — сверять нечего, роль работает как раньше.
+  const legacyRole = roleRow('Legacy', { account: 'account-2' });
+  const noMail = makeAccounts({ initial: { 'cfn-roles-cache': { at: Date.now(), rows: [legacyRole] } } });
+  const noMailVerdict = await noMail.api.accountVerdict(legacyRole);
+  assert.equal(noMailVerdict.ok, true, 'нечто иное, чем адрес, не блокирует работу');
+  assert.match(noMailVerdict.warn || '', /нет адреса почты/, 'и причина названа');
 }
 
 // ── 7. Незакрытый ход не снимается уборкой ────────────────────────────────
@@ -397,18 +436,22 @@ const roleRow = (name, extra = {}) => ({
   assert.match(schema, /нужен select/, 'и требует от них select, а не любой тип');
 
   const ui = src('07-connections-ui.js');
-  assert.match(ui, /id="cfn-connection-accounts"/, 'адреса входа вводятся в ⚙ «Подключениях»');
-  assert.match(ui, /parseAccountMap\(/, 'строка «метка = почта» разбирается с проверкой');
-  // Метки владельца — его слова: метка с пробелом законна, потому что она уже
-  // стоит в Notion, и запрещать её значило бы требовать переименования базы.
-  assert.doesNotMatch(ui, /одним словом без пробелов/, 'метка с пробелом не отвергается');
-  assert.match(ui, /В Notion не пишется|в Notion не пишется/, 'сказано, что адреса остаются локально');
+  // D-005: почта в транспорт не вводится — ввода адреса в ⚙ нет вовсе,
+  // окно лишь говорит, что адреса читаются из Notion.
+  assert.doesNotMatch(ui, /id="cfn-connection-accounts"/, 'поле ввода почты убрано');
+  assert.doesNotMatch(ui, /parseAccountMap\(/, 'разбора «метка = почта» больше нет');
+  assert.doesNotMatch(accountsSrc, /accountMap\(/, 'локальной связки в модуле аккаунтов нет');
+  assert.match(accountsSrc, /accountMail\(label\)/, 'ожидаемый адрес берётся из поля «Аккаунт» роли');
+  assert.match(ui, /из поля «Аккаунт» базы «Роли»/, 'окно называет источник почты');
+  // Метки владельца — его слова: значение с пробелом законно, потому что оно
+  // уже стоит в Notion, и запрещать его значило бы требовать переименования базы.
+  assert.doesNotMatch(ui, /одним словом без пробелов/, 'значение с пробелом не отвергается');
 }
 
 // ── 11. Оформление выпуска ────────────────────────────────────────────────
 {
   const bundle = readFileSync(join(here, '..', 'relay.user.js'), 'utf8');
-  assert.match(bundle, /^\/\/ @version\s+1\.18\.0\s*$/m, 'выпуск 1.18.0 объявлен');
+  assert.match(bundle, /^\/\/ @version\s+1\.18\.1\s*$/m, 'выпуск 1.18.1 объявлен');
 }
 
-console.log('OK: 1.18.0 (D-004) — лимит принадлежит аккаунту, работа идёт дальше, админский аккаунт останавливает цикл, «Статус» не трогается');
+console.log('OK: 1.18.1 (D-005) — почта аккаунта из Notion, ввода в ⚙ нет; квоты D-004 сохранены: лимит принадлежит аккаунту, админский останавливает цикл, «Статус» не трогается');

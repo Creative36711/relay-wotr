@@ -105,10 +105,6 @@ function makeHarness(values = initial, activeProfile = undefined) {
     'GM_getValue', 'GM_setValue', 'K', 'C', 'ui', 'document', 'location', 'history', 'request',
     'gatewayWithCredentials', 'gatewayIsOld', 'githubHeaders', 'inputStyle', 'btnStyle', 'log', 'window',
     'confirm', 'ntfyDialog', 'recoverLastClaim', 'adoptPageAnswer', 'setTimeout', 'autoOn', 'isPaused', 'autoSet', 'setStatus', 'ACTIVE_PROFILE',
-    // D-004: окно подключений читает и пишет локальную связку «метка → почта».
-    // Модуль аккаунтов лежит после окна в сборке, поэтому здесь его чистое ядро
-    // подставлено явно — как `norm` в других пробах.
-    'accountMap', 'accountLabel', 'accountMail', 'normAccount', 'oneLine',
     `let busy = false;\n${section}\n${githubOpeners}\nreturn { setup, connectionDialog, githubDialog, maybeGhDialog, connectionEndpoint, connectionProblem, probeNotionConnection, probeDriveConnection, probeGithubConnection, setBusy: (value) => { busy = value; }, setWork: (value) => { projectAsyncWork = value; } };`,
   );
   const api = factory(
@@ -120,11 +116,6 @@ function makeHarness(values = initial, activeProfile = undefined) {
     },
     async () => { calls.adopt += 1; return { ok: true, text: 'ответ обработан' }; },
     (fn) => { fn(); return 1; }, () => automatic, () => paused, (value) => { automatic = value; }, () => {}, activeProfile,
-    () => (get(K.accountMap, null) && typeof get(K.accountMap, null) === 'object' ? get(K.accountMap, null) : {}),
-    (value) => String(value || '').trim(),
-    (value) => (/^[^\s@]+@[^\s@]+\.[A-Za-z]{2,}$/.test(String(value || '').trim()) ? String(value || '').trim().toLowerCase() : ''),
-    (value) => String(value || '').trim().toLowerCase(),
-    (value) => String(value || '').replace(/\s+/g, ' ').trim(),
   );
   return {
     ...api, store, nodes, calls, options, location,

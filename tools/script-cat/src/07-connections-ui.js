@@ -1,37 +1,7 @@
   // ───────────────────────────── подключения ─────────────────────────────
-  /**
-   * D-004: адреса входа по меткам аккаунтов Arena.
-   *
-   * Только локально и только здесь: база «Роли» общая на команду, а почта — это
-   * вход. Пустое значение означает «связки нет»: аккаунт вкладки тогда не
-   * сверяется, и роль работает как раньше.
-   */
-  function accountMapText() {
-    const map = accountMap();
-    return Object.keys(map)
-      .sort()
-      .filter((key) => accountLabel(map[key]))
-      .map((key) => `${key} = ${accountLabel(map[key])}`)
-      .join("\n");
-  }
-  function parseAccountMap(text) {
-    const map = {};
-    for (const line of String(text || "").split(/\n+/)) {
-      const raw = line.trim();
-      if (!raw || raw.startsWith("#")) continue;
-      const cut = raw.indexOf("=");
-      if (cut < 1) throw new Error(`Строка «${oneLine(raw, 60)}» не в виде «метка = почта».`);
-      const label = accountLabel(raw.slice(0, cut));
-      const mail = accountMail(raw.slice(cut + 1));
-      // Метка из Notion может содержать пробел («Основной аккаунт»): сравнивать
-      // их строго значило бы запретить то, что человек уже вписал в базу. Знак
-      // «=» в метке запрещён — иначе строка разбирается не туда.
-      if (!label || label.includes("=")) throw new Error(`Метка «${oneLine(label, 40)}» не годится: пустая или со знаком «=».`);
-      if (!mail) throw new Error(`У метки «${label}» не почта, а «${oneLine(raw.slice(cut + 1), 60)}».`);
-      map[normAccount(label)] = mail;
-    }
-    return map;
-  }
+  // D-005: адреса аккаунтов вводить не нужно — почта живёт в поле «Аккаунт»
+  // базы «Роли» (Notion) и читается оттуда. Окно лишь сообщает, откуда брать
+  // адреса; локальной связки «метка → почта» больше нет (D-004 п.1 отменён).
 
   /** Старые ключи остаются источником истины: обновление не сбрасывает доступ. */
   function connectionSettings() {
@@ -40,15 +10,11 @@
       gwUrl: String(GM_getValue(K.gwUrl, "") || "").trim(),
       gwKey: String(GM_getValue(K.gwKey, "") || "").trim(),
       github: String(GM_getValue(K.ghToken, "") || "").trim(),
-      // D-004: текст, а не объект: сравнение «изменилось ли» и откат должны быть
-      // такими же простыми, как у остальных полей окна.
-      accounts: accountMapText(),
     };
   }
 
   const sameConnections = (a, b) =>
-    a.notion === b.notion && a.gwUrl === b.gwUrl && a.gwKey === b.gwKey && a.github === b.github &&
-    a.accounts === b.accounts;
+    a.notion === b.notion && a.gwUrl === b.gwUrl && a.gwKey === b.gwKey && a.github === b.github;
 
   /** Не отправлять ключ по HTTP или на похожий на Google чужой адрес без согласия. */
   function connectionEndpoint(value) {
@@ -226,11 +192,8 @@
             <button id="cfn-connection-github-open" type="button" style="${action};margin-top:7px">Открыть настройки токенов GitHub ↗</button>
           </section>
           <section style="${card}" aria-labelledby="cfn-connection-accounts-title">
-            <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap"><strong id="cfn-connection-accounts-title" style="font-size:15px;color:#fff">Аккаунты Arena</strong><span style="${quiet}">метка из «Ролей» → почта входа</span></div>
-            <div style="${quiet};margin:4px 0 8px">Метки («account-1»…) стоят в поле «Аккаунт» базы «Роли». Здесь — только соответствие метки и почты: оно остаётся в этом браузере и в Notion не пишется. Скрипт входит только за вас и аккаунты не переключает — по адресу он проверяет, что вкладка открыта в нужном контейнере.</div>
-            <label for="cfn-connection-accounts" style="font-weight:600">Соответствие меток</label>
-            <textarea id="cfn-connection-accounts" rows="4" spellcheck="false" style="${field};resize:vertical" placeholder="account-1 = mail@example.com&#10;account-2 = other@example.com"></textarea>
-            <div id="cfn-connection-accounts-note" role="status" style="${quiet};margin-top:6px"></div>
+            <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap"><strong id="cfn-connection-accounts-title" style="font-size:15px;color:#fff">Аккаунты Arena</strong><span style="${quiet}">почта — из Notion</span></div>
+            <div style="${quiet};margin:4px 0 8px">Почта каждого аккаунта читается из поля «Аккаунт» базы «Роли»: здесь вводить нечего. Адрес поменяли в Notion — транспорт возьмёт его при следующем чтении «Ролей», в браузере править нечего. Скрипт входит только за вас и аккаунты не переключает — по адресу он проверяет, что вкладка открыта в нужном контейнере.</div>
           </section>
           <details style="${card}"><summary style="cursor:pointer;font-weight:600">Восстановление и уведомления</summary>
             <div style="${quiet};margin:8px 0">Восстановление использует сохранённые настройки и может изменить карточку Notion и журнал Drive. Применяйте на остановленном цикле.</div>
@@ -254,11 +217,10 @@
     const find = (id) => box.querySelector(`#cfn-connection-${id}`);
     const notionInput = find("notion"), urlInput = find("url"), keyInput = find("key"), githubInput = find("github");
     const notionRemove = find("notion-remove"), driveRemove = find("drive-remove"), githubRemove = find("github-remove");
-    const trust = find("trust"), trustWrap = find("trust-wrap"), accountsInput = find("accounts");
+    const trust = find("trust"), trustWrap = find("trust-wrap");
     const checkButton = box.querySelector("#cfn-connections-check"), saveButton = box.querySelector("#cfn-connections-save");
     const note = box.querySelector("#cfn-connections-note");
     find("repo").textContent = C.repo;
-    accountsInput.value = saved.accounts;
     find("project-name").textContent = C.projectName || "Relay";
     urlInput.value = saved.gwUrl;
 
@@ -281,7 +243,6 @@
       gwUrl: driveRemove.checked ? "" : urlInput.value.trim(),
       gwKey: driveRemove.checked ? "" : keyInput.value.trim() || saved.gwKey,
       github: githubRemove.checked ? "" : githubInput.value.trim() || saved.github,
-      accounts: accountsInput.value,
     });
     const needsTrust = (settings, endpoint = connectionEndpoint(settings.gwUrl)) =>
       endpoint.ok && Boolean(settings.gwUrl) && (!endpoint.standard ||
@@ -295,7 +256,6 @@
       urlInput.disabled = locked || driveRemove.checked;
       keyInput.disabled = locked || driveRemove.checked;
       githubInput.disabled = locked || githubRemove.checked;
-      accountsInput.disabled = locked;
       for (const element of [notionRemove, driveRemove, githubRemove, trust, checkButton, saveButton,
         find("recover"), find("adopt"), find("ntfy")]) element.disabled = locked;
       const stopAuto = find("stop-auto");
@@ -338,7 +298,7 @@
         event.preventDefault(); first.focus();
       }
     };
-    for (const element of [notionInput, urlInput, keyInput, githubInput, accountsInput, notionRemove, driveRemove, githubRemove, trust]) {
+    for (const element of [notionInput, urlInput, keyInput, githubInput, notionRemove, driveRemove, githubRemove, trust]) {
       const invalidate = (event) => {
         // Подтверждение привязано к адресу и ключу, а не к следующему вводу.
         if (event.target === urlInput || event.target === keyInput || event.target === driveRemove) trust.checked = false;
@@ -413,21 +373,9 @@
         say("Подключения не изменены; очередь и ожидание сохранены.");
         return;
       }
-      // D-004: соответствие «метка → почта» проверяется до записи. Ошибка в
-      // строке не должна оставить окно с половиной сохранённых настроек.
-      let accountsNext = null;
-      if (next.accounts !== saved.accounts) {
-        try {
-          accountsNext = JSON.stringify(parseAccountMap(next.accounts));
-        } catch (e) {
-          say(`Аккаунты: ${e.message}`, true);
-          return;
-        }
-      }
       const updates = [
         [K.notion, saved.notion, next.notion], [K.gwUrl, saved.gwUrl, next.gwUrl],
         [K.gwKey, saved.gwKey, next.gwKey], [K.ghToken, saved.github, next.github],
-        [K.accountMap, JSON.stringify(accountMap()), accountsNext],
       ].filter(([, before, after]) => before !== after);
       if (!updates.length) { say("Изменений для сохранения нет."); return; }
       // Допуск привязан к проверенным данным. Меняем доступ — сначала снимаем
@@ -453,7 +401,7 @@
         say(restored ? "Не удалось сохранить; прежние значения восстановлены." : "Не удалось полностью сохранить или восстановить настройки. Проверьте их перед запуском.", true);
         return;
       }
-      saved = { ...next, accounts: accountMapText() };
+      saved = next;
       notionInput.value = ""; keyInput.value = ""; githubInput.value = ""; urlInput.value = saved.gwUrl;
       notionRemove.checked = false; driveRemove.checked = false; githubRemove.checked = false; trust.checked = false;
       placeholders(); resetStatuses(); refreshForm();
