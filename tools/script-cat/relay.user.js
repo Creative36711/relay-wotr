@@ -93,7 +93,7 @@
     // D-073: отпечаток сборки вшивает build.mjs (SHA-256 источника). Номер версии
     // говорит «какой выпуск», отпечаток — «какая именно сборка»: без него проверка
     // «работает новая версия, а не прежняя под новым номером» невозможна.
-    buildFingerprint: "5ed94a7fc4af8e17",
+    buildFingerprint: "f4363b803280fc63",
     repo: "", // для ссылки на PR из номера
     tickMs: 15000,
     mergeGraceMs: 90000, // сколько ждём мерж, прежде чем нажать кнопки за агента
@@ -1995,7 +1995,10 @@
       if (cut < 1) throw new Error(`Строка «${oneLine(raw, 60)}» не в виде «метка = почта».`);
       const label = accountLabel(raw.slice(0, cut));
       const mail = accountMail(raw.slice(cut + 1));
-      if (!label || /\s/.test(label)) throw new Error(`Метка «${oneLine(label, 40)}» должна быть одним словом без пробелов.`);
+      // Метка из Notion может содержать пробел («Основной аккаунт»): сравнивать
+      // их строго значило бы запретить то, что человек уже вписал в базу. Знак
+      // «=» в метке запрещён — иначе строка разбирается не туда.
+      if (!label || label.includes("=")) throw new Error(`Метка «${oneLine(label, 40)}» не годится: пустая или со знаком «=».`);
       if (!mail) throw new Error(`У метки «${label}» не почта, а «${oneLine(raw.slice(cut + 1), 60)}».`);
       map[normAccount(label)] = mail;
     }

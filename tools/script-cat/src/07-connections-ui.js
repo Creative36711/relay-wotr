@@ -23,7 +23,10 @@
       if (cut < 1) throw new Error(`Строка «${oneLine(raw, 60)}» не в виде «метка = почта».`);
       const label = accountLabel(raw.slice(0, cut));
       const mail = accountMail(raw.slice(cut + 1));
-      if (!label || /\s/.test(label)) throw new Error(`Метка «${oneLine(label, 40)}» должна быть одним словом без пробелов.`);
+      // Метка из Notion может содержать пробел («Основной аккаунт»): сравнивать
+      // их строго значило бы запретить то, что человек уже вписал в базу. Знак
+      // «=» в метке запрещён — иначе строка разбирается не туда.
+      if (!label || label.includes("=")) throw new Error(`Метка «${oneLine(label, 40)}» не годится: пустая или со знаком «=».`);
       if (!mail) throw new Error(`У метки «${label}» не почта, а «${oneLine(raw.slice(cut + 1), 60)}».`);
       map[normAccount(label)] = mail;
     }
