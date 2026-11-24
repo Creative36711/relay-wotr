@@ -42,7 +42,7 @@ const rootBlock = tickBody.slice(
   tickBody.indexOf('const meId = roleFromPath();'),
   tickBody.indexOf('const me = list.find(', tickBody.indexOf('const meId')),
 );
-assert.match(rootBlock, /if \(!fromToggle && !autoOn\(\)\) return;/, 'в ручном фоне без нажатия страницу не открываем');
+assert.match(rootBlock, /if \(!fromToggle && !autoOn\(\) && !woken\) return;/, 'в ручном фоне без нажатия страницу не открываем (D-006: кроме разбуженной вкладки)');
 assert.match(rootBlock, /r\.fn === "Coordinator"/, 'Координатор — запасной адрес, если работы нигде не ждут');
 assert.match(rootBlock, /const target = pendingRole \|\| waitingRole \|\| coord;/, 'сначала адресат очереди, потом тот, чей ответ ждём');
 assert.match(rootBlock, /if \(!pendingNow && fromToggle\) GM_setValue\(K\.step, true\);/, 'шаг запоминается на один переход');

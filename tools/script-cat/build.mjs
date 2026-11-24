@@ -29,6 +29,9 @@ const parts = [
   '25-legacy-adr.js', '26-review.js', '26b-arbiter.js', '27-review-answers.js', 'pilot-transport.js', '30-tool-limit.js',
   '31-provision-core.js', '32-provision-dom.js', '33-provision-flow.js', '34-provision-ui.js',
   '40-heal-core.js', '41-heal.js', '42-roster.js', '43-pr-zone.js', '44-accounts.js',
+  // D-006: будильник вкладок. После accounts (нужны roleAccount/accountLabel в
+  // 28-cycle) и до цикла: тик спрашивает его первым.
+  '45-wake.js',
   '28-cycle.js', '29-boot.js',
 ];
 const read = (name) => readFile(join(here, 'src', name), 'utf8');

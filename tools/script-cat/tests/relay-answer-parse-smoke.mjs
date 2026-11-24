@@ -211,10 +211,10 @@ const tickStart = src.indexOf('async function tick(');
 const tickBody = src.slice(tickStart, src.indexOf('// ───────────────────────────── старт', tickStart));
 assert.match(
   tickBody,
-  /if \(!auto && !fromToggle\) return;/,
+  /if \(!auto && !fromToggle && !woken\) return;/,
   'фон в ручном режиме не читает ответы и не выдаёт задания',
 );
-const gateAt = tickBody.indexOf('if (!auto && !fromToggle) return;');
+const gateAt = tickBody.indexOf('if (!auto && !fromToggle && !woken) return;');
 const consumeAt = tickBody.indexOf('await consumePending(fromToggle)');
 assert.ok(consumeAt > 0 && gateAt > consumeAt, 'досылка очереди остаётся, ответы — только по нажатию');
 

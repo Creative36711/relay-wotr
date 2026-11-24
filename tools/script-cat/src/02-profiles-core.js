@@ -273,6 +273,10 @@
     accountLimits: "cfn-account-limits",
     accountSeen: "cfn-account-seen-v1",
     accountIdle: "cfn-account-idle-ask",
+    // D-006: будильник вкладок. Контейнер меняет только человек, поэтому
+    // «хочу, чтобы работа пошла» — это не переход, а просьба к той вкладке,
+    // чей аккаунт адресат. Ключ общий: просит любая вкладка, откликается та.
+    wake: "cfn-wake-all",
   };
 
   // sessionStorage также разделён; выбранный ID хранится отдельно на вкладку.
@@ -284,6 +288,8 @@
     status: "cfn-status",
     toggle: "cfn-toggle",
     step: "cfn-step",
+    // D-006: будильник вкладок стоит рядом с «Шаг» и «Включить».
+    wake: "cfn-wake",
     setup: "cfn-setup",
     stop: "cfn-stop",
     clear: "cfn-clear",

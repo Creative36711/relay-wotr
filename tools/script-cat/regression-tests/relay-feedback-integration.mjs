@@ -525,6 +525,8 @@ const document = {
 };
 const ui = {
   panel: 'cfn-panel', log: 'cfn-log', status: 'cfn-status', toggle: 'cfn-toggle', step: 'cfn-step',
+  // D-006: панель ставит обработчик на будильник вкладок.
+  wake: 'cfn-wake',
   setup: 'cfn-setup', stop: 'cfn-stop', clear: 'cfn-clear', reset: 'cfn-reset', ntfy: 'cfn-ntfy',
   gh: 'cfn-gh', questions: 'cfn-questions', qBadge: 'cfn-q-badge', collapse: 'cfn-collapse',
   count: 'cfn-log-count', debug: 'cfn-debug-toggle',
