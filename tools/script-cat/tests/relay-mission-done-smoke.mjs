@@ -333,7 +333,7 @@ assert.equal(
   1,
   'о плашке говорится одной строкой за шаг',
 );
-assert.match(plaqueBlock, /const \{ editor, closed, overlay \} = await ensureComposer\(\)/, 'плашку закрывает поиск поля ввода');
+assert.match(plaqueBlock, /const \{ editor, closed, overlay, foreign \} = await ensureComposer\(20000, \{ role: pendingRoleRow\(pending\) \}\)/, 'плашку закрывает поиск поля ввода, а чужой аккаунт он же и отсекает (D-007)');
 assert.match(plaqueBlock, /if \(closed\) log\(/, 'строка журнала — по факту закрытия');
 assert.match(plaqueBlock, /«задача выполнена»/, 'формулировка осталась прежней');
 assert.doesNotMatch(plaqueBlock, /plaqueClosed/, 'счётчика закрытий больше нет');
