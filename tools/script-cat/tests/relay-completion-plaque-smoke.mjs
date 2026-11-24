@@ -118,15 +118,15 @@ assert.doesNotMatch(
 const sendFrom = src.indexOf('async function consumePending(manual = false) {');
 const sendBlock = src.slice(sendFrom, src.indexOf('async function submitExecutor(', sendFrom));
 assert.doesNotMatch(sendBlock, /closeCompletionPlaque\(\)/, 'заранее плашку не закрываем');
-const composerAt = sendBlock.indexOf('await ensureComposer()');
+const composerAt = sendBlock.indexOf('await ensureComposer(20000, { role: pendingRoleRow(pending) })');
 const plaqueLog = 'Убрал плашку «задача выполнена» — она закрывала поле ввода.';
 const logAt = sendBlock.indexOf(plaqueLog);
 assert.ok(composerAt > 0 && logAt > composerAt, 'одна строка журнала — после поиска поля, по факту');
 assert.doesNotMatch(sendBlock, /раза\)/, 'счётчика «(2 раза)» больше нет');
-assert.match(src, /function ensureComposer\(timeoutMs = 20000\)/, 'ensureComposer на месте');
+assert.match(src, /async function ensureComposer\(timeoutMs = 20000, \{ role = null \} = \{\}\)/, 'ensureComposer на месте и умеет проверять аккаунт (D-007)');
 assert.match(
   src,
-  /editor: null, closed, polled, overlay: completionPanels\(\)\.length > 0/,
+  /editor: null, closed, polled, overlay: !foreign && completionPanels\(\)\.length > 0, foreign/,
   'если плашка осталась и поле не нашлось — это видно в причине',
 );
 
@@ -146,7 +146,7 @@ assert.match(multiBlock, /captcha/, 'окно проверки не закрыв
 
 // ensureComposer закрывает панели, пока поле не вернётся (а не «два раза»).
 const composerBlock = src.slice(
-  src.indexOf('async function ensureComposer(timeoutMs = 20000) {'),
+  src.indexOf('async function ensureComposer(timeoutMs = 20000, { role = null } = {}) {'),
   src.indexOf('/** Короткая диагностика, почему поле не нашлось'),
 );
 assert.match(composerBlock, /await closeCompletionPanels\(\)/, 'ensureComposer убирает все панели');

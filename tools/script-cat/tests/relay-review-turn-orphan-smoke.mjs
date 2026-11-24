@@ -121,6 +121,8 @@ function make({
     setTimeout: () => {}, tick: () => {},
     journalDelivery: () => {}, classifyArenaFailure: () => 'unknown',
     openDialog: () => null, domReport: () => ({}), console: { warn() {} }, Math,
+    // D-007: в этой сюите аккаунт не сверяется — проверка отвечает «не размечено».
+    pendingRoleRow: () => null, accountPageCheck: async () => ({ verdict: 'no-label' }),
   };
   const boot = new Function('env', `
     const {K, norm, isUuid, rt, idTime, flat, C, GM_getValue, GM_setValue, roleFromPath, roleRows, roles, navigateTo, notion, taskState,
@@ -128,7 +130,9 @@ function make({
       nowIso, appReady, pendingSay, autoOn, sendKey, composerHolds, userSaysSince, lastUserSays, captchaDialog,
       busySettled, busyLabel, ensureFreshBranch, ensureComposer, composerText, clearComposer, sleep, writePrompt,
       deliver, isDispatchAssignment, dispatchDeliveryNtfy, dbg, setTimeout, tick, journalDelivery,
-      classifyArenaFailure, openDialog, domReport, console, Math} = env;
+      classifyArenaFailure, openDialog, domReport, console, Math,
+      // D-007: очередь ищет строку «Ролей» для проверки аккаунта.
+      pendingRoleRow, accountPageCheck} = env;
     let pendingNoticeAt = 0, insertFail = {at: 0, count: 0};
     ${idsBlock}\n${receiptsBlock}\n${adoptBlock}\n${consumeBlock}\n${ghostBlock}
     return { consumePending, adoptOrphanReview, dropGhostHandoff, restoreMissingSendMark, reviewTurnInChat,

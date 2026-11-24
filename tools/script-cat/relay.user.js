@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Relay — передача хода между агентами
 // @namespace    https://arena.ai/
-// @version      1.18.2
+// @version      1.18.3
 // @description  Цикл Координатор → исполнитель → Координатор: агент сам коммитит, пушит и мержит PR; ScriptCat ждёт мерж и нажимает Continue.
 // @match        https://arena.ai/*
 // @match        https://www.arena.ai/*
@@ -93,7 +93,7 @@
     // D-073: отпечаток сборки вшивает build.mjs (SHA-256 источника). Номер версии
     // говорит «какой выпуск», отпечаток — «какая именно сборка»: без него проверка
     // «работает новая версия, а не прежняя под новым номером» невозможна.
-    buildFingerprint: "082ef0f6f7a97410",
+    buildFingerprint: "3ee7ef17d2f78ed2",
     repo: "", // для ссылки на PR из номера
     tickMs: 15000,
     mergeGraceMs: 90000, // сколько ждём мерж, прежде чем нажать кнопки за агента
@@ -798,7 +798,7 @@
 
   const NTFY_BASE = "https://ntfy.sh";
   const SCRIPT_VERSION =
-    (typeof GM_info !== "undefined" && GM_info?.script?.version) || "1.18.2";
+    (typeof GM_info !== "undefined" && GM_info?.script?.version) || "1.18.3";
 
   /** «https://ntfy.sh/topic?x=1» и «topic» одинаково дают topic. */
   function normalizeNtfyTopic(raw) {
@@ -7352,13 +7352,20 @@
    * но программный ввод и клик её не боятся. Прошлый цикл «закрыть → проверить
    * → закрыть заново» и давал мигание, которое видно глазом.
    */
-  async function ensureComposer(timeoutMs = 20000) {
+  async function ensureComposer(timeoutMs = 20000, { role = null } = {}) {
     const deadline = Date.now() + timeoutMs;
     let closed = 0;
     let polled = 0;
-    while (Date.now() < deadline) {
+    let foreign = null;
+    // D-007: на чужом аккаунте поля ввода может не быть вовсе, и ждать его
+    // двадцать секунд, закрывая плашки, — работа в пустоту. Проверяем один раз.
+    if (role && typeof accountPageCheck === "function") {
+      const page = await accountPageCheck(role).catch(() => ({ verdict: "unknown" }));
+      if (page.verdict === "foreign") foreign = page;
+    }
+    while (Date.now() < deadline && !foreign) {
       const editor = composer();
-      if (editor) return { editor, closed, polled, overlay: false };
+      if (editor) return { editor, closed, polled, overlay: false, foreign: null };
 
       // Панелей завершения может быть больше одной: закрытая верхняя
       // открывает нижнюю — снаружи это выглядит как «плашка вернулась».
@@ -7383,7 +7390,7 @@
       }
       await sleep(400);
     }
-    return { editor: null, closed, polled, overlay: completionPanels().length > 0 };
+    return { editor: null, closed, polled, overlay: !foreign && completionPanels().length > 0, foreign };
   }
 
   /** Короткая диагностика, почему поле не нашлось: без неё остаётся гадать. */
@@ -8363,12 +8370,39 @@
     if (same) {
       log(`«${role.name}» уже открыт — отправляю задание здесь.`);
       setTimeout(() => tick(false), 400);
-    } else {
-      log(`Перехожу к «${role.name}», чтобы отправить задание.`);
-      // Уход со страницы — только после подтверждения записи (D-045).
-      await flushBeforeNavigate(handoffKeys());
-      location.assign(role.url);
+      return true;
     }
+    // D-007: чужой контейнер — не наш переход.
+    //
+    // Здесь был второй, «толкающий» путь: вкладка сама открывала адрес роли
+    // (24.11, 21:19 — Координатор увёл себя на страницу UX & Modding Auditor и
+    // встал без поля ввода). Общий `navigateTo` такой переход запрещает, а
+    // этот — нет, потому что писался до D-004.
+    //
+    // Проверка не побеждает сама себя: если страница ЗАЯВЛЯЕТ, что она — эта
+    // роль (`roleFromPath`), третья сторона тут ни при чём. Подпись сайдбара
+    // читается только когда её видно; непрочитанная подпись переход не
+    // запрещает — иначе свёрнутый сайдбар останавливал бы нормальную работу.
+    const hereMe = typeof roleFromPath === "function" ? roleFromPath() : "";
+    if (norm(hereMe) !== norm(role.id) && typeof accountPageCheck === "function") {
+      const page = await accountPageCheck(role).catch(() => ({ verdict: "unknown" }));
+      if (page.verdict === "foreign") {
+        logThrottled(
+          `pending-foreign:${role.id}`,
+          `Не ухожу к «${role.name}»: её аккаунт — «${page.label}» (${page.expected}), а вкладка на ${page.seen}. ` +
+            "Переход внутри контейнера не переключает аккаунт — задание заберёт вкладка этого аккаунта, " +
+            "когда её откроют.",
+          false,
+          600_000,
+        );
+        // Отметку ставит вызывающий (`sendToRole` → `wakeForPending`).
+        return true;
+      }
+    }
+    log(`Перехожу к «${role.name}», чтобы отправить задание.`);
+    // Уход со страницы — только после подтверждения записи (D-045).
+    await flushBeforeNavigate(handoffKeys());
+    location.assign(role.url);
     return true;
   }
 
@@ -8963,6 +8997,20 @@
    * конца ответа агента. Молчаливых выходов нет — каждый пишет в журнал,
    * иначе нажатый «Шаг» выглядит как неработающая кнопка.
    */
+  /**
+   * D-007: строка «Ролей» для адресата очереди.
+   *
+   * Проверка аккаунта работает с ролью (`role.account`), а очередь хранит
+   * только id и имя — поэтому строка ищется в кеше «Ролей» по id, затем по имени.
+   */
+  function pendingRoleRow(pending) {
+    if (!pending) return null;
+    const cache = GM_getValue(K.rolesCache, null);
+    const rows = cache && Array.isArray(cache.rows) ? cache.rows : [];
+    return rows.find((row) => norm(row.id) === norm(pending.roleId)) ||
+      rows.find((row) => norm(row.name) === norm(pending.roleName)) || null;
+  }
+
   async function consumePending(manual = false) {
     let pending = GM_getValue(K.pending, null);
     if (!pending) return false;
@@ -9278,9 +9326,42 @@
     // находится. Прежняя попытка «закрыть заранее» не срабатывала (backend
     // возвращал плашку при перерисовке) и давала вторую такую же строку в
     // журнале — со счётчиком закрытий, который Мастер читал как сбой.
-    const { editor, closed, overlay } = await ensureComposer();
+    const { editor, closed, overlay, foreign } = await ensureComposer(20000, { role: pendingRoleRow(pending) });
     if (closed) log("Убрал плашку «задача выполнена» — она закрывала поле ввода.");
+    if (foreign) {
+      // D-007: страница открыта не тем аккаунтом, за который себя выдаёт.
+      // Поле ввода здесь не появится, а вставка ушла бы чужому человеку.
+      journalDelivery(GM_getValue(K.expect, null), "foreign_account", "foreign_account");
+      pendingSay(
+        pending,
+        `Не отправляю: страница открыта аккаунтом ${foreign.seen}, а «${pending.roleName || pending.roleId}» ` +
+          `закреплена за «${foreign.label}» (${foreign.expected}). Задание остаётся в очереди и уйдёт из вкладки ` +
+          "этого аккаунта — откройте её в своём контейнере.",
+        true,
+      );
+      return true;
+    }
     if (!editor) {
+      // D-007: поле не нашлось — сначала выясняем, моя ли это страница.
+      //
+      // 24.11, 21:19: задание, адресованное чужому контейнеру, открылось здесь
+      // и осталось без поля ввода; строка «не нашёл поле» повторялась бы до
+      // паузы. Чужой аккаунт здесь ничего не отправит — пусть забирает своя
+      // вкладка, а эта честно скажет, чей аккаунт на странице.
+      if (typeof accountPageCheck === "function") {
+        const page = await accountPageCheck(pending, { path: location.pathname }).catch(() => ({ verdict: "unknown" }));
+        if (page.verdict === "foreign") {
+          journalDelivery(GM_getValue(K.expect, null), "foreign_account", "foreign_account");
+          pendingSay(
+            pending,
+            `Не отправляю: страница открыта аккаунтом ${page.seen}, а «${pending.roleName || pending.roleId}» ` +
+              `закреплена за «${page.label}» (${page.expected}). Задание остаётся в очереди и уйдёт из вкладки ` +
+              "этого аккаунта.",
+            true,
+          );
+          return true;
+        }
+      }
       journalDelivery(GM_getValue(K.expect, null), "editor_not_found", "editor_not_found");
       pendingSay(
         pending,
@@ -22011,6 +22092,40 @@ function reviewPullRequest({ files, pr, zone } = {}) {
     accountPageRead = { path: "", at: 0, value: null };
   }
 
+  /**
+   * D-007: эта ли страница — та роль, за которую себя выдаёт.
+   *
+   * Контейнер меняет только человек, поэтому адрес роли в чужом контейнере
+   * открывается и рисуется, но уже ЧУЖИМ аккаунтом: поле ввода пустое, а
+   * задание, уйди оно туда, получил бы не тот. По журналу 24.11: вкладка
+   * Координатора открыла `/agent/<UX & Modding Auditor>` (контейнер admin) —
+   * страница загрузилась, поля ввода нет, и задание зависло «в очереди».
+   *
+   * Кеш подписи растёт по пути, поэтому соответствие «путь → прочитанный
+   * аккаунт» запоминается: подпись прошлой страницы не переносится на новую.
+   * Ответы: `mine` — здесь эта роль живёт; `no-label` — аккаунт роли не
+   * размечен, проверять нечего; `unknown` — подпись не прочитана, решает
+   * вызывающий; `foreign` — доказанно чужой аккаунт.
+   */
+  const accountPageMap = new Map();
+  async function accountPageCheck(role, { path = "", force = false } = {}) {
+    const label = roleAccount(role);
+    if (!label) return { verdict: "no-label" };
+    const expected = accountMail(label);
+    if (!expected) return { verdict: "no-label", label: accountLabel(label) };
+    const here = String(path || (typeof location !== "undefined" ? location.pathname : "") || "");
+    let read = force ? null : accountPageMap.get(here) || null;
+    if (!read) {
+      const fresh = await readAccountEmail({ force: true }).catch(() => ({ email: "", why: "error" }));
+      read = { email: accountMail(fresh.email), why: fresh.why || "" };
+      if (read.email) accountPageMap.set(here, read);
+    }
+    if (!read.email) return { verdict: "unknown", why: read.why || "missing", label: accountLabel(label) };
+    return read.email === expected
+      ? { verdict: "mine", email: read.email, label: accountLabel(label) }
+      : { verdict: "foreign", seen: read.email, expected, label: accountLabel(label) };
+  }
+
   // ───────────────────────────── роли и раскладка ─────────────────────────────
 
   const roleAccount = (role) => accountLabel(role?.account || "");
@@ -23206,6 +23321,20 @@ function reviewPullRequest({ files, pr, zone } = {}) {
       // стоять. Доказанное расхождение — пауза Мастеру (D-004).
       {
         const verdict = await accountVerdict(me).catch(() => ({ ok: true }));
+        // D-007: подпись сайдбара могла быть не прочитана, а страница всё равно
+        // чужая — адрес роли, открытый в контейнере другого аккаунта. Тогда
+        // поле ввода не появится никогда, и ждать его незачем (24.11, 21:19).
+        if (verdict.ok && typeof accountPageCheck === "function") {
+          const page = await accountPageCheck(me).catch(() => ({ verdict: "unknown" }));
+          if (page.verdict === "foreign") {
+            idleWrongAccount(
+              me,
+              { why: `роль «${me.name}» закреплена за «${page.label}» (${page.expected}), а страница открыта аккаунтом ${page.seen}` },
+              fromToggle,
+            );
+            return;
+          }
+        }
         if (!verdict.ok && verdict.kind === "wrong-account") {
           // Вкладка в чужом контейнере для этой роли. Перейти «в свой» нельзя:
           // контейнер меняет только человек. Это не поломка — просто здесь эта

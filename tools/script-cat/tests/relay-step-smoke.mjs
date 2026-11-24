@@ -98,9 +98,9 @@ assert.match(sendBlock, /function skipCardButton\(\)/, 'карточка с кн
 assert.match(sendBlock, /data-agent-transcript-message/, 'ищем её в транскрипте, как dispatch.user.js');
 assert.match(sendBlock, /async function ensureComposer\(/, 'редактор ждём, освобождая чат');
 assert.match(sendBlock, /if \(closed < 6 && completionPanels\(\)\.length\)/, 'клик-шторм ограничен: закрытия считаются, панелей может быть несколько');
-assert.match(sendBlock, /if \(editor\) return \{ editor, closed, polled, overlay: false \};/, 'карточку не трогаем, если поле ввода есть');
+assert.match(sendBlock, /if \(editor\) return \{ editor, closed, polled, overlay: false, foreign: null \};/, 'карточку не трогаем, если поле ввода есть');
 assert.ok(!/composerCovered/.test(src), 'проверка «накрыт» больше не блокирует ввод');
-const ensureCall = sendBlock.indexOf('await ensureComposer()');
+const ensureCall = sendBlock.indexOf('await ensureComposer(20000, { role: pendingRoleRow(pending) })');
 const writeCall = sendBlock.indexOf('writePrompt(editor, pending.text)');
 assert.ok(ensureCall > 0 && ensureCall < writeCall, 'чат освобождается до вставки задания');
 

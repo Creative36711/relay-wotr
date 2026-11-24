@@ -558,6 +558,20 @@
       // стоять. Доказанное расхождение — пауза Мастеру (D-004).
       {
         const verdict = await accountVerdict(me).catch(() => ({ ok: true }));
+        // D-007: подпись сайдбара могла быть не прочитана, а страница всё равно
+        // чужая — адрес роли, открытый в контейнере другого аккаунта. Тогда
+        // поле ввода не появится никогда, и ждать его незачем (24.11, 21:19).
+        if (verdict.ok && typeof accountPageCheck === "function") {
+          const page = await accountPageCheck(me).catch(() => ({ verdict: "unknown" }));
+          if (page.verdict === "foreign") {
+            idleWrongAccount(
+              me,
+              { why: `роль «${me.name}» закреплена за «${page.label}» (${page.expected}), а страница открыта аккаунтом ${page.seen}` },
+              fromToggle,
+            );
+            return;
+          }
+        }
         if (!verdict.ok && verdict.kind === "wrong-account") {
           // Вкладка в чужом контейнере для этой роли. Перейти «в свой» нельзя:
           // контейнер меняет только человек. Это не поломка — просто здесь эта

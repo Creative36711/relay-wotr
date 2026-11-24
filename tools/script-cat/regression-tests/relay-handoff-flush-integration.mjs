@@ -270,12 +270,15 @@ function makeAdopt({ page = card(), notionFails = false, nodes = [], receipts = 
     setTimeout: () => {}, tick: () => {},
     journalDelivery: () => {}, classifyArenaFailure: () => 'unknown',
     openDialog: () => null, domReport: () => ({}), console: { warn() {} }, Math,
+    // D-007: аккаунт в этой сюите не сверяется.
+    pendingRoleRow: () => null, accountPageCheck: async () => ({ verdict: 'no-label' }),
   };
   const make = new Function('env', `
     const {K, norm, isUuid, rt, idTime, C, GM_getValue, GM_setValue, roleFromPath, roleRows, roles, navigateTo, notion, taskState,
       taskTitle, patch, userMessages, messageRaw, nodeId, releaseUndelivered, pause, log, nowIso, appReady, pendingSay,
       autoOn, sendKey, flat, composerHolds, userSaysSince, lastUserSays, captchaDialog, busySettled,
       busyLabel, ensureFreshBranch, ensureComposer, composerText, clearComposer, sleep, writePrompt, lastMessageId,
+      pendingRoleRow, accountPageCheck,
       messages, deliver, isDispatchAssignment, dispatchDeliveryNtfy, dbg, setTimeout, tick, journalDelivery,
       classifyArenaFailure, openDialog, domReport, console, Math} = env;
     let pendingNoticeAt = 0, insertFail = {at: 0, count: 0};

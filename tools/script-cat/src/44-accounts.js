@@ -259,6 +259,40 @@
     accountPageRead = { path: "", at: 0, value: null };
   }
 
+  /**
+   * D-007: эта ли страница — та роль, за которую себя выдаёт.
+   *
+   * Контейнер меняет только человек, поэтому адрес роли в чужом контейнере
+   * открывается и рисуется, но уже ЧУЖИМ аккаунтом: поле ввода пустое, а
+   * задание, уйди оно туда, получил бы не тот. По журналу 24.11: вкладка
+   * Координатора открыла `/agent/<UX & Modding Auditor>` (контейнер admin) —
+   * страница загрузилась, поля ввода нет, и задание зависло «в очереди».
+   *
+   * Кеш подписи растёт по пути, поэтому соответствие «путь → прочитанный
+   * аккаунт» запоминается: подпись прошлой страницы не переносится на новую.
+   * Ответы: `mine` — здесь эта роль живёт; `no-label` — аккаунт роли не
+   * размечен, проверять нечего; `unknown` — подпись не прочитана, решает
+   * вызывающий; `foreign` — доказанно чужой аккаунт.
+   */
+  const accountPageMap = new Map();
+  async function accountPageCheck(role, { path = "", force = false } = {}) {
+    const label = roleAccount(role);
+    if (!label) return { verdict: "no-label" };
+    const expected = accountMail(label);
+    if (!expected) return { verdict: "no-label", label: accountLabel(label) };
+    const here = String(path || (typeof location !== "undefined" ? location.pathname : "") || "");
+    let read = force ? null : accountPageMap.get(here) || null;
+    if (!read) {
+      const fresh = await readAccountEmail({ force: true }).catch(() => ({ email: "", why: "error" }));
+      read = { email: accountMail(fresh.email), why: fresh.why || "" };
+      if (read.email) accountPageMap.set(here, read);
+    }
+    if (!read.email) return { verdict: "unknown", why: read.why || "missing", label: accountLabel(label) };
+    return read.email === expected
+      ? { verdict: "mine", email: read.email, label: accountLabel(label) }
+      : { verdict: "foreign", seen: read.email, expected, label: accountLabel(label) };
+  }
+
   // ───────────────────────────── роли и раскладка ─────────────────────────────
 
   const roleAccount = (role) => accountLabel(role?.account || "");

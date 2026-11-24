@@ -400,13 +400,20 @@
    * но программный ввод и клик её не боятся. Прошлый цикл «закрыть → проверить
    * → закрыть заново» и давал мигание, которое видно глазом.
    */
-  async function ensureComposer(timeoutMs = 20000) {
+  async function ensureComposer(timeoutMs = 20000, { role = null } = {}) {
     const deadline = Date.now() + timeoutMs;
     let closed = 0;
     let polled = 0;
-    while (Date.now() < deadline) {
+    let foreign = null;
+    // D-007: на чужом аккаунте поля ввода может не быть вовсе, и ждать его
+    // двадцать секунд, закрывая плашки, — работа в пустоту. Проверяем один раз.
+    if (role && typeof accountPageCheck === "function") {
+      const page = await accountPageCheck(role).catch(() => ({ verdict: "unknown" }));
+      if (page.verdict === "foreign") foreign = page;
+    }
+    while (Date.now() < deadline && !foreign) {
       const editor = composer();
-      if (editor) return { editor, closed, polled, overlay: false };
+      if (editor) return { editor, closed, polled, overlay: false, foreign: null };
 
       // Панелей завершения может быть больше одной: закрытая верхняя
       // открывает нижнюю — снаружи это выглядит как «плашка вернулась».
@@ -431,7 +438,7 @@
       }
       await sleep(400);
     }
-    return { editor: null, closed, polled, overlay: completionPanels().length > 0 };
+    return { editor: null, closed, polled, overlay: !foreign && completionPanels().length > 0, foreign };
   }
 
   /** Короткая диагностика, почему поле не нашлось: без неё остаётся гадать. */
@@ -1411,12 +1418,39 @@
     if (same) {
       log(`«${role.name}» уже открыт — отправляю задание здесь.`);
       setTimeout(() => tick(false), 400);
-    } else {
-      log(`Перехожу к «${role.name}», чтобы отправить задание.`);
-      // Уход со страницы — только после подтверждения записи (D-045).
-      await flushBeforeNavigate(handoffKeys());
-      location.assign(role.url);
+      return true;
     }
+    // D-007: чужой контейнер — не наш переход.
+    //
+    // Здесь был второй, «толкающий» путь: вкладка сама открывала адрес роли
+    // (24.11, 21:19 — Координатор увёл себя на страницу UX & Modding Auditor и
+    // встал без поля ввода). Общий `navigateTo` такой переход запрещает, а
+    // этот — нет, потому что писался до D-004.
+    //
+    // Проверка не побеждает сама себя: если страница ЗАЯВЛЯЕТ, что она — эта
+    // роль (`roleFromPath`), третья сторона тут ни при чём. Подпись сайдбара
+    // читается только когда её видно; непрочитанная подпись переход не
+    // запрещает — иначе свёрнутый сайдбар останавливал бы нормальную работу.
+    const hereMe = typeof roleFromPath === "function" ? roleFromPath() : "";
+    if (norm(hereMe) !== norm(role.id) && typeof accountPageCheck === "function") {
+      const page = await accountPageCheck(role).catch(() => ({ verdict: "unknown" }));
+      if (page.verdict === "foreign") {
+        logThrottled(
+          `pending-foreign:${role.id}`,
+          `Не ухожу к «${role.name}»: её аккаунт — «${page.label}» (${page.expected}), а вкладка на ${page.seen}. ` +
+            "Переход внутри контейнера не переключает аккаунт — задание заберёт вкладка этого аккаунта, " +
+            "когда её откроют.",
+          false,
+          600_000,
+        );
+        // Отметку ставит вызывающий (`sendToRole` → `wakeForPending`).
+        return true;
+      }
+    }
+    log(`Перехожу к «${role.name}», чтобы отправить задание.`);
+    // Уход со страницы — только после подтверждения записи (D-045).
+    await flushBeforeNavigate(handoffKeys());
+    location.assign(role.url);
     return true;
   }
 
@@ -2011,6 +2045,20 @@
    * конца ответа агента. Молчаливых выходов нет — каждый пишет в журнал,
    * иначе нажатый «Шаг» выглядит как неработающая кнопка.
    */
+  /**
+   * D-007: строка «Ролей» для адресата очереди.
+   *
+   * Проверка аккаунта работает с ролью (`role.account`), а очередь хранит
+   * только id и имя — поэтому строка ищется в кеше «Ролей» по id, затем по имени.
+   */
+  function pendingRoleRow(pending) {
+    if (!pending) return null;
+    const cache = GM_getValue(K.rolesCache, null);
+    const rows = cache && Array.isArray(cache.rows) ? cache.rows : [];
+    return rows.find((row) => norm(row.id) === norm(pending.roleId)) ||
+      rows.find((row) => norm(row.name) === norm(pending.roleName)) || null;
+  }
+
   async function consumePending(manual = false) {
     let pending = GM_getValue(K.pending, null);
     if (!pending) return false;
@@ -2326,9 +2374,42 @@
     // находится. Прежняя попытка «закрыть заранее» не срабатывала (backend
     // возвращал плашку при перерисовке) и давала вторую такую же строку в
     // журнале — со счётчиком закрытий, который Мастер читал как сбой.
-    const { editor, closed, overlay } = await ensureComposer();
+    const { editor, closed, overlay, foreign } = await ensureComposer(20000, { role: pendingRoleRow(pending) });
     if (closed) log("Убрал плашку «задача выполнена» — она закрывала поле ввода.");
+    if (foreign) {
+      // D-007: страница открыта не тем аккаунтом, за который себя выдаёт.
+      // Поле ввода здесь не появится, а вставка ушла бы чужому человеку.
+      journalDelivery(GM_getValue(K.expect, null), "foreign_account", "foreign_account");
+      pendingSay(
+        pending,
+        `Не отправляю: страница открыта аккаунтом ${foreign.seen}, а «${pending.roleName || pending.roleId}» ` +
+          `закреплена за «${foreign.label}» (${foreign.expected}). Задание остаётся в очереди и уйдёт из вкладки ` +
+          "этого аккаунта — откройте её в своём контейнере.",
+        true,
+      );
+      return true;
+    }
     if (!editor) {
+      // D-007: поле не нашлось — сначала выясняем, моя ли это страница.
+      //
+      // 24.11, 21:19: задание, адресованное чужому контейнеру, открылось здесь
+      // и осталось без поля ввода; строка «не нашёл поле» повторялась бы до
+      // паузы. Чужой аккаунт здесь ничего не отправит — пусть забирает своя
+      // вкладка, а эта честно скажет, чей аккаунт на странице.
+      if (typeof accountPageCheck === "function") {
+        const page = await accountPageCheck(pending, { path: location.pathname }).catch(() => ({ verdict: "unknown" }));
+        if (page.verdict === "foreign") {
+          journalDelivery(GM_getValue(K.expect, null), "foreign_account", "foreign_account");
+          pendingSay(
+            pending,
+            `Не отправляю: страница открыта аккаунтом ${page.seen}, а «${pending.roleName || pending.roleId}» ` +
+              `закреплена за «${page.label}» (${page.expected}). Задание остаётся в очереди и уйдёт из вкладки ` +
+              "этого аккаунта.",
+            true,
+          );
+          return true;
+        }
+      }
       journalDelivery(GM_getValue(K.expect, null), "editor_not_found", "editor_not_found");
       pendingSay(
         pending,
