@@ -577,8 +577,19 @@
     // поломку — транспорт. Красный цвет — только тому, что правда ждёт человека.
     const who = String(GM_getValue(K.pause, null)?.with || "");
     const label = { master: "ждёт Мастера", warden: "решает приёмка", transport: "решает транспорт", self: "повтор", install: "ждёт установки сборки" }[who] || "";
+    // D-004: метка аккаунта рядом с ролью. Без неё на четырёх контейнерах
+    // невозможно понять, какая это вкладка, и «почему не идёт» ищут не там.
+    const account = (() => {
+      try {
+        const role = typeof accountRoleForPath === "function" ? accountRoleForPath() : null;
+        const labelValue = String(role?.account || "");
+        if (!labelValue) return "";
+        return typeof accountLimit === "function" && accountLimit(labelValue) ? `${labelValue}: лимит` : labelValue;
+      } catch { return ""; }
+    })();
     const text = extra || (paused ? `Пауза${label ? ` (${label})` : ""}: ${short}` : auto ? "Работает" : "Выключен");
-    el.textContent = me ? `${text} · ${me}` : text;
+    const tail = [account, me].filter(Boolean).join(" · ");
+    el.textContent = tail ? `${text} · ${tail}` : text;
     el.title = paused || text;
     // Красным — только пауза, которая действительно ждёт человека.
     el.style.color = paused ? (who && who !== "master" ? "#e8d08a" : "#ff9a9a") : auto ? "#8ee28e" : "inherit";

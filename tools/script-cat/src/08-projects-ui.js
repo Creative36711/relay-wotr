@@ -109,6 +109,16 @@
         for (const name of ["Repository", "Репозиторий"]) {
           if (source.properties[name] && source.properties[name].type !== "rich_text") errors.push(`${name}: нужен rich_text`);
         }
+        // D-004: поля аккаунтов аддитивны, как Repository. База без них работает
+        // по-старому (лимит аккаунта не отслеживается), но если поле есть, оно
+        // должно быть select: иначе транспорт не прочитает метку и промолчит.
+        // Имена — литералами, а не константами модуля аккаунтов: эту функцию
+        // пробы вырезают из бандла и исполняют отдельно, внешних `const` там нет.
+        if (label === "Роли") {
+          for (const name of ["Аккаунт", "Доступность"]) {
+            if (source.properties[name] && source.properties[name].type !== "select") errors.push(`${name}: нужен select`);
+          }
+        }
         for (const [name, required] of Object.entries(options)) {
           const actual = source.properties[name]?.select?.options;
           if (!Array.isArray(actual)) errors.push(`${name}: нет списка select`);

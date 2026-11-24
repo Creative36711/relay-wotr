@@ -97,6 +97,10 @@ assert.equal(decisionRoute('done', { roles, directory: roles }).kind, 'done');
 // 22-executor.js (appendToJournal). Recovery-envelope собирается в requestPlan.
 const coordPromptSrc = cut('  function coordinatorPrompt(', '  async function appendToJournal(');
 assert.match(coordPromptSrc, /turnId,\s*note,\s*queue:/, 'coordinatorPrompt кладёт note в контекст рядом с turnId');
-assert.match(src, /recoveryEnvelope = PromptCompiler\.compile\(\{[\s\S]*?turnId,\s*note,\s*queue:/, 'requestPlan передаёт note в recovery-envelope');
+// D-004: к заметке цикла добавились два источника из мира аккаунтов
+// (недоступные по квоте и «работать нечем») — они склеиваются в planNote до
+// сборки, чтобы recovery-профиль получил ту же заметку, что и полный промпт.
+assert.match(src, /const planNote = \[note, accountLines, idleLine\]\.filter\(Boolean\)\.join\(" "\)/, 'заметка цикла склеивается с аккаунтной');
+assert.match(src, /recoveryEnvelope = PromptCompiler\.compile\(\{[\s\S]*?turnId,\s*note:\s*planNote,\s*queue:/, 'requestPlan передаёт заметку в recovery-envelope');
 
 console.log('OK: заметка Координатору доходит до промпта (full+recovery); отказ Reviewer исполним; пауза и маркер сохранены');

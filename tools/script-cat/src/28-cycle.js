@@ -20,6 +20,20 @@
    */
   async function navigateTo(role, why) {
     if (typeof projectRoleAllowed === "function" && !projectRoleAllowed(role)) return false;
+    // D-004: аккаунт цели. Переход в чужой контейнер увёл бы ход другому
+    // аккаунту, а лимитированный аккаунт задание не примет вовсе — проверка
+    // стоит до записи отметки перехода, чтобы «петли навигации» не было.
+    if (role && typeof accountVerdict === "function" && roleAccount(role)) {
+      const verdict = await accountVerdict(role).catch(() => ({ ok: true }));
+      if (!verdict.ok && verdict.kind === "wrong-account") {
+        accountMismatchPause(verdict, role.id);
+        return true;
+      }
+      if (!verdict.ok) {
+        log(`Не открываю «${role.name}»: ${verdict.why}. Ход выберет другой аккаунт.`, true, { ntfy: "quiet" });
+        return false;
+      }
+    }
     const from = location.pathname || "/";
     const last = GM_getValue("cfn-nav", null);
     const recent =
@@ -43,6 +57,52 @@
     await flushBeforeNavigate(handoffKeys());
     location.assign(role.url);
     return true;
+  }
+
+  /**
+   * D-004: роль на лимитированном аккаунте — ход ищет другой аккаунт.
+   *
+   * Порядок остаётся последовательным: открывается ровно одна следующая страница,
+   * и задание уходит только ей. Приоритет — уже сохранённый ход: неотправленная
+   * очередь или ожидание другой роли важнее «свободной» страницы, иначе задание
+   * потеряется. Роли административного аккаунта не выбираются: на нём работают
+   * Координатор и приёмка, а не исполнители.
+   *
+   * Если идти некуда, функция говорит об этом один раз: молчаливое «Шаг не
+   * выполнен» Мастер читал как поломку кнопки.
+   */
+  async function huntAnotherAccount(list, me, fromToggle) {
+    const usable = (list || []).filter((role) => role && role.url &&
+      (!role.account || !accountLimitBlocks(role)) && norm(role.id) !== norm(me.id));
+    if (!usable.length) {
+      const lines = accountLimitLines();
+      logThrottled(
+        `account-hunt:none:${me.id}`,
+        "Ход искать негде: все активные роли на лимитированных аккаунтах. Продолжу после сброса окна" +
+          `${lines.length ? ` (${lines.join("; ")})` : ""}.`,
+        false,
+        600_000,
+      );
+      return false;
+    }
+    const pending = GM_getValue(K.pending, null);
+    const expect = GM_getValue(K.expect, null);
+    const byId = (id) => (id ? usable.find((role) => norm(role.id) === norm(id)) || null : null);
+    const pendingRole = byId(pending && pending.roleId);
+    const expectRole = byId(expect && expect.roleId);
+    const coord = usable.find((role) => role.fn === "Coordinator");
+    const target = pendingRole || expectRole || coord || usable[0];
+    if (!target) return false;
+    const why = pendingRole
+      ? "там ждёт отправки задание"
+      : expectRole
+        ? `ждём ответа «${target.name}»`
+        : target.fn === "Coordinator"
+          ? "там начинается ход на доступном аккаунте"
+          : "продолжаю на доступном аккаунте";
+    log(`Роль «${me.name}» недоступна по лимиту аккаунта — ход идёт дальше: ${why}.`);
+    if (fromToggle) GM_setValue(K.step, true);
+    return navigateTo(target, why);
   }
 
   // Ожидание, снятое как фантом, — чтобы тик мог вернуть его карточку в Ready.
@@ -297,10 +357,12 @@
         captchaPause();
         return;
       }
-      // D-106: дневной лимит токенов важнее любого хода — индикатор в поле
-      // ввода блокирует отправку целиком, и продолжение хода, и новое задание
-      // не уйдут. Сначала остановиться: пауза `daily-limit` ждёт сброса окна.
-      if (monitorDailyLimit()) return;
+      // D-106 + D-004: дневной лимит токенов важнее любого хода — индикатор в
+      // поле ввода блокирует отправку целиком, и продолжение хода, и новое
+      // задание не уйдут. Лимит принадлежит АККАУНТУ страницы: рабочий аккаунт
+      // останавливает только свой ход, административный — цикл целиком
+      // (спрашивать некого). Индикатор без метки аккаунта — прежняя пауза.
+      if (await accountsTick()) return;
       // Tool-call limit — продолжение того же хода, раньше общей паузы по ошибке.
       if (await handleToolCallLimit()) return;
       // Ошибка на экране важнее любого шага: сначала остановиться.
@@ -438,6 +500,34 @@
       }
       GM_setValue("cfn-me", me.name);
       setStatus();
+
+      // D-004: аккаунт этой вкладки. Сверка идёт здесь, до любых действий:
+      // задание, отправленное не в тот контейнер, уходит чужому аккаунту, и
+      // заметить это можно только по подписи сайдбара. Непрочитанная подпись —
+      // предупреждение в журнале, а не остановка: свёрнутый сайдбар не повод
+      // стоять. Доказанное расхождение — пауза Мастеру (D-004).
+      {
+        const verdict = await accountVerdict(me).catch(() => ({ ok: true }));
+        if (!verdict.ok && verdict.kind === "wrong-account") {
+          accountMismatchPause(verdict, me.id);
+          return;
+        }
+        if (!verdict.ok) {
+          // Лимит: свою роль не выдаём, но цикл не останавливаем — на этой
+          // странице делать нечего, ход ищет другой аккаунт. Единственное
+          // исключение — незакрытый ход: ответ агента читается только здесь,
+          // и увести вкладку значит потерять его (D-045).
+          const live = GM_getValue(K.expect, null);
+          if (live && Number(live.sentAt) && norm(live.roleId) === norm(me.id)) {
+            logThrottled(`account-limit-live:${me.id}`,
+              `Шаг этой ролью пропущен: ${verdict.why}; незакрытый ход сохранён и ждёт сброса окна.`, false, C.tickMs * 4);
+            return;
+          }
+          logThrottled(`account-limit:${me.id}`, `Шаг этой ролью пропущен: ${verdict.why}; ход ищет другой аккаунт.`, false, C.tickMs * 4);
+          return await huntAnotherAccount(list, me, fromToggle);
+        }
+        if (verdict.warn) logThrottled(`account-warn:${me.id}`, `Аккаунт вкладки: ${verdict.warn}.`, false, 600_000);
+      }
 
       // Страница не догружена — шаг ничего не делает. Ни вставки, ни кликов,
       // ни закрытия панелей: на недорисованной странице любое действие либо

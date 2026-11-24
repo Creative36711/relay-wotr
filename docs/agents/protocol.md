@@ -1,6 +1,6 @@
 # ScriptCat protocol · проект
 
-Transport protocol version: 1.12. ScriptCat release: 1.17.0 (upstream behavior through D-122 plus project-neutral transport, D-003).
+Transport protocol version: 1.12. ScriptCat release: 1.18.0 (upstream behavior through D-122 plus project-neutral transport, D-003, and Arena account quotas, D-004).
 
 ## 1. Identity
 

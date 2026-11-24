@@ -52,6 +52,11 @@
       agentJobId: rt(p.properties["Agent Job ID"]),
       agentCreatedAt: p.properties["Agent Created At"]?.date?.start || "",
       previousAgentUrl: p.properties["Previous Agent URL"]?.url || "",
+      // D-004: метка аккаунта Arena («account-1»…), непрозрачная строка. Пустое
+      // значение — «аккаунт не размечен»: роль работает как раньше, но лимит её
+      // аккаунта не отслеживается. «Доступность» пишет только транспорт.
+      account: sel(p.properties["Аккаунт"]),
+      available: sel(p.properties["Доступность"]),
     };
   };
 
