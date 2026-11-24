@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Relay — передача хода между агентами
 // @namespace    https://arena.ai/
-// @version      1.18.1
+// @version      1.18.2
 // @description  Цикл Координатор → исполнитель → Координатор: агент сам коммитит, пушит и мержит PR; ScriptCat ждёт мерж и нажимает Continue.
 // @match        https://arena.ai/*
 // @match        https://www.arena.ai/*
@@ -93,7 +93,7 @@
     // D-073: отпечаток сборки вшивает build.mjs (SHA-256 источника). Номер версии
     // говорит «какой выпуск», отпечаток — «какая именно сборка»: без него проверка
     // «работает новая версия, а не прежняя под новым номером» невозможна.
-    buildFingerprint: "e78099739793d9f1",
+    buildFingerprint: "082ef0f6f7a97410",
     repo: "", // для ссылки на PR из номера
     tickMs: 15000,
     mergeGraceMs: 90000, // сколько ждём мерж, прежде чем нажать кнопки за агента
@@ -459,6 +459,10 @@
     accountLimits: "cfn-account-limits",
     accountSeen: "cfn-account-seen-v1",
     accountIdle: "cfn-account-idle-ask",
+    // D-006: будильник вкладок. Контейнер меняет только человек, поэтому
+    // «хочу, чтобы работа пошла» — это не переход, а просьба к той вкладке,
+    // чей аккаунт адресат. Ключ общий: просит любая вкладка, откликается та.
+    wake: "cfn-wake-all",
   };
 
   // sessionStorage также разделён; выбранный ID хранится отдельно на вкладку.
@@ -470,6 +474,8 @@
     status: "cfn-status",
     toggle: "cfn-toggle",
     step: "cfn-step",
+    // D-006: будильник вкладок стоит рядом с «Шаг» и «Включить».
+    wake: "cfn-wake",
     setup: "cfn-setup",
     stop: "cfn-stop",
     clear: "cfn-clear",
@@ -792,7 +798,7 @@
 
   const NTFY_BASE = "https://ntfy.sh";
   const SCRIPT_VERSION =
-    (typeof GM_info !== "undefined" && GM_info?.script?.version) || "1.18.1";
+    (typeof GM_info !== "undefined" && GM_info?.script?.version) || "1.18.2";
 
   /** «https://ntfy.sh/topic?x=1» и «topic» одинаково дают topic. */
   function normalizeNtfyTopic(raw) {
@@ -1804,7 +1810,7 @@
     panel.style.width = collapsed ? "208px" : "360px";
     const log = document.getElementById(ui.log);
     if (log) log.style.display = collapsed ? "none" : "";
-    for (const id of [ui.step, ui.questions, ui.debug, ui.reset, ui.clear, ui.setup]) {
+    for (const id of [ui.step, ui.wake, ui.questions, ui.debug, ui.reset, ui.clear, ui.setup]) {
       const el = document.getElementById(id);
       if (el) el.style.display = collapsed ? "none" : "";
     }
@@ -1845,6 +1851,7 @@
         <span id="${ui.count}" style="opacity:.45;font-size:10px">0/${C.maxLog}</span>
         <span style="flex:1"></span>
         <button id="${ui.step}" title="Один шаг цикла" style="${btnStyle()}">Шаг</button>
+        <button id="${ui.wake}" title="D-006: разбудить вкладки других аккаунтов — работу продолжит та, чей это аккаунт" style="${btnStyle()}">📣 Все вкладки</button>
         <button id="${ui.toggle}" style="${btnStyle()}">▶ Включить</button>
         <button id="${ui.questions}" aria-label="Открыть обратную связь в Notion" title="Обратная связь — вопросы и предложения в Notion" style="${btnStyle()}">💬 Обратная связь<span id="${ui.qBadge}" style="display:none;margin-left:3px;padding:0 4px;border-radius:7px;background:#b23b3b;color:#fff;font-size:10px;line-height:14px;vertical-align:middle">0</span></button>
         <button id="${ui.agents}" title="Provisioning Arena-агентов: создание и замена ролей" style="${btnStyle()}">🤖 Агенты</button>
@@ -1907,6 +1914,37 @@
       }
       log("Шаг нажат: смотрю страницу, очередь и задание.");
       tick(true);
+    };
+    // D-006: одна кнопка вместо угадывания вкладки. Ничего не отправляет и не
+    // переключает: ставит общую отметку «работа есть, просыпайтесь». Остальные
+    // вкладки на ближайшем тике увидят её и продолжат ту, для которой работа
+    // действительно есть. Где бы Мастер ни нажал — эффект один.
+    document.getElementById(ui.wake).onclick = () => {
+      if (typeof wakeAll !== "function") return;
+      // Будильник не снимает паузу и удержание: это по-прежнему решение
+      // Мастера, и молчать об этом нельзя — иначе кнопка «не работает».
+      if (typeof projectApproved === "function" && !projectApproved()) {
+        log(typeof projectBlockedText === "function" ? projectBlockedText()
+          : "Проект ещё не разрешён к работе: проверьте его в управлении проектами.", true);
+        return;
+      }
+      if (typeof projectHeld === "function" && projectHeld()) {
+        log("Вкладки разбудить нельзя: проект ждёт ручного запуска после переключения — нажмите «Шаг».", true);
+        return;
+      }
+      if (GM_getValue(K.paused, "")) {
+        log("Вкладки разбудить нельзя: работа стоит на паузе — снимите её кнопкой «Шаг» или «Продолжить».", true);
+        return;
+      }
+      const state = wakeAll("кнопка «Все вкладки»");
+      const work = typeof wakeWorkHere === "function" ? wakeWorkHere() : "";
+      log(
+        work
+          ? `Разбудил вкладки. У этой роли тоже есть работа (${work === "pending" ? "в очереди" : "ждём ответа"}) — начну здесь.`
+          : `Разбудил вкладки других аккаунтов до ${new Date(Number(state.until)).toLocaleTimeString()}: работу продолжит та, чей аккаунт адресат. Эта вкладка ждёт своей работы.`,
+      );
+      if (work) tick(true);
+      else if (autoOn()) tick(false);
     };
     document.getElementById(ui.toggle).onclick = () => {
       const work = toggleAuto();
@@ -8305,6 +8343,13 @@
     dbg("sendToRole: задание в очереди", { role: role.name, kind, ref, длина: text.length });
     GM_setValue("cfn-me", role.name);
     setStatus();
+    // D-006: задание адресовано другой роли — возможно, в другой вкладке другого
+    // контейнера. Будим остальных: та вкладка, для которой работа есть, отправит
+    // его сама, без поисков «где нажать Шаг». Своя роль отметку не ставит.
+    if (typeof wakeForPending === "function") {
+      const woke = wakeForPending(GM_getValue(K.pending, null), `задание для «${role.name}»`);
+      if (woke) log(`Задание «${role.name}»: бужу остальные вкладки — отправит та, чей это аккаунт.`, false, { ntfy: "quiet" });
+    }
 
     // Если адресат — текущая страница, перезагружать её незачем: чат уже
     // открыт, и задание уйдёт со следующего тика (человек видит, что кнопка
@@ -22420,6 +22465,187 @@ function reviewPullRequest({ files, pr, zone } = {}) {
     GM_setValue(K.accountIdle, { key: accountIdleKey(missionId), at: Date.now() });
   }
 
+  // ─────────────────────── будильник вкладок (D-006) ───────────────────────
+  //
+  // Контейнер Firefox меняет только человек: `location.assign` его не трогает,
+  // поэтому «перейти на другой аккаунт» из вкладки нельзя. Но и гадать, в какой
+  // вкладке нажать «Шаг», Мастер не должен. Между вкладками есть общее
+  // хранилище — им и пользуемся: любая вкладка ставит отметку «работа есть,
+  // просыпайтесь», а откликается та, чей аккаунт адресат.
+  //
+  // Что здесь важно и почему именно так:
+  //
+  //  1. Будильник ничего не отправляет и не выдаёт. Он только снимает
+  //     «спящий» режим у вкладки, в которой уже лежит работа (`K.pending` или
+  //     ожидание её роли). Решение «уходить ли» остаётся за обычным тиком:
+  //     одно место решает — меньше способов разойтись с D-045.
+  //  2. Отметка с окном жизни (`until`). Забытая отметка не должна держать
+  //     чужую вкладку вечно бодрой: будили на десять минут, потом снова спим.
+  //  3. Отметку ставит и сама вкладка, когда у неё появилась работа для другой
+  //     роли: иначе после решения Координатора весь ход ждал бы нажатия.
+
+  /** Сколько вкладка остаётся разбуженной после одного нажатия. */
+  const WAKE_WINDOW_MS = 10 * 60 * 1000;
+  /** Дольше этого отметку не продлеваем: засыпание после работы — норма. */
+  const WAKE_MAX_MS = 30 * 60 * 1000;
+
+  const wakeState = () => {
+    const value = GM_getValue(K.wake, null);
+    return value && typeof value === "object" && !Array.isArray(value) ? value : null;
+  };
+
+  /** Разбудить все вкладки проекта: одна отметка, общая для всех контейнеров. */
+  function wakeAll(reason = "ручное нажатие") {
+    const now = Date.now();
+    const previous = wakeState();
+    // Повторные нажатия продлевают окно, но не бесконечно: иначе вкладка
+    // оставалась бы бодрой всю ночь после одного клика.
+    const startedAt = previous && previous.at && now - Number(previous.at) < WAKE_MAX_MS
+      ? Number(previous.startedAt || previous.at)
+      : now;
+    GM_setValue(K.wake, {
+      at: now,
+      startedAt,
+      until: Math.min(now + WAKE_WINDOW_MS, startedAt + WAKE_MAX_MS),
+      reason: String(reason || ""),
+    });
+    return GM_getValue(K.wake, null);
+  }
+
+  /**
+   * Та же отметка, но не чаще раза в `ms`.
+   *
+   * Для мест, которые повторяются каждый тик: «эта вкладка не на своём
+   * аккаунте», «аккаунт в лимите». Без ограничения они продлевали бы отметку
+   * каждые пятнадцать секунд, и ручной режим незаметно превращался бы в
+   * автоцикл — то есть в то, чего Мастер как раз не просил.
+   */
+  function wakeOnce(key, reason, ms = 10 * 60 * 1000) {
+    const stamp = `cfn-wake-last:${key}`;
+    const now = Date.now();
+    if (now - Number(GM_getValue(stamp, 0) || 0) < ms) return null;
+    GM_setValue(stamp, now);
+    return wakeAll(reason);
+  }
+
+  /** Вкладка разбужена прямо сейчас? */
+  function wakeActive(now = Date.now()) {
+    const state = wakeState();
+    return Boolean(state && Number(state.until) > now);
+  }
+
+  /**
+   * Работа ждёт в этой вкладке.
+   *
+   * Проверяется ровно то, что тик всё равно проверит первым: неотправленная
+   * очередь своей роли и ожидание ответа своей роли. Ничего нового здесь не
+   * решается — это фильтр «просыпаться или нет», а не второй решатель.
+   */
+  function wakeWorkHere() {
+    const here = typeof roleFromPath === "function" ? roleFromPath() : "";
+    const pending = GM_getValue(K.pending, null);
+    const waiting = GM_getValue(K.expect, null);
+    // Непрофильная страница работу не «держит», но и не должна спать, если
+    // работа где-то есть: тогда она пойдёт туда сама — тем же переходом, что
+    // делает «Шаг». Если работы нет вовсе, кнопка новый ход не начинает:
+    // это остаётся за «Шаг», иначе «Все вкладки» отправляли бы мусорные ходы.
+    if (!here) return pending || waiting ? "start" : "";
+    if (pending && norm(pending.roleId) === norm(here)) return "pending";
+    if (waiting && norm(waiting.roleId) === norm(here)) return "expect";
+    return "";
+  }
+
+  /**
+   * Короткая заявка «шаг делаю я».
+   *
+   * Разбудить можно несколько вкладок одного аккаунта (человек открывал их
+   * раньше). Работа у них общая, поэтому шаг берёт только одна: остальные
+   * видят живую заявку и ждут. Заявка живёт недолго (`WAKE_CLAIM_MS`): если
+   * вкладку закрыли посреди шага, она не держит остальных дольше минуты.
+   */
+  const WAKE_CLAIM_MS = 90 * 1000;
+
+  /** Идентификатор вкладки: своя сессия, поэтому у каждой вкладки свой. */
+  function wakeTabId() {
+    try {
+      let id = sessionStorage.getItem("cfn-wake-tab-v1");
+      if (!id) {
+        id = typeof uid === "function" ? uid() : `t${Date.now()}${Math.random()}`;
+        sessionStorage.setItem("cfn-wake-tab-v1", id);
+      }
+      return id;
+    } catch {
+      return "";
+    }
+  }
+
+  /**
+   * Ключ заявки — на АККАУНТ, а не на профиль.
+   *
+   * Заявка общего вида блокировала бы работу соседнего аккаунта: две вкладки
+   * разных контейнеров с разными заданиями — это не дубль, а нормальный ход.
+   * Аккаунт берём из «Ролей» по id роли; если разметки нет — по самой роли.
+   */
+  function wakeClaimKey(roleId) {
+    let label = "";
+    try {
+      const role = typeof accountRoleForPath === "function" ? accountRoleForPath(`/agent/${roleId}`) : null;
+      label = role && typeof roleAccount === "function" ? roleAccount(role) : "";
+    } catch {
+      label = "";
+    }
+    return `cfn-wake-doing:${norm(label || roleId)}`;
+  }
+
+  /** Ключ заявки этой вкладки: нужен, чтобы продлевать именно свою. */
+  let claimKey = "";
+
+  /** Взять шаг себе. false — его уже делает другая вкладка этого аккаунта. */
+  function wakeClaim(roleId, now = Date.now()) {
+    const key = wakeClaimKey(roleId);
+    const id = wakeTabId();
+    const doing = GM_getValue(key, null);
+    if (doing && doing.tabId && doing.tabId !== id && Number(doing.until) > now) return false;
+    GM_setValue(key, { tabId: id, until: now + WAKE_CLAIM_MS, at: now });
+    claimKey = key;
+    return true;
+  }
+
+  /** Не чаще раза в 30 секунд продлеваем заявку: шаг может идти и минутами. */
+  let claimRenewedAt = 0;
+
+  /**
+   * «Шаг ещё идёт»: продлить заявку, пока тик жив.
+   *
+   * Без этого долгий шаг (ожидание мержа — до пяти минут) выглядел бы
+   * брошенным, и вторая вкладка того же аккаунта начала бы второй такой же.
+   * Заявку не снимаем по завершении: пусть истечёт сама, иначе разбудившая
+   * всех вкладка тут же взялась бы за ту же работу ещё раз.
+   */
+  function wakeHold(now = Date.now()) {
+    if (!claimKey) return false;
+    const id = wakeTabId();
+    const doing = GM_getValue(claimKey, null);
+    if (!doing || !doing.tabId || doing.tabId !== id) return false;
+    if (now - claimRenewedAt < 30_000) return true;
+    claimRenewedAt = now;
+    GM_setValue(claimKey, { ...doing, until: now + WAKE_CLAIM_MS });
+    return true;
+  }
+
+  /**
+   * У вкладки появилась работа для чужой роли — сказать об этом остальным.
+   *
+   * Вызывается там, где очередь поставлена (`sendToRole`). Своя работа отметку
+   * не ставит: эта вкладка и так не спит.
+   */
+  function wakeForPending(pending, reason = "появилось задание") {
+    const here = typeof roleFromPath === "function" ? roleFromPath() : "";
+    if (!pending || !pending.roleId) return null;
+    if (norm(pending.roleId) === norm(here)) return null;
+    return wakeAll(reason);
+  }
+
   // ───────────────────────────── цикл ─────────────────────────────
   let busy = false;
   /** Сколько раз подряд шаг снимали с блокировки по тишине. */
@@ -22432,6 +22658,9 @@ function reviewPullRequest({ files, pr, zone } = {}) {
    */
   function stepAlive() {
     busyAt = Date.now();
+    // D-006: шаг идёт — заявка «делаю я» должна быть живой, иначе вкладка того
+    // же аккаунта посчитает её брошенной и начнёт второй такой же.
+    if (typeof wakeHold === "function") wakeHold();
   }
 
   /**
@@ -22461,10 +22690,14 @@ function reviewPullRequest({ files, pr, zone } = {}) {
           `account-nav:${role.id}`,
           `Не открываю «${role.name}»: роль закреплена за «${current.label}» (${current.expected}), ` +
             `а вкладка в контейнере ${current.seen}. Переход внутри контейнера не переключает аккаунт — ` +
-            "эту роль открывает её собственная вкладка.",
+            "эту роль открывает её собственная вкладка; я её будил, работа продолжится там.",
           false,
           600_000,
         );
+        // D-006: нажали «Шаг»/«Все вкладки» не в том контейнере — работа не
+        // теряется. Ровно этот отказ раньше оставлял Мастера гадать, почему
+        // нажатие ничего не сделало; теперь нужная вкладка узнаёт о работе.
+        if (typeof wakeOnce === "function") wakeOnce(`nav:${role.id}`, `роль «${role.name}» живёт в другой вкладке`);
         return false;
       }
     }
@@ -22505,6 +22738,11 @@ function reviewPullRequest({ files, pr, zone } = {}) {
       log(`Шаг не выполнен: ${verdict.why}. Эта вкладка в контейнере другого аккаунта — откройте роль в её контейнере.`, true);
     else
       logThrottled(`account-mismatch:${me.id}`, `Шаг пропущен: ${verdict.why}. Вкладка в контейнере другого аккаунта; переключить его может только человек.`, false, 600_000);
+    // D-006: вкладка, ушедшая из-за чужого контейнера, — ровно тот случай, когда
+    // раньше очередь тихо ждала нажатия. Работа могла быть уже поставлена до
+    // того, как выяснилось расхождение, поэтому будим остальных: своя вкладка
+    // (в нужном контейнере) подхватит её сама.
+    if (typeof wakeOnce === "function") wakeOnce(`wrong:${me.id}`, `вкладка не на своём аккаунте: ${me.name}`);
     return false;
   }
 
@@ -22522,6 +22760,10 @@ function reviewPullRequest({ files, pr, zone } = {}) {
    * работу остальных. Вкладка молчит до сброса окна и говорит об этом один раз.
    */
   function idleLimitedAccount(me, fromToggle) {
+    // D-006: лимит этого аккаунта не должен держать работу, которая может уйти
+    // другому. Будим остальные вкладки — та, чей аккаунт доступен, продолжит.
+    // Своя роль лимитирована по определению, поэтому проверять нечего: будим.
+    if (typeof wakeOnce === "function") wakeOnce(`limit:${accountLabel(roleAccount(me))}`, `аккаунт «${accountLabel(roleAccount(me))}» в лимите`);
     if (fromToggle)
       log(`Шаг не выполнен: «${me.name}» на аккаунте в лимите${accountLimitLines().length ? ` (${accountLimitLines().join("; ")})` : ""}. Работа идёт во вкладках других аккаунтов.`, true);
     else
@@ -22862,7 +23104,27 @@ function reviewPullRequest({ files, pr, zone } = {}) {
       // Ручной режим: нажатие «Шаг» делает ровно один шаг. Фон (таймер)
       // досылает очередь после перехода, но не читает ответы и не выдаёт
       // новые задания: иначе один ход превращался в цепочку из трёх отправок.
-      if (!auto && !fromToggle) return;
+      //
+      // D-006: исключение — разбуженная вкладка. Ей сказали «работа есть», и
+      // для её роли она действительно есть (очередь или ожидание). Это не
+      // новый ход и не выдача: ровно то, что сделало бы нажатие «Шаг» в этой
+      // вкладке, только без Мастера, который ищет нужный контейнер.
+      const wakeWork = !auto && !fromToggle && typeof wakeActive === "function" && wakeActive() &&
+        typeof wakeWorkHere === "function" ? wakeWorkHere() : "";
+      const woken = Boolean(wakeWork);
+      // Разбудить могли несколько вкладок одного аккаунта: шаг берёт одна.
+      // Заявку берёт только та вкладка, у которой работа уже своя (`pending` /
+      // `expect`): вкладка, которая лишь пойдёт на чужую страницу, не должна
+      // держать заявку, пока её же переход отклонят из-за контейнера.
+      // Работа своя — значит роль этой страницы и есть владелец заявки.
+      if (woken && wakeWork !== "start" && typeof wakeClaim === "function" && !wakeClaim(roleFromPath())) {
+        logThrottled("wake-claim", "Вкладку разбудили, но шаг этого аккаунта уже делает другая вкладка — жду.", false, 60_000);
+        return;
+      }
+      // Строка не на каждый тик: окно будильника десять минут, и повтор одного
+      // и того же сообщения каждые пятнадцать секунд — шум, а не новость.
+      if (woken) logThrottled("wake-step", "Вкладку разбудили: для её роли есть работа — выполняю шаг.", false, 600_000);
+      if (!auto && !fromToggle && !woken) return;
       if (fromToggle) dbg("шаг: начало", () => debugSnapshot());
 
       // Неотправленное задание важнее всего остального: пока оно в очереди,
@@ -22870,7 +23132,7 @@ function reviewPullRequest({ files, pr, zone } = {}) {
       // открываем сами — иначе после перезагрузки вкладки очередь стояла бы
       // вечно, а браузер ждал бы человека.
       const pendingNow = GM_getValue(K.pending, null);
-      if (pendingNow && (fromToggle || autoOn())) {
+      if (pendingNow && (fromToggle || autoOn() || woken)) {
         const here = roleFromPath();
         if (norm(here) !== norm(pendingNow.roleId)) {
           const all = await roles();
@@ -22887,7 +23149,9 @@ function reviewPullRequest({ files, pr, zone } = {}) {
         // ответ ждём, и только потом Координатор (там начинается новый ход).
         // В автоцикле Мастер не жмёт «Шаг»: цикл сам открывает ту страницу,
         // где есть работа. Иначе «Включить» на главной ничего не делал.
-        if (!fromToggle && !autoOn()) return;
+        // D-006: разбуженная вкладка ведёт себя так же — она и нужна затем,
+        // чтобы с непрофильной страницы уйти туда, где работа.
+        if (!fromToggle && !autoOn() && !woken) return;
         const list = await roles();
         const pendingNow = GM_getValue(K.pending, null);
         const waitingNow = GM_getValue(K.expect, null);
