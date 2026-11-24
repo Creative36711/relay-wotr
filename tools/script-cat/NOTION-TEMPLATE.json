@@ -103,6 +103,42 @@
         },
         "Previous Agent URL": {
           "url": {}
+        },
+        "Аккаунт": {
+          "select": {
+            "options": [
+              {
+                "name": "account-1",
+                "color": "gray"
+              },
+              {
+                "name": "account-2",
+                "color": "blue"
+              },
+              {
+                "name": "account-3",
+                "color": "purple"
+              },
+              {
+                "name": "account-4",
+                "color": "pink"
+              }
+            ]
+          }
+        },
+        "Доступность": {
+          "select": {
+            "options": [
+              {
+                "name": "ОК",
+                "color": "green"
+              },
+              {
+                "name": "Лимит",
+                "color": "red"
+              }
+            ]
+          }
         }
       }
     },

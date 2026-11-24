@@ -20,6 +20,32 @@
    */
   async function navigateTo(role, why) {
     if (typeof projectRoleAllowed === "function" && !projectRoleAllowed(role)) return false;
+    // D-004: аккаунт цели. Вкладка живёт в контейнере (`location.assign` не
+    // меняет контейнер), поэтому переход на роль другого аккаунта откроет её
+    // страницу ЧУЖИМ аккаунтом — задание ушло бы не туда. Поэтому чужой аккаунт
+    // и доказанный лимит одинаково запрещают переход.
+    if (role && typeof roleAccount === "function" && roleAccount(role)) {
+      const hit = typeof accountBlocked === "function" ? accountBlocked(roleAccount(role)) : null;
+      if (hit && !hit.expired) {
+        log(`Не открываю «${role.name}»: «${roleAccount(role)}» в лимите до ${accountResetText(hit.until)}.`, true, { ntfy: "quiet" });
+        return false;
+      }
+      const current = typeof accountMismatchSync === "function" ? accountMismatchSync(role) : { wrong: false };
+      if (current.wrong) {
+        // Адрес роли из другого контейнера открывается в этом: страница
+        // откроется чужим аккаунтом. Это не поломка, а «здесь эта роль не
+        // живёт»: вкладка переключается руками, а ход ждёт своего контейнера.
+        logThrottled(
+          `account-nav:${role.id}`,
+          `Не открываю «${role.name}»: роль закреплена за «${current.label}» (${current.expected}), ` +
+            `а вкладка в контейнере ${current.seen}. Переход внутри контейнера не переключает аккаунт — ` +
+            "эту роль открывает её собственная вкладка.",
+          false,
+          600_000,
+        );
+        return false;
+      }
+    }
     const from = location.pathname || "/";
     const last = GM_getValue("cfn-nav", null);
     const recent =
@@ -43,6 +69,48 @@
     await flushBeforeNavigate(handoffKeys());
     location.assign(role.url);
     return true;
+  }
+
+  /**
+   * D-004: вкладка стоит в контейнере другого аккаунта.
+   *
+   * Ни паузы, ни перехода: контейнер меняет человек, а `pause` общая на все
+   * вкладки — «эта роль не здесь» остановило бы и те аккаунты, где работа идёт.
+   * Шаг просто пропускается; в журнале сказано один раз, что именно не так.
+   */
+  function idleWrongAccount(me, verdict, fromToggle) {
+    if (fromToggle)
+      log(`Шаг не выполнен: ${verdict.why}. Эта вкладка в контейнере другого аккаунта — откройте роль в её контейнере.`, true);
+    else
+      logThrottled(`account-mismatch:${me.id}`, `Шаг пропущен: ${verdict.why}. Вкладка в контейнере другого аккаунта; переключить его может только человек.`, false, 600_000);
+    return false;
+  }
+
+  /**
+   * D-004: роль на лимитированном аккаунте — эта вкладка отдыхает.
+   *
+   * Аккаунты разделены контейнерами Firefox, а `location.assign` контейнер не
+   * меняет: уйти «на другой аккаунт» из этой вкладки нельзя — откроется та же
+   * учётная запись. Уходят не вкладки, а ход: остальные контейнеры крутят свои
+   * шаги сами, и общая очередь (`K.pending`, `K.expect`) достаётся тому, кто
+   * может её взять.
+   *
+   * Поэтому здесь пауза не ставится: `pause` общая на все вкладки, и «лимит
+   * рабочего аккаунта» остановил бы ровно то, ради чего всё затевалось —
+   * работу остальных. Вкладка молчит до сброса окна и говорит об этом один раз.
+   */
+  function idleLimitedAccount(me, fromToggle) {
+    if (fromToggle)
+      log(`Шаг не выполнен: «${me.name}» на аккаунте в лимите${accountLimitLines().length ? ` (${accountLimitLines().join("; ")})` : ""}. Работа идёт во вкладках других аккаунтов.`, true);
+    else
+      logThrottled(
+        `account-idle:${me.id}`,
+        `Ход этой вкладки ждёт сброса окна: «${me.name}» на лимитированном аккаунте` +
+          `${accountLimitLines().length ? ` (${accountLimitLines().join("; ")})` : ""}. Другие аккаунты работают своими вкладками.`,
+        false,
+        600_000,
+      );
+    return false;
   }
 
   // Ожидание, снятое как фантом, — чтобы тик мог вернуть его карточку в Ready.
@@ -297,10 +365,14 @@
         captchaPause();
         return;
       }
-      // D-106: дневной лимит токенов важнее любого хода — индикатор в поле
-      // ввода блокирует отправку целиком, и продолжение хода, и новое задание
-      // не уйдут. Сначала остановиться: пауза `daily-limit` ждёт сброса окна.
-      if (monitorDailyLimit()) return;
+      // D-106 + D-004: дневной лимит токенов важнее любого хода — индикатор в
+      // поле ввода блокирует отправку целиком, и продолжение хода, и новое
+      // задание не уйдут. Лимит принадлежит АККАУНТУ страницы: рабочий аккаунт
+      // останавливает только свою роль (тик идёт дальше и уводит ход), а
+      // административный — цикл целиком, потому что спрашивать некого.
+      // Индикатор без метки аккаунта — прежняя пауза.
+      const accountStop = await accountsTick();
+      if (accountStop && accountStop !== "worker") return;
       // Tool-call limit — продолжение того же хода, раньше общей паузы по ошибке.
       if (await handleToolCallLimit()) return;
       // Ошибка на экране важнее любого шага: сначала остановиться.
@@ -400,7 +472,9 @@
         const byId = (id) => (id ? list.find((r) => norm(r.id) === norm(id)) || null : null);
         const pendingRole = pendingNow ? byId(pendingNow.roleId) : null;
         const waitingRole = waitingNow ? byId(waitingNow.roleId) : null;
-        const coord = list.find((r) => r.fn === "Coordinator");
+        // Координатор — только если он не стоит по лимиту: его аккаунт
+        // административный, и переход туда упёрся бы в отказ отправки.
+        const coord = list.find((r) => r.fn === "Coordinator" && !accountLimitBlocks(r));
         const target = pendingRole || waitingRole || coord;
         if (!target) {
           log(
@@ -438,6 +512,35 @@
       }
       GM_setValue("cfn-me", me.name);
       setStatus();
+
+      // D-004: аккаунт этой вкладки. Сверка идёт здесь, до любых действий:
+      // задание, отправленное не в тот контейнер, уходит чужому аккаунту, и
+      // заметить это можно только по подписи сайдбара. Непрочитанная подпись —
+      // предупреждение в журнале, а не остановка: свёрнутый сайдбар не повод
+      // стоять. Доказанное расхождение — пауза Мастеру (D-004).
+      {
+        const verdict = await accountVerdict(me).catch(() => ({ ok: true }));
+        if (!verdict.ok && verdict.kind === "wrong-account") {
+          // Вкладка в чужом контейнере для этой роли. Перейти «в свой» нельзя:
+          // контейнер меняет только человек. Это не поломка — просто здесь эта
+          // роль не живёт, и шаг пропускается молча (в журнале — один раз).
+          idleWrongAccount(me, verdict, fromToggle);
+          return;
+        }
+        if (!verdict.ok) {
+          // Лимит: эта роль не выдаётся, и увести ход из этой вкладки некуда —
+          // она в контейнере своего аккаунта. Исключение — незакрытый ход: ответ
+          // агента читается только здесь и ждёт сброса окна (D-045).
+          const live = GM_getValue(K.expect, null);
+          if (live && Number(live.sentAt) && norm(live.roleId) === norm(me.id))
+            logThrottled(`account-limit-live:${me.id}`,
+              `Шаг этой ролью пропущен: ${verdict.why}; незакрытый ход сохранён и ждёт сброса окна.`, false, 600_000);
+          else
+            idleLimitedAccount(me, fromToggle);
+          return;
+        }
+        if (verdict.warn) logThrottled(`account-warn:${me.id}`, `Аккаунт вкладки: ${verdict.warn}.`, false, 600_000);
+      }
 
       // Страница не догружена — шаг ничего не делает. Ни вставки, ни кликов,
       // ни закрытия панелей: на недорисованной странице любое действие либо

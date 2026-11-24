@@ -35,6 +35,10 @@
   async function sweepOrphans(mission, cards = null) {
     if (!mission || GM_getValue(K.pending, null)) return [];
     const expect = GM_getValue(K.expect, null);
+    // D-004: лимит аккаунта съедает квоту, но не ход. Агент на лимитированном
+    // аккаунте мог ответить до сброса — ответ читается только на его странице,
+    // поэтому «брошенной» карточку не объявляем и в Ready не возвращаем.
+    if (expect && typeof accountHoldsExpect === "function" && accountHoldsExpect(expect)) return [];
     if (expect && Number(expect.sentAt) && expect.kind !== "dispatch") return [];
     const live = expect && expect.kind === "dispatch" && expect.ref ? norm(expect.ref) : "";
     const running = cards || (await tasks("Running", mission));

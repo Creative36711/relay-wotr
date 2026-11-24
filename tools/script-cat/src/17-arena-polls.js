@@ -1267,6 +1267,16 @@
     const text = envelope ? envelope.text : String(input);
     if (!text.trim()) return false;
     if (typeof projectRoleAllowed === "function" && !projectRoleAllowed(role)) return false;
+    // D-004: очередь — единственная точка, где решается «уйдёт ли задание».
+    // Роль на лимитированном аккаунте задание не получает: отправка сожгла бы
+    // попытку в заблокированное поле ввода, а карточка уже стояла бы Running.
+    // Ветка «уже открыт» ниже перехода не делает — без этой проверки она
+    // обошла бы проверку аккаунта в `navigateTo`.
+    if (typeof accountLimitBlocks === "function" && accountLimitBlocks(role)) {
+      const why = typeof accountLimitText === "function" ? accountLimitText(role.account) : "аккаунт в лимите";
+      log(`«${role.name}»: ${why} — задание не ставлю в очередь, ход выберет другой аккаунт.`, true, { ntfy: "quiet" });
+      return false;
+    }
     // Ранее выданную Reviewer карточку можно завершить и напомнить о маркере,
     // но новой рабочей выдачи через общий транспорт быть не должно.
     if (kind === "dispatch" && (role.fn === "Reviewer" || norm(role.name) === norm("Warden"))) {
@@ -1997,6 +2007,19 @@
   async function consumePending(manual = false) {
     let pending = GM_getValue(K.pending, null);
     if (!pending) return false;
+    // D-004: очередь адресована роли, чей аккаунт в лимите. Вставлять текст в
+    // заблокированное поле ввода бессмысленно, а «не отправлено» ещё и съело бы
+    // попытку. Очередь остаётся: после сброса окна её отправит обычный тик.
+    if (typeof accountLimitBlocks === "function") {
+      const cache = GM_getValue(K.rolesCache, null);
+      const rows = cache && Array.isArray(cache.rows) ? cache.rows : [];
+      const target = rows.find((row) => norm(row.id) === norm(pending.roleId)) ||
+        rows.find((row) => norm(row.name) === norm(pending.roleName));
+      if (target && accountLimitBlocks(target)) {
+        pendingSay(pending, `Адресат «${pending.roleName || target.name}» в лимите квоты до сброса окна: задание остаётся в очереди и уйдёт после него.`);
+        return true;
+      }
+    }
     const me = roleFromPath();
     const waitingForPolicy = GM_getValue(K.expect, null);
     // Очередь могла остаться от старого скрипта. Нельзя угадывать, не дошла ли

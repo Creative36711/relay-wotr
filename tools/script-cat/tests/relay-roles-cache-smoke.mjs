@@ -94,6 +94,8 @@ const row = (name, url, fn = 'Executor', status = 'Активна') => ({
       agentJobId: '',
       agentCreatedAt: '',
       previousAgentUrl: '',
+      account: '',
+      available: '',
     },
   ], 'карта строки полная, включая аддитивные provisioning-поля');
 }

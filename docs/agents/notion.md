@@ -4,7 +4,9 @@ IDs and URLs: `docs/setup/notion-ids.md`. ScriptCat uses data source IDs.
 
 ## Роли
 
-Source of role authority. Human-managed: role title, Status, Agent URL, Agent Admin and archive/delete. Warden/approved planning may define Function, write zone, gate and repository for non-admin roles. Agent State `запрошен` asks provisioning; it does not activate a role by itself.
+Source of role authority. Human-managed: role title, Status, Agent URL, Agent Admin, the account label `Аккаунт` and archive/delete. Warden/approved planning may define Function, write zone, gate and repository for non-admin roles. Agent State `запрошен` asks provisioning; it does not activate a role by itself.
+
+`Аккаунт` (D-004) is the Arena account a role spends its daily quota from: an opaque label such as `account-1`, never an email — the label→address map lives only in the browser (⚙ «Подключения» → «Аккаунты Arena») because the database is shared. `Доступность` (`ОК` / `Лимит`) is transport-owned: ScriptCat marks an account's roles when the Arena daily limit indicator is visible on that account and restores them after the Moscow midnight reset. Never encode the quota by editing `Статус`: that field is the human's decision and a restore would overwrite it. Administrative roles (Coordinator, Warden, Transport Maintainer) share one account with no working roles on it, so a worker quota cannot take acceptance down.
 
 A working row needs exact Function understood by ScriptCat (`Executor`, `Auditor`, `Coordinator`, `Reviewer`, `Maintainer`), repository `owner/repo` (задаёт профиль), an explicit zone/gate, `Активна`, and a valid Arena URL. Only Warden is an admin/reviewer role for mission acceptance; engineering roles never receive that privilege by name.
 
