@@ -30,13 +30,17 @@ const mentions = (text, field) => text.includes(`"${field}"`) || text.includes(`
 const LIVE_ROLE_FIELDS = [
   "Роль", "Функция", "Статус", "Agent URL", "Зона записи", "Гейт", "Репозиторий",
   "Agent Admin", "Agent State", "Previous Agent URL", "Аккаунт", "Доступность",
+  "Agent Job ID", "Agent Created At",
 ];
 
 /** Поля не для кода, а для людей: код их не читает, и это нормально. */
 const HUMAN_ROLE_FIELDS = ["Устав"];
 
-/** Поля, которые читаются, но никогда не пишутся: заполнять их бесполезно. */
-const READ_ONLY_ROLE_FIELDS = ["Agent Job ID", "Agent Created At"];
+/**
+ * Поля, которые пишет provisioning. Проверять их «на заполняемость руками»
+ * бессмысленно: значение ставится само, а ручная правка будет перезаписана.
+ */
+const PROVISIONED_ROLE_FIELDS = ["Agent Job ID", "Agent Created At", "Agent State"];
 
 test("живые поля «Ролей» действительно читаются кодом вкладки", () => {
   for (const field of LIVE_ROLE_FIELDS) {
@@ -50,13 +54,14 @@ test("поле «Устав» остаётся для людей и не выд�
   }
 });
 
-test("поля, которые не пишутся, названы явно и не выглядят рабочими", () => {
-  for (const field of READ_ONLY_ROLE_FIELDS) {
+// Первый заход в этот аудит заключил, что `Agent Job ID` и `Agent Created At`
+// никто не пишет: grep искал `props["…"] =`, а поля лежат в литерале объекта
+// свойств целиком. Тест ловит именно такую ошибку: пишет ли код поле хоть как-то.
+test("поля provisioning действительно пишутся, а не только читаются", () => {
+  for (const field of PROVISIONED_ROLE_FIELDS) {
     assert.ok(mentions(TAB, field), `«${field}» должно читаться, иначе его пора удалять`);
-  }
-  // Запись в них не найдена нигде: `props["…"] =` в коде отсутствует.
-  for (const field of READ_ONLY_ROLE_FIELDS) {
-    assert.ok(!TAB.includes(`props["${field}"]`), `«${field}» вдруг стало записываемым — обновите список`);
+    const written = new RegExp(`["']${field}["']\\s*:`).test(TAB);
+    assert.ok(written, `«${field}» перестало записываться — тогда оно мёртвое, а не живое`);
   }
 });
 
