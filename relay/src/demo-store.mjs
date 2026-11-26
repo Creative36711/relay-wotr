@@ -23,7 +23,7 @@ const DEMO_SETTINGS = [
   ["notion.requestsDb", "ds-requests", "text", "basic", "", ""],
   ["cycle.mode", "manual", "enum", "basic", "manual", ""],
   ["cycle.maxParallel", "2", "number", "advanced", "2", ""],
-  ["transport.version", "1.22.0", "text", "basic", "1.22.0", ""],
+  ["transport.version", "1.23.0", "text", "basic", "1.23.0", ""],
 ];
 
 export function createDemoStore({ now = () => Date.now() } = {}) {

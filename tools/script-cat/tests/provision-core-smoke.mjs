@@ -99,7 +99,10 @@ test('суточный лимит и журнал без секретов', () =
   const state = api.provisionState();
   assert.equal(state.journal.length, 1);
   assert.equal(state.journal[0].event, 'provision_request_sent');
-  assert.ok(api.PROVISION_EVENTS.length === 17);
+  // 18 = прежние 17 + provision_schema_unread: события «схему Ролей не
+  // прочитали» больше нет в прежнем наборе, но оно нужно — иначе отказ
+  // прочитать схему выглядел бы как «полей нет» и молчал.
+  assert.ok(api.PROVISION_EVENTS.length === 18);
   assert.ok(api.PROVISION_STATES.includes('url_captured'));
 });
 

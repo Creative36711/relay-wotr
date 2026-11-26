@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Relay — передача хода между агентами
 // @namespace    https://arena.ai/
-// @version      1.22.0
+// @version      1.23.0
 // @description  Цикл Координатор → исполнитель → Координатор: агент сам коммитит, пушит и мержит PR; ScriptCat ждёт мерж и нажимает Continue.
 // @match        https://arena.ai/*
 // @match        https://www.arena.ai/*
@@ -93,7 +93,7 @@
     // D-073: отпечаток сборки вшивает build.mjs (SHA-256 источника). Номер версии
     // говорит «какой выпуск», отпечаток — «какая именно сборка»: без него проверка
     // «работает новая версия, а не прежняя под новым номером» невозможна.
-    buildFingerprint: "f48a1b2b0a771399",
+    buildFingerprint: "ab9992b3724b1b61",
     repo: "", // для ссылки на PR из номера
     tickMs: 15000,
     mergeGraceMs: 90000, // сколько ждём мерж, прежде чем нажать кнопки за агента
@@ -798,7 +798,7 @@
 
   const NTFY_BASE = "https://ntfy.sh";
   const SCRIPT_VERSION =
-    (typeof GM_info !== "undefined" && GM_info?.script?.version) || "1.22.0";
+    (typeof GM_info !== "undefined" && GM_info?.script?.version) || "1.23.0";
 
   /** «https://ntfy.sh/topic?x=1» и «topic» одинаково дают topic. */
   function normalizeNtfyTopic(raw) {
@@ -2588,6 +2588,12 @@
           for (const name of ["Аккаунт", "Доступность"]) {
             if (source.properties[name] && source.properties[name].type !== "select") errors.push(`${name}: нужен select`);
           }
+          // Поля provisioning: обязательны по смыслу (без «Agent State» роли
+          // никогда не создаются), но проверяются только если присутствуют —
+          // база без них работает по-старому, как «Аккаунт» по D-004.
+          for (const [name, type] of Object.entries({ "Agent State": "select", "Agent Admin": "checkbox" })) {
+            if (source.properties[name] && source.properties[name].type !== type) errors.push(`${name}: нужен ${type}`);
+          }
         }
         for (const [name, required] of Object.entries(options)) {
           const actual = source.properties[name]?.select?.options;
@@ -2598,7 +2604,18 @@
         // только он; транспорт сообщает, что видит поле, которого нет в этой
         // таблице, чтобы поле не выглядело рабочим. Разница «живое || схема»
         // молчала: `Тип` был в живой базе, но не здесь, и код писал его в пустоту.
-        const extra = Object.keys(source.properties || {}).filter((name) => !(name in fields) && !["Repository", "Репозиторий"].includes(name));
+        // Поля, которые транспорт читает или пишет, но которые не нужны для
+        // работы базы (аддитивные по D-004/D-005, как «Аккаунт»). Раньше
+        // «Agent State» и «Agent Admin» попадали в «лишние» и человеку
+        // советовали их удалить — а без них provisioning не работает вовсе.
+        // Проверка типов для них есть выше: «лишнее» здесь значит «не
+        // обязательное», а не «ненужное».
+        // Поля для людей («Устав») сюда НЕ входят: их никто не читает, и
+        // человек должен об этом узнать, а не считать поле рабочим.
+        const additive = label === "Роли"
+          ? ["Repository", "Репозиторий", "Аккаунт", "Доступность", "Agent State", "Agent Admin", "Agent Job ID", "Agent Created At", "Previous Agent URL"]
+          : ["Repository", "Репозиторий"];
+        const extra = Object.keys(source.properties || {}).filter((name) => !(name in fields) && !additive.includes(name));
         if (extra.length) warnings.push(`«${label}»: лишние поля — ${extra.join(", ")} (схема их не знает; правьте схему в Notion только сами).`);
         // D-004: поля аккаунтов аддитивны — база без них работает по-старому.
         // Но «работает по-старому» значит «лимит аккаунта не отслеживается», и
@@ -3917,7 +3934,12 @@
       // «не админ» и «не требуется»; старые поля не переименовываются.
       agentAdmin: p.properties["Agent Admin"]?.checkbox === true,
       agentState: sel(p.properties["Agent State"]) || "не требуется",
-      agentJobId: rt(p.properties["Agent Job ID"]),
+      // 1.23.0: «Agent Job ID» и «Agent Created At» удалены из базы — задание и
+      // дата создания теперь живут в листе «Экземпляры» книги состояния (D-011),
+      // потому что у роли несколько агентов, а поле в строке роли одно.
+      // Читаем с проверкой: обращение к отсутствующему свойству даёт
+      // `undefined`, а `rt()` на нём бросает TypeError в горячем пути шага.
+      agentJobId: p.properties["Agent Job ID"] ? rt(p.properties["Agent Job ID"]) : "",
       agentCreatedAt: p.properties["Agent Created At"]?.date?.start || "",
       previousAgentUrl: p.properties["Previous Agent URL"]?.url || "",
       // D-005: почта аккаунта Arena — значение поля «Аккаунт» (Notion,
@@ -19023,7 +19045,7 @@
     "provision_job_started", "provision_repo_selected", "provision_bootstrap_sent", "provision_url_captured",
     "provision_renamed", "provision_notion_updated", "provision_activated", "provision_activation_blocked",
     "provision_old_archived", "provision_old_archive_unverified", "provision_job_done", "provision_paused",
-    "provision_conflict", "provision_noop"];
+    "provision_conflict", "provision_noop", "provision_schema_unread"];
   const PROVISION_BOOTSTRAP_FORBIDDEN = [
     /CF_[A-Z_]+/i, /notion/i, /aux-workspace/i, /REGULATION/, /WARDEN/i, /DECISIONS/,
     /ntn_[A-Za-z0-9]/, /secret_[A-Za-z0-9]/, /ghp_[A-Za-z0-9]/, /github_pat_[A-Za-z0-9]/,
@@ -19548,6 +19570,27 @@
     return true;
   }
 
+  /**
+   * Есть ли свойство в живой схеме «Ролей». Возвращает проверку, а не объект:
+   * вызывающему нужно ровно «можно ли писать в это поле».
+   *
+   * Кеш не нужен: вызывается один раз на роль при provisioning, а лишний
+   * запрос дешевле, чем роль, которая встала из-за удалённого поля.
+   */
+  async function provisionCanWriteProps(pageId) {
+    let properties = {};
+    try {
+      const page = await notion("GET", `pages/${pageId}`);
+      properties = page?.properties || {};
+    } catch (error) {
+      // Не прочитали схему — не пишем необязательные поля вовсе. Молча
+      // «разрешить всё» здесь означало бы повторить ту же ошибку.
+      provisionEvent("provision_schema_unread", { rolePageId: pageId, error: String(error?.message || error) });
+      properties = {};
+    }
+    return (name) => Object.prototype.hasOwnProperty.call(properties, name);
+  }
+
   async function provisionFreshRole(pageId) {
     try {
       const page = await notion("GET", `pages/${pageId}`);
@@ -19750,13 +19793,23 @@
       return provisionPause("Provisioning: Agent State больше не запрошен.", request, job, { event: "provision_conflict" });
     }
     const alreadyUrl = norm(currentUrl) === norm(newUrl);
+    // Только те поля, что есть в схеме. Notion отвечает validation_error на всю
+    // запись целиком, если в ней есть хоть одно отсутствующее свойство, — и
+    // тогда не применяется НИЧЕГО, включая Agent URL и Agent State. Пока
+    // «Agent Job ID» и «Agent Created At» были в базе, это было незаметно;
+    // после их удаления provisioning вставал бы на каждой роли.
+    //
+    // Схема — единственный источник правды о полях. `row` — уже разобранная
+    // строка, свойств Notion в ней нет, поэтому спрашиваем живой объект: без
+    // этого проверка была бы всегда истинной и ничего не защищала.
+    const canWrite = await provisionCanWriteProps(job.rolePageId);
     const props = {
       "Agent State": { select: { name: "создан" } },
-      "Agent Job ID": { rich_text: richText(job.id) },
-      "Agent Created At": { date: { start: nowIso() } },
     };
+    if (canWrite("Agent Job ID")) props["Agent Job ID"] = { rich_text: richText(job.id) };
+    if (canWrite("Agent Created At")) props["Agent Created At"] = { date: { start: nowIso() } };
     if (!alreadyUrl) props["Agent URL"] = { url: newUrl };
-    if (job.action === "replace" && job.oldAgentUrl) props["Previous Agent URL"] = { url: job.oldAgentUrl };
+    if (job.action === "replace" && job.oldAgentUrl && canWrite("Previous Agent URL")) props["Previous Agent URL"] = { url: job.oldAgentUrl };
     if (!(row.status === "Активна" && alreadyUrl)) await patch(job.rolePageId, props);
     provisionEvent("provision_notion_updated", { requestId: request.requestId, jobId: job.id, rolePageId: job.rolePageId, repo: job.repo, step: "notion_updated" });
     job.state = "notion_updated";

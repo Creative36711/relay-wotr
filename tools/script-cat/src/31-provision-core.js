@@ -13,7 +13,7 @@
     "provision_job_started", "provision_repo_selected", "provision_bootstrap_sent", "provision_url_captured",
     "provision_renamed", "provision_notion_updated", "provision_activated", "provision_activation_blocked",
     "provision_old_archived", "provision_old_archive_unverified", "provision_job_done", "provision_paused",
-    "provision_conflict", "provision_noop"];
+    "provision_conflict", "provision_noop", "provision_schema_unread"];
   const PROVISION_BOOTSTRAP_FORBIDDEN = [
     /CF_[A-Z_]+/i, /notion/i, /aux-workspace/i, /REGULATION/, /WARDEN/i, /DECISIONS/,
     /ntn_[A-Za-z0-9]/, /secret_[A-Za-z0-9]/, /ghp_[A-Za-z0-9]/, /github_pat_[A-Za-z0-9]/,

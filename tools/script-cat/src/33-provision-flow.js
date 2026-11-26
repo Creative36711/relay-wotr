@@ -30,6 +30,27 @@
     return true;
   }
 
+  /**
+   * Есть ли свойство в живой схеме «Ролей». Возвращает проверку, а не объект:
+   * вызывающему нужно ровно «можно ли писать в это поле».
+   *
+   * Кеш не нужен: вызывается один раз на роль при provisioning, а лишний
+   * запрос дешевле, чем роль, которая встала из-за удалённого поля.
+   */
+  async function provisionCanWriteProps(pageId) {
+    let properties = {};
+    try {
+      const page = await notion("GET", `pages/${pageId}`);
+      properties = page?.properties || {};
+    } catch (error) {
+      // Не прочитали схему — не пишем необязательные поля вовсе. Молча
+      // «разрешить всё» здесь означало бы повторить ту же ошибку.
+      provisionEvent("provision_schema_unread", { rolePageId: pageId, error: String(error?.message || error) });
+      properties = {};
+    }
+    return (name) => Object.prototype.hasOwnProperty.call(properties, name);
+  }
+
   async function provisionFreshRole(pageId) {
     try {
       const page = await notion("GET", `pages/${pageId}`);
@@ -232,13 +253,23 @@
       return provisionPause("Provisioning: Agent State больше не запрошен.", request, job, { event: "provision_conflict" });
     }
     const alreadyUrl = norm(currentUrl) === norm(newUrl);
+    // Только те поля, что есть в схеме. Notion отвечает validation_error на всю
+    // запись целиком, если в ней есть хоть одно отсутствующее свойство, — и
+    // тогда не применяется НИЧЕГО, включая Agent URL и Agent State. Пока
+    // «Agent Job ID» и «Agent Created At» были в базе, это было незаметно;
+    // после их удаления provisioning вставал бы на каждой роли.
+    //
+    // Схема — единственный источник правды о полях. `row` — уже разобранная
+    // строка, свойств Notion в ней нет, поэтому спрашиваем живой объект: без
+    // этого проверка была бы всегда истинной и ничего не защищала.
+    const canWrite = await provisionCanWriteProps(job.rolePageId);
     const props = {
       "Agent State": { select: { name: "создан" } },
-      "Agent Job ID": { rich_text: richText(job.id) },
-      "Agent Created At": { date: { start: nowIso() } },
     };
+    if (canWrite("Agent Job ID")) props["Agent Job ID"] = { rich_text: richText(job.id) };
+    if (canWrite("Agent Created At")) props["Agent Created At"] = { date: { start: nowIso() } };
     if (!alreadyUrl) props["Agent URL"] = { url: newUrl };
-    if (job.action === "replace" && job.oldAgentUrl) props["Previous Agent URL"] = { url: job.oldAgentUrl };
+    if (job.action === "replace" && job.oldAgentUrl && canWrite("Previous Agent URL")) props["Previous Agent URL"] = { url: job.oldAgentUrl };
     if (!(row.status === "Активна" && alreadyUrl)) await patch(job.rolePageId, props);
     provisionEvent("provision_notion_updated", { requestId: request.requestId, jobId: job.id, rolePageId: job.rolePageId, repo: job.repo, step: "notion_updated" });
     job.state = "notion_updated";

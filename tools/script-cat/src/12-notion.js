@@ -49,7 +49,12 @@
       // «не админ» и «не требуется»; старые поля не переименовываются.
       agentAdmin: p.properties["Agent Admin"]?.checkbox === true,
       agentState: sel(p.properties["Agent State"]) || "не требуется",
-      agentJobId: rt(p.properties["Agent Job ID"]),
+      // 1.23.0: «Agent Job ID» и «Agent Created At» удалены из базы — задание и
+      // дата создания теперь живут в листе «Экземпляры» книги состояния (D-011),
+      // потому что у роли несколько агентов, а поле в строке роли одно.
+      // Читаем с проверкой: обращение к отсутствующему свойству даёт
+      // `undefined`, а `rt()` на нём бросает TypeError в горячем пути шага.
+      agentJobId: p.properties["Agent Job ID"] ? rt(p.properties["Agent Job ID"]) : "",
       agentCreatedAt: p.properties["Agent Created At"]?.date?.start || "",
       previousAgentUrl: p.properties["Previous Agent URL"]?.url || "",
       // D-005: почта аккаунта Arena — значение поля «Аккаунт» (Notion,
