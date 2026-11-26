@@ -159,6 +159,21 @@ test("Notion вернул HTML — назван посредник, а не «Un
   assert.equal(describeNonJson({ status: 200, text: '  [1,2]' }), null);
 });
 
+test("нормализация поиска: описание базы доходит до мастера", async () => {
+  // Одноимённые «Роли» (главная, старая копия, чужой цикл) различимы
+  // только по описанию — без него отказ про несколько совпадений был бы
+  // безликим списком id.
+  const { normalizeSearchResults } = await import("../src/notion-db.mjs");
+  const rows = normalizeSearchResults({
+    results: [
+      { id: "db-1", object: "database", title: [{ plain_text: "Роли" }], description: [{ plain_text: "Состав команды WOTR Remaster" }] },
+      { id: "db-2", object: "database", title: [{ plain_text: "Роли" }] },
+    ],
+  });
+  assert.equal(rows[0].description, "Состав команды WOTR Remaster");
+  assert.equal(rows[1].description, "", "без описания — пустая строка, не падение");
+});
+
 test("поиск в Notion: подменённый ответ — отказ с причиной, а не падение JSON", async () => {
   const { searchDatabases } = await import("../src/notion-db.mjs");
   const fetchImpl = async () => ({

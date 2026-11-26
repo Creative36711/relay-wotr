@@ -55,6 +55,41 @@ test("похожее название подсказывается вместо 
   assert.match(pick.why, /похожие/);
 });
 
+test("мастер настройки ищет токеном из пульта, одноимённые базы названы описанием", async () => {
+  // Токен, введённый в пульте, живёт в памяти службы, а не в окружении
+  // процесса. Замыкание без параметра искало по env, молча возвращало
+  // пустоту — и человек при принятом токене читал «интеграция не видит».
+  const seen = [];
+  const service = createService({
+    store: createFakeStore({ slots: slotRows(), settings: settingsRows() }),
+    notionFetch: async () => ({
+      ok: true, status: 200,
+      text: async () => JSON.stringify({ results: [{ id: "db-check", object: "database", title: [{ plain_text: "Роли" }] }] }),
+    }),
+    notionSearch: async ({ token } = {}) => {
+      seen.push(token);
+      return [
+        { id: "41e6f0cf", title: "Роли", object: "database", dataSourceId: "", dataSourceCount: 0, description: "Состав команды WOTR Remaster" },
+        { id: "024b7678", title: "Роли", object: "database", dataSourceId: "", dataSourceCount: 0, description: "Активные роли цикла Vault" },
+      ];
+    },
+  });
+
+  const accepted = await service.notionTokenSet({ token: "ntn_1234567890abcdef" });
+  assert.equal(accepted.ok, true, accepted.why);
+
+  const plan = await service.setup({});
+  assert.deepEqual(seen, ["ntn_1234567890abcdef"], "поиск получил токен из памяти, а не пустой env");
+
+  // Три «Роли» в рабочем пространстве — не повод молча выбрать первую.
+  const step = plan.steps.find((item) => item.key === "notion.rolesDb");
+  assert.equal(step.ok, false);
+  assert.match(step.why, /несколько \(2\)/);
+  assert.match(step.why, /WOTR Remaster/, "описание первой базы названо");
+  assert.match(step.why, /Vault/, "описание второй базы названо");
+  assert.match(step.why, /notion\.rolesDb/, "запасной путь — вписать id вручную");
+});
+
 test("базы, которые транспорт не читает, не показываются как нехватка", () => {
   // `notion.slotsDb` и `notion.requestsDb` не читает ни одна строка службы:
   // слоты — лист книги, карточки приходят строкой очереди. Пока они висели в

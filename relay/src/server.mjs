@@ -177,10 +177,14 @@ export function createTransportServer({
   // вставляет его в пульте, и «перезапустите с переменной» — шаг, который
   // откладывают. Пустой ответ — это «нечего искать», а не ошибка.
   const notionToken = NOTION_TOKEN || process.env.NOTION_TOKEN || process.env.RELAY_NOTION_TOKEN || "";
-  const notionSearch = () => {
-    const token = notionToken || process.env.NOTION_TOKEN || process.env.RELAY_NOTION_TOKEN || "";
+  // Токен передаётся вызывающим: токен, введённый в пульте, живёт в памяти
+  // службы, а не в окружении этого процесса — замыкание без параметра искало
+  // бы только по env и молча возвращало пустоту («база не видна» при
+  // принятом токене). Память старше окружения, окружение — запасной путь.
+  const notionSearch = (options = {}) => {
+    const token = options.token || notionToken || process.env.NOTION_TOKEN || process.env.RELAY_NOTION_TOKEN || "";
     if (!token) return Promise.resolve([]);
-    return searchDatabases({ token, fetchImpl: notionDataFetch, query: "" });
+    return searchDatabases({ token, fetchImpl: notionDataFetch, query: options.query || "" });
   };
 
   // Токен передаётся явно, а не читается службой из окружения: иначе тесты и
