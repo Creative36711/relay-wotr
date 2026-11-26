@@ -132,7 +132,10 @@ test("пульт: поле токена Notion и честная подпись 
     assert.match(js, /\/api\/net-doctor/);
     // Проверка одна на всё: иначе «мост молчит» и «Notion молчит» лечатся
     // по отдельности, хотя причина общая — нет исходящего HTTPS.
-    assert.match(js, /Прокси службы/);
+    // Поля прокси в пульте нет: владельцу нечего туда вводить, а лишнее
+    // поле читается как «без него не заработает».
+    assert.doesNotMatch(js, /applyProxy|btn-proxy/);
+    assert.doesNotMatch(html, /id="proxy-url"/);
     // Кнопка называет действие, а не состояние: «Автоцикл» при включённом
     // автоцикле читается как «включить ещё раз».
     assert.match(js, /Остановить автоцикл/);
@@ -169,43 +172,6 @@ test("сеть наружу не проходит — служба говори�
     assert.match(body.why, /Служба работает/, "человеку сказано, что перезапускать нечего");
     assert.match(body.why, /Проверить сеть/);
   } finally {
-    await new Promise((resolve) => server.close(resolve));
-  }
-});
-
-test("прокси из пульта: записан рядом с мостом и сразу применён", async () => {
-  const dir = mkdtempSync(join(tmpdir(), "relay-proxy-"));
-  const proxyFile = join(dir, "proxy.txt");
-  const { server } = createTransportServer({
-    spreadsheetId: "fake", token: "fake", storeFactory: () => createFakeStore({ slots: slotRows() }),
-    proxyFile, log: () => {},
-  });
-  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
-  const base = `http://127.0.0.1:${server.address().port}`;
-  const saved = { ...process.env };
-  try {
-    const bad = await (await fetch(`${base}/api/proxy`, {
-      method: "POST", headers: { "content-type": "application/json" },
-      body: JSON.stringify({ proxy: "socks5://1.2.3.4:1080" }),
-    })).json();
-    assert.equal(bad.ok, false, "socks не принимается");
-    assert.match(bad.why, /не поддерживается/);
-
-    const ok = await (await fetch(`${base}/api/proxy`, {
-      method: "POST", headers: { "content-type": "application/json" },
-      body: JSON.stringify({ proxy: "127.0.0.1:8080" }),
-    })).json();
-    assert.equal(ok.ok, true, ok.why);
-    assert.equal(typeof ok.needsRestart, "boolean", "служба говорит, нужен ли перезапуск");
-    assert.match(ok.why, /прокси/, "в ответе есть адрес прокси");
-    assert.equal(readFileSync(proxyFile, "utf8"), "http://127.0.0.1:8080\n");
-    // Переменная процесса — это и есть «применено»: её читает fetch.
-    assert.equal(process.env.HTTPS_PROXY, "http://127.0.0.1:8080");
-  } finally {
-    for (const key of ["HTTPS_PROXY", "HTTP_PROXY", "https_proxy", "http_proxy"]) {
-      if (saved[key] === undefined) delete process.env[key];
-      else process.env[key] = saved[key];
-    }
     await new Promise((resolve) => server.close(resolve));
   }
 });

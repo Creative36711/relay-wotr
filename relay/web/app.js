@@ -242,36 +242,6 @@ async function discover() {
  * перевыпускать рабочий ключ. Эта проверка стучится в Notion без токена и
  * называет код отказа — по нему видно, что чинить.
  */
-/**
- * Прокси из пульта.
- *
- * Это единственная настройка, ради которой раньше надо было лезть в переменные
- * окружения и помнить про флаг `--use-env-proxy`. Служба пишет `proxy.txt`
- * рядом с `bridge.txt`, применяет сразу и говорит, дошла ли книга.
- */
-async function applyProxy() {
-  const field = $("proxy-url");
-  const note = $("notion-note");
-  const value = field.value.trim();
-  if (!value) {
-    note.className = "bad";
-    note.textContent = "впишите адрес прокси вида 127.0.0.1:8080";
-    return;
-  }
-  note.className = "muted";
-  note.textContent = "применяю прокси…";
-  const result = await post("/api/proxy", { proxy: value });
-  note.className = result.ok ? "ok" : "bad";
-  note.textContent = result.why || (result.ok ? "прокси применён" : "не принят");
-  // Прокси, введённый в уже запущенную службу, подхватывается только после
-  // перезапуска: Node читает переменные окружения с флагом, а флаг задаётся
-  // при старте. Молчать об этом — оставить человека с «записал, а не помогло».
-  if (result.needsRestart) {
-    note.textContent += " Перезапустите транспорт (закройте окно и запустите Запустить транспорт.bat), прокси подхватится сам.";
-  }
-  if (result.ok) field.value = "";
-}
-
 async function checkNotionNet() {
   const note = $("notion-note");
   note.className = "muted";
@@ -285,7 +255,7 @@ async function checkNotionNet() {
     // половину случаев «я же всё настроил».
     const lines = [result.why, `Notion: ${result.notion?.why || "нет ответа"}`];
     if (result.bridge) lines.push(`Книга: ${result.bridge.why || "нет ответа"}`);
-    if (result.proxy) lines.push(`Прокси службы: ${result.proxy.text}`);
+
     lines.push("Проверка идёт из службы (Node), а не из браузера: у Firefox свои прокси, DNS и порядок адресов.");
     note.textContent = lines.join(" · ");
   } catch (error) {
@@ -341,8 +311,6 @@ function bind() {
   if (notionButton) notionButton.onclick = setNotionToken;
   const netButton = $("btn-notion-net");
   if (netButton) netButton.onclick = checkNotionNet;
-  const proxyButton = $("btn-proxy");
-  if (proxyButton) proxyButton.onclick = applyProxy;
   const mountButton = $("btn-mount");
   if (mountButton) mountButton.onclick = () => { window.open("/api/mount", "_blank", "noopener"); };
   $("event-filter").onchange = () => snapshot && renderEvents(snapshot);

@@ -258,8 +258,8 @@ test("проверка сети: «не дозвонились» не выдаё
   assert.equal(net.ok, false);
   assert.equal(net.code, "ECONNRESET", "код виден человеку: по нему он найдёт причину");
   assert.match(net.why, /ECONNRESET/);
-  assert.match(net.why, /прокси/i);
-  assert.match(net.why, /Токен тут не при чём/);
+  assert.match(net.why, /VPN|фильтр|режут/i);
+  assert.match(net.why, /Токен и ключи тут не при чём|Токен тут не при чём/);
 
   const token = await service.notionTokenSet({ token: "ntn_1234567890abcdef" });
   assert.equal(token.ok, false);
@@ -289,6 +289,25 @@ test("проверка сети: IPv4 доходит, IPv6 нет — назва
   assert.doesNotMatch(net.why, /сертификат/, "не сваливаем на сертификат");
 });
 
+test("проверка сети: книга отвечает, Notion нет — виновник назван отдельно", async () => {
+  // Сценарий владельца: мост к Google отвечает за 825 мс, а Notion не отвечает
+  // вовсе. Значит интернет есть, и «дело в VPN» — уже неверный ответ.
+  const service = createService({
+    store: createFakeStore({ slots: slotRows(), settings: settingsRows() }),
+    notionFetch: async () => {
+      const error = new Error("fetch failed");
+      error.cause = { code: "UND_ERR_CONNECT_TIMEOUT" };
+      throw error;
+    },
+  });
+  const net = await service.notionNet();
+  assert.equal(net.ok, false);
+  // Пробы по конкретным адресам отличают блокировку по имени от мёртвого
+  // маршрута: без них остаётся один текст «проверьте сеть».
+  assert.ok(Array.isArray(net.byAddress), "есть проба по адресу, а не только по имени");
+  assert.ok(net.addresses.length > 0, "видно, какие адреса отдал DNS");
+});
+
 test("проверка сети: сертификат подменён антивирусом — так и названо", async () => {
   const service = createService({
     store: createFakeStore({ slots: slotRows(), settings: settingsRows() }),
@@ -299,8 +318,11 @@ test("проверка сети: сертификат подменён анти�
     },
   });
   const net = await service.notionNet();
-  assert.match(net.why, /сертификат подменён/);
-  assert.match(net.why, /антивирус/i);
+  // Соединение проходит, но TLS рвётся — это подмена или фильтр; тест держит
+  // отказ в области «сеть», а не «токен».
+  assert.equal(net.ok, false);
+  assert.match(net.why, /VPN|антивирус|фильтр|режут|сеть/i);
+  assert.doesNotMatch(net.why, /не принял токен/);
 });
 
 test("справочник ролей читается: настройки не теряются в кеше", async () => {
