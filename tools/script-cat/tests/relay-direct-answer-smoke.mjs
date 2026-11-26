@@ -121,6 +121,9 @@ const cut = (start, end) => {
     'roleRows', 'missionForQuestion', 'norm', 'reviewerRole', 'log', 'logThrottled', 'oneLine', 'dropAnswer', 'answerQueue',
     'notion', 'sel', 'Q', 'questionFromRowComplete', 'verifiedAdrMaterial', 'sendToRole', 'answerPrompt',
     'uid', 'GM_getValue', 'K',
+    // 1.24.0: `startAnswer` отмечает строку «идёт отправка» (`GM_setValue`) и
+    // берёт адрес пары из «Экземпляров» (`roleInstanceUrl`/`roleAddressWhy`).
+    'GM_setValue', 'roleInstanceUrl', 'roleAddressWhy',
     `async function startAnswer(mission, item) { const questionMission = await missionForQuestion(item, mission); ${body.slice(0, body.lastIndexOf('  }'))}} return startAnswer;`,
   );
   const roles = [
@@ -149,6 +152,9 @@ const cut = (start, end) => {
     () => 'turn-1',
     () => null,
     { answers: 'answers' },
+    () => {},
+    async () => '',
+    async () => 'адреса нет',
   );
   const mission = { id: '4126f0cf-5705-819c-89c3-c1566cf5b67a', properties: {} };
 

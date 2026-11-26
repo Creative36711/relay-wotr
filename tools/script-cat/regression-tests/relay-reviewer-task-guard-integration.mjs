@@ -67,7 +67,16 @@ function fixture(who = 'FixtureExecutor') {
   } };
 }
 
-function makeDispatch({ active = all, directory = all, freshCard = fixture(), directoryError = null, failCreateLog = false } = {}) {
+/**
+ * 1.24.0: адрес пары (роль, слот) живёт в «Экземплярах», а не в строке «Ролей».
+ *
+ * Фикстура ниже держит адрес в строке — так книга жила до D-015. Новый код
+ * спрашивает адрес у `roleInstanceUrl`; по умолчанию стенд ведёт себя как
+ * старая книга (пусто), а `instances` позволяет проверить новые книги, где
+ * строка адреса не несёт вовсе.
+ */
+function makeDispatch({ active = all, directory = all, freshCard = fixture(), directoryError = null,
+  failCreateLog = false, instances = {} } = {}) {
   const storage = new Map();
   const calls = { patches: [], gateway: [], reads: [], sends: [], navigations: [], roleReads: [], logs: [], pauses: [], flushes: [] };
   const env = {
@@ -77,7 +86,9 @@ function makeDispatch({ active = all, directory = all, freshCard = fixture(), di
       if (directoryError) throw new Error(directoryError);
       return clone(directory);
     },
-    norm, rt, K, C: { repo: 'example/relay-fixture', branch: 'main' }, ACTIVE_PROFILE: { legacy: false, repo: 'example/relay-fixture', branch: 'main', repos: [{ repo: 'example-org/fixture-source-core', branch: 'main' }, { repo: 'example/relay-fixture', branch: 'main' }] },
+    norm, rt, K, C: { repo: 'example/relay-fixture', branch: 'main' },
+    roleInstanceUrl: async (name) => instances[String(name || '')] || '',
+    roleAddressWhy: async (name) => (instances[String(name || '')] ? '' : 'нет адреса пары в «Экземплярах»'), ACTIVE_PROFILE: { legacy: false, repo: 'example/relay-fixture', branch: 'main', repos: [{ repo: 'example-org/fixture-source-core', branch: 'main' }, { repo: 'example/relay-fixture', branch: 'main' }] },
     GM_getValue: (key, fallback) => storage.has(key) ? storage.get(key) : fallback,
     GM_setValue: (key, value) => storage.set(key, clone(value)),
     notion: async (method, path) => { calls.reads.push({ method, path }); return clone(freshCard); },
@@ -117,7 +128,7 @@ function makeDispatch({ active = all, directory = all, freshCard = fixture(), di
     location: { href: 'https://arena.ai/agent/coord-1', pathname: '/agent/coord-1', assign: (url) => calls.navigations.push(url) },
   };
   const make = new Function('env', `
-    const {roles, roleRows, norm, rt, K, C, ACTIVE_PROFILE, GM_getValue, GM_setValue, notion, patch, gateway,
+    const {roles, roleRows, norm, rt, K, C, ACTIVE_PROFILE, GM_getValue, GM_setValue, notion, patch, gateway, roleInstanceUrl, roleAddressWhy,
       taskTitle, taskState, taskRole, taskTargetRepository, reworkSeen, profileSessionRepo, canonicalTargetRepository, profileRepoBranch,
       redispatchClearProps, redispatchWhy, noteRedispatch, REDISPATCH_LIMIT,
       answerStampKey, reworkKey, pause, log, uid, nowIso, taskLogEntry, executorPrompt,

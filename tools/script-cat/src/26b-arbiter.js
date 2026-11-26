@@ -49,9 +49,21 @@
    * функции два разных права.
    */
   async function arbiterRole() {
+    // D-015: адрес приёмки — экземпляр пары (роль, слот). Строка «Ролей»
+    // остаётся вторым источником: у админских ролей адрес там есть по закону,
+    // у старых книг — по наследству.
     const list = await roles().catch(() => []);
-    return list.find((r) => r.fn === "Reviewer" && r.url && r.status === "Активна") ||
-      list.find((r) => r.fn === "Reviewer" && r.url) || null;
+    const reviewers = list.filter((r) => r.fn === "Reviewer");
+    const active = reviewers.filter((r) => r.status === "Активна");
+    for (const row of active) {
+      const url = row.url || (await roleInstanceUrl(row.name).catch(() => ""));
+      if (url) return { ...row, url };
+    }
+    for (const row of reviewers) {
+      const url = row.url || (await roleInstanceUrl(row.name).catch(() => ""));
+      if (url) return { ...row, url };
+    }
+    return null;
   }
 
   /** Короткая строка ответа для промпта: без разметки и лишних переводов. */

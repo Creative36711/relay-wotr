@@ -76,7 +76,7 @@ const rt = (p) =>
 
 // ── 2. Очередь приёмки читается ДО ветки чужого ожидания ───────────────────
 {
-  const at = src.indexOf('const waiting = answerPending();');
+  const at = src.indexOf('let waiting = answerPending();');
   const ownerBranch = src.indexOf('if (expect && norm(expect.roleId) !== norm(me.id)) {');
   assert.ok(at > 0, 'проверка очереди приёмки есть в тике');
   assert.ok(ownerBranch > 0, 'ветка «ожидание другой роли» на месте');
@@ -85,7 +85,7 @@ const rt = (p) =>
   // Раньше вопрос не доходил: цикл возвращался к странице ожидания выше.
   const tick = cut('async function tick(fromToggle = false) {', '\n  // ──');
   const answerGate = tick.indexOf('if ((fromToggle || autoOn()) && !GM_getValue(K.expect, null))');
-  const early = tick.indexOf('const waiting = answerPending();');
+  const early = tick.indexOf('let waiting = answerPending();');
   assert.ok(answerGate >= 0 && answerGate < early, 'новый ответный ход запускается только без живого ожидания');
   assert.ok(tick.includes('const missionForAnswer = await missionForQuestion(waiting, await activeMission().catch(() => null));'),
     'адресатный ход собирает контекст миссии исходного вопроса');

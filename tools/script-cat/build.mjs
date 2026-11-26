@@ -22,7 +22,11 @@ const header = '00-header.js';
 const parts = [
   '01-config.js', '02-profiles-core.js', '03-utils.js', '04-notifications.js', '05-debug.js',
   '06-pause-panel.js', '07-connections-ui.js', '08-projects-ui.js', '09-ntfy-ui.js', '10-github-ui.js',
-  '11-http-gateway.js', '12-notion.js', '13-arena-messages.js', '14-missing-marker.js', '15-visible-errors.js',
+  '11-http-gateway.js', '12-notion.js',
+  // D-015: адрес пары (роль, слот) из службы Relay. Идёт сразу после Notion и
+  // до всего, что спрашивает адрес роли: гейт состава, охрана дублей, разбор.
+  '12b-instances.js',
+  '13-arena-messages.js', '14-missing-marker.js', '15-visible-errors.js',
   '16-arena-send.js', '17-arena-polls.js', '18-state-recovery.js', '19-pull-requests.js',
   'prompt-marker-registry.js', 'prompt-blocks.js', 'prompt-profiles.js', 'prompt-compiler.js',
   '20-technical-context.js', '21-prompts.js', '22-executor.js', '23-coordinator.js', '24-feedback.js',

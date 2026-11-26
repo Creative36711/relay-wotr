@@ -14,8 +14,19 @@
   //  • поломка доставки остаётся транспорту, и это разные причины.
   const ROSTER_SOURCE = 1;
 
-  /** Пункт проверки: что именно не так с ролью. Возвращает пустой список — роль годна. */
-  function rosterRoleGaps(role, { directory = [], recipientOptions = [] } = {}) {
+  /**
+   * Пункт проверки: что именно не так с ролью. Пустой список — роль годна.
+   *
+   * D-015: адрес проверяется как ПАРА (роль, слот), а не как `Agent URL` строки.
+   *
+   * До 1.24.0 у роли был один адрес, и «пуст Agent URL» был точным ответом.
+   * Теперь рабочих агентов у роли столько, сколько контейнеров, и адрес живёт
+   * в «Экземплярах». Требование адреса строки объявляло бы некомплект по
+   * каждой неадминской роли — то есть гейт останавливал бы выдачу там, где всё
+   * в порядке. Поэтому источник адреса — `instances`, а `row.url` остался
+   * запасным путём для админских ролей и старых книг.
+   */
+  function rosterRoleGaps(role, { directory = [], recipientOptions = [], instances = [] } = {}) {
     const gaps = [];
     const name = String(role?.name || "").trim();
     if (!role) return ["роль не названа"];
@@ -27,9 +38,22 @@
       (role.status || role.url || role.fn ? role : null);
     if (!row) return [`роли «${name}» нет в «Ролях»`];
     if ((row.status || "") !== "Активна") gaps.push(`Статус «${row.status || "пуст"}»`);
-    if (!String(row.url || "").trim()) gaps.push("Agent URL пуст");
-    else if (!/^https:\/\/[^\s/]+\/agent\/[\w-]+\/?$/i.test(String(row.url).trim()) &&
-      !/^\/agent\/[\w-]+\/?$/.test(String(row.url).trim())) gaps.push("Agent URL не похож на страницу агента");
+    // Экземпляр пары важнее строки: он и есть рабочий адрес (D-015).
+    const mine = (Array.isArray(instances) ? instances : [])
+      .filter((item) => norm(item && (item["Роль"] || item.role)) === norm(name));
+    const instanceUrl = mine.map((item) => String((item && (item["Agent URL"] || item.url)) || "").trim())
+      .find(Boolean) || "";
+    const declared = String(row.url || "").trim();
+    const admin = row.agentAdmin === true;
+    // У админской роли адрес в строке — адрес по умолчанию и остаётся.
+    // У неадминской пустая строка — норма: смотрим экземпляры.
+    const address = instanceUrl || declared;
+    if (!address) {
+      gaps.push(admin ? "Agent URL пуст" : "нет агента: в «Экземплярах» нет адреса пары (роль, слот)");
+    } else if (!/^https:\/\/[^\s/]+\/agent\/[\w-]+\/?$/i.test(address) &&
+      !/^\/agent\/[\w-]+\/?$/.test(address)) {
+      gaps.push("Agent URL не похож на страницу агента");
+    }
     if (!row.fn) gaps.push("Функция не задана");
     // «Кому» — только для рабочих ролей: карточку берут Executor и Auditor.
     if (["Executor", "Auditor"].includes(row.fn) && recipientOptions.length &&
@@ -46,7 +70,7 @@
    * список ролей, по каждой — годна она или что именно не так, и общий вердикт.
    * Пустая миссия — не некомплект: нарезать очередь вправе Координатор.
    */
-  function missionRoster(cards = [], { directory = [], recipientOptions = [] } = {}) {
+  function missionRoster(cards = [], { directory = [], recipientOptions = [], instances = [] } = {}) {
     const names = [];
     const seen = new Set();
     for (const card of cards || []) {
@@ -57,8 +81,14 @@
     }
     const roles = names.map((name) => {
       const row = (directory || []).find((r) => norm(r.name) === norm(name)) || null;
-      const gaps = rosterRoleGaps({ name, ...(row || {}) }, { directory, recipientOptions });
-      return { name, fn: row?.fn || "", status: row?.status || "", url: row?.url || "", gaps, ok: gaps.length === 0 };
+      const gaps = rosterRoleGaps({ name, ...(row || {}) }, { directory, recipientOptions, instances });
+      // `url` в ответе — рабочий адрес пары, если он есть: по нему вызывающий
+      // видит, куда поедет карточка, не повторяя поиск экземпляра.
+      const pairs = (Array.isArray(instances) ? instances : [])
+        .filter((item) => norm(item && (item["Роль"] || item.role)) === norm(name));
+      const url = pairs.map((item) => String(item["Agent URL"] || item.url || "").trim()).find(Boolean) ||
+        String(row?.url || "").trim();
+      return { name, fn: row?.fn || "", status: row?.status || "", url, gaps, ok: gaps.length === 0 };
     });
     const broken = roles.filter((role) => !role.ok);
     return {
@@ -85,10 +115,19 @@
         return `Роли «${role.name}» в базе «Роли» нет${where} — создайте агента в Arena, заполните «Agent URL» и поставьте «Статус» = «Активна».`;
       }
       if (role.status === "Активна" && role.url) {
-        return `Роль «${role.name}» активна и «Agent URL» заполнен${where} — проверьте «Функцию» и «Зону записи»: ${role.gaps.join(", ")}.`;
+        return `Роль «${role.name}» активна и адрес агента есть${where} — проверьте «Функцию» и «Зону записи»: ${role.gaps.join(", ")}.`;
+      }
+      // D-015: адрес пары не заполняют руками в «Ролях» — его ставит транспорт,
+      // когда контейнер создаёт агента. Совет «дозаполните Agent URL» после
+      // снятия адреса у неадминских ролей отправлял бы Мастера в пустое поле.
+      const addressGap = role.gaps.some((gap) => /Экземплярах|Agent URL/.test(gap));
+      if (addressGap && role.status === "Активна") {
+        return `Роль «${role.name}» активна${where}, но рабочего агента пока нет — ` +
+          "транспорт создаст его в контейнере и запишет адрес в «Экземпляры» сам; " +
+          "Мастеру заполнять нечего. Карточка выдастся, как только адрес появится.";
       }
       return `Роль «${role.name}» в «Ролях» есть${where}, но ${role.gaps.join(", ")} — агента создавать не нужно: ` +
-        "дозаполните существующую строку (Статус и Agent URL ставит Мастер).";
+        "дозаполните существующую строку (Статус ставит Мастер).";
     });
     return `${lines.join(" ")} Пока состав не укомплектован, ни одна карточка миссии не выдаётся: ` +
       "это нехватка роли, а не поломка транспорта (D-075).";
@@ -102,8 +141,8 @@
    * Гейт ничего не создаёт: он только не даёт выдать карточку и говорит, чего
    * именно ждём.
    */
-  function rosterGate(cards, { directory = [], recipientOptions = [], provision = null } = {}) {
-    const roster = missionRoster(cards, { directory, recipientOptions });
+  function rosterGate(cards, { directory = [], recipientOptions = [], instances = [], provision = null } = {}) {
+    const roster = missionRoster(cards, { directory, recipientOptions, instances });
     if (roster.ok) return { ok: true, roster, pause: null };
     const text = rosterReason(roster);
     const requested = provision && provision.requested;

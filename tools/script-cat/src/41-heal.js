@@ -347,13 +347,24 @@
     // отказа: «нет активной роли». Раньше код брал первую строку с заполненным
     // URL и молча считал её активной — роль со статусом «Ждёт» уезжала разбор,
     // которого Мастер ещё не разрешил (D-074 п. 3: строка и доступ — разные шаги).
-    const hit = list.find((r) => r.fn === "Maintainer" && r.url && r.status === "Активна") || null;
+    // D-015: адрес Maintainer'а — экземпляр пары (роль, слот), а не строка
+    // «Ролей». Его агент живёт в админском контейнере, и `url` строки после
+    // снятия адресов у неадминских ролей пуст законно.
+    const withUrl = [];
+    for (const row of list.filter((r) => r.fn === "Maintainer" && r.status === "Активна")) {
+      const url = row.url || (await roleInstanceUrl(row.name).catch(() => ""));
+      if (url) withUrl.push({ ...row, url });
+    }
+    const hit = withUrl[0] || null;
     if (!hit) {
       const seenRow = list.find((r) => r.fn === "Maintainer") || null;
+      const addressWhy = seenRow
+        ? await roleAddressWhy(seenRow.name).catch(() => "")
+        : "";
       const why = !seenRow
         ? "в базе «Роли» нет строки с функцией Maintainer"
-        : !seenRow.url
-          ? "у роли Maintainer пуст «Agent URL» — разбор передавать некуда"
+        : addressWhy
+          ? `адрес Maintainer'а не найден: ${addressWhy} — разбор передавать некуда`
           : `роль Maintainer есть, но «Статус» = «${seenRow.status || "пуст"}»: нужна активная строка`;
       return { role: null, why };
     }

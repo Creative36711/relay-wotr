@@ -189,7 +189,39 @@
     return clean;
   }
 
-  const answerPending = () => answerQueue()[0] || null;
+  /**
+   * Очередь приёмки: любая строка, которой ещё не занимаются.
+   *
+   * 1.24.0. Раньше здесь стояло `answerQueue()[0]`, и это делало очередь
+   * строго последовательной: голова одна на весь транспорт, и пока адресат
+   * головы не готов (не «Активна», пуст адрес, контейнер занят), за ней не
+   * проходила ни одна другая строка. Владелец сформулировал прямо: контейнеры
+   * не пересекаются, обратная связь от любого агента должна уходить Warden
+   * или TM сразу, а не «выждать ходы».
+   *
+   * Теперь голова — это первая СВОБОДНАЯ строка: та, по которой не стоит
+   * отправка и по которой не идёт ход. Строка, которую нельзя передать
+   * сейчас, не задерживает остальные; ждёт только она сама.
+   *
+   * `gate`-вопросы (они держат ход) остаются первыми в очереди — не по
+   * порядку вставки, а по праву: ход без ответа на них дальше не идёт.
+   */
+  const answerInFlight = (item) => Boolean(item && item.sendingAt &&
+    Date.now() - Number(item.sendingAt) < (Number(C.answerSendHoldMs) || 120_000));
+
+  function answerPending(exclude = null) {
+    const skip = exclude instanceof Set ? exclude : new Set(exclude ? [norm(exclude)] : []);
+    const list = answerQueue().filter((item) => item && item.id && !skip.has(norm(item.id)));
+    if (!list.length) return null;
+    const live = GM_getValue(K.expect, null);
+    const liveId = String(live?.ref || "");
+    const free = (item) => !answerInFlight(item) && norm(item.id) !== norm(liveId);
+    const gated = list.filter((item) => item.gate === true);
+    return gated.find(free) || list.find(free) || null;
+  }
+
+  /** Сколько строк очереди приёмки ещё не передано — для панели и журнала. */
+  const answerQueueSize = () => answerQueue().filter((item) => item && item.id).length;
 
   /**
    * Сколько очередь приёмки ждёт свободного слота.
@@ -303,16 +335,36 @@
     const questionMission = await missionForQuestion(item, mission);
     const asked = String(item.need || "").trim();
     const directory = await roleRows().catch(() => []);
+    // 1.24.0: адрес экземпляра важнее адреса строки.
+    //
+    // До 1.24.0 у роли был один `Agent URL`, и он же был адресом доставки.
+    // Теперь у роли столько агентов, сколько рабочих контейнеров, и рабочий
+    // адрес пары (роль, слот) — лист «Экземпляры». Адрес в строке роли
+    // остался только у админских ролей как «адрес по умолчанию». Поэтому
+    // сначала спрашиваем экземпляр, потом строку: иначе после снятия адреса
+    // у неадминских ролей очередь считала бы живого агента «неготовым».
+    const instanceUrlOf = (name) => {
+      try {
+        if (typeof roleInstanceUrl === "function") return roleInstanceUrl(name);
+      } catch { /* лист «Экземпляры» недоступен — работает адрес строки */ }
+      return "";
+    };
     const named = asked ? directory.find((r) => norm(r.name) === norm(asked)) : null;
     const addresseeReady = Boolean(named && named.status === "Активна" && named.url);
     if (asked && !addresseeReady) {
       const why = named ? "не активна или пуст «Agent URL»" : "нет в «Ролях»";
+      // 1.24.0: заголовок «не готова» говорит по делу — адрес роли больше не
+      // хранится в «Ролях» (там остались только админские адреса по
+      // умолчанию), а рабочий адрес пары (роль, слот) живёт в «Экземплярах».
+      const whyText = named
+        ? "не «Активна» либо адреса нет ни в строке роли, ни в «Экземплярах»"
+        : "нет в «Ролях»";
       if (item.gate === true) {
         logThrottled(
           `answer-need:${item.id}`,
           `Обратная связь «${oneLine(item.text, 90)}» адресована роли «${asked}», а она не готова ` +
-            `(${why}). Вопрос держит ход и остаётся в очереди: ` +
-            "как только роль дозаполнят, ход уйдёт без повторной записи.",
+            `(${whyText}). Вопрос держит ход и остаётся в очереди: ` +
+            "остальные строки он не задерживает, а ход уйдёт без повторной записи, как только роль дозаполнят.",
           true,
           { ntfy: "quiet", title: "Relay: адресат обратной связи не готов" },
         );
@@ -325,7 +377,7 @@
       // не она — перенаправит своим ответом, и это видно в журнале.
       logThrottled(
         `answer-need-fallback:${item.id}`,
-        `Обратная связь «${oneLine(item.text, 90)}» адресована роли «${asked}», а она не готова (${why}). ` +
+        `Обратная связь «${oneLine(item.text, 90)}» адресована роли «${asked}», а она не готова (${whyText}). ` +
           "Ход этот вопрос не держит, поэтому отвечает приёмка — строка не ждёт в голове очереди.",
         true,
         { ntfy: "quiet", title: "Relay: адресат обратной связи не готов" },
@@ -352,6 +404,21 @@
       return false;
     }
     const turnId = uid();
+    // 1.24.0: отметка «по этой строке идёт отправка».
+    //
+    // Раньше последовательность очереди держалась порядком в массиве. Теперь,
+    // когда первая свободная строка уходит не по порядку, нужен явный признак
+    // занятости: иначе каждый следующий тик заново выбирал бы ту же строку и
+    // отправлял второй такой же вопрос. Отметка снимается при записи ответа и
+    // сама гаснет по сроку (`answerSendHoldMs`) — после перезагрузки страницы
+    // она не превращает строку в вечно занятую.
+    const markSending = (on) => {
+      const list = answerQueue().map((row) => norm(row.id) === norm(item.id)
+        ? { ...row, sendingAt: on ? Date.now() : 0 }
+        : row);
+      GM_setValue(K.answers, list);
+    };
+    markSending(true);
     const queued = await sendToRole(role, answerPrompt(questionMission, role, item, turnId), "answer", item.id, {
       questionId: item.id,
       missionId: questionMission?.id || item.missionId || "",
@@ -367,6 +434,7 @@
       deferred: item.deferred || null,
     });
     if (!queued) {
+      markSending(false);
       logThrottled(
         `answer-send:${item.id}:${turnId}`,
         `Вопрос «${oneLine(item.text, 90)}» не передан «${role.name}»: транспорт не поставил ход в очередь. Вопрос остаётся «Ждёт» и не теряется.`,
@@ -862,6 +930,24 @@
         log(`Continue на странице приёмки не нажата: ${e.message}. Адресный возврат сохранён.`, true);
       });
     }
+    // 1.24.0: ответ закрыт — сразу передаём следующую свободную строку.
+    //
+    // Владелец: «последовательная механика устарела, обратная связь должна
+    // уходить Warden/TM сразу». Здесь кончается один ответ, и больше ничего
+    // не держит очередь: следующая строка уходит тем же шагом, а не «на
+    // следующем ходе». Адресный возврат автору от этого не страдает — он
+    // живёт отдельной записью и отправляется там, где его видит его вкладка.
+    const nextFree = answerPending(expect.ref);
+    if (nextFree) {
+      const missionForNext = await missionForQuestion(nextFree, null).catch(() => null);
+      const handed = await startAnswer(missionForNext, nextFree).catch((e) => {
+        logThrottled(`answer-next:${nextFree.id}`, `Следующая строка очереди не передана: ${e.message}. Она осталась «Ждёт».`, true);
+        return false;
+      });
+      if (handed) {
+        log(`Следующий вопрос «${oneLine(nextFree.text, 60)}» передан сразу, без ожидания хода.`, false, { ntfy: "quiet" });
+      }
+    }
     if (returnEvent) {
       const result = await startAnswerReturn(returnEvent);
       if (result === "queued" || result === "recovered" || result === "held") return true;
@@ -914,14 +1000,20 @@
       return "held";
     }
     const row = hits[0];
-    if (row.status !== "Активна" || !row.url) {
+    // D-015: адрес автора — экземпляр пары (роль, слот), а не строка «Ролей».
+    // Автор вопроса работает в своём контейнере, и адрес его агента живёт в
+    // «Экземплярах»; пустой «Agent URL» строки больше не признак неготовности.
+    const authorUrl = String(row.url || "").trim() ||
+      (await roleInstanceUrl(row.name).catch(() => ""));
+    if (row.status !== "Активна" || !authorUrl) {
+      const addressWhy = authorUrl ? "" : await roleAddressWhy(row.name).catch(() => "");
       pause(`Ответ на «${event.questionId}» сохранён, но автор «${row.name}» не готов к прямой доставке ` +
-        `(${row.status || "без статуса"}${row.url ? "" : ", Agent URL пуст"}). Очередь сохранена: включите роль и продолжите.`, {
+        `(${row.status || "без статуса"}${addressWhy ? `, ${addressWhy}` : ""}). Очередь сохранена: включите роль и продолжите.`, {
         kind: "answer-return-role", ref: event.questionId, turnId: event.turnId,
       });
       return "held";
     }
-    const role = { ...row, id: row.id, name: row.name, url: row.url, fn: row.fn || "" };
+    const role = { ...row, id: row.id, name: row.name, url: authorUrl, fn: row.fn || "" };
     const text = answerReturnText(event, "ответчика");
     const expected = {
       roleId: role.id, roleName: role.name, roleUrl: role.url, roleFn: role.fn,
@@ -968,6 +1060,14 @@
       if (await startAnswer(missionForNext, next)) return true;
       if (answerQueue().some((item) => norm(item.id) === norm(next.id))) return true;
     }
+    // 1.24.0: «свободной строки нет» больше не значит «очередь пуста».
+    //
+    // Строка, по которой только что ушла отправка, помечена `sendingAt` и по
+    // правилам занятости свободной не считается. Без этой проверки транспорт
+    // объявлял бы очередь пустой ровно в тот момент, когда она работает, и
+    // возвращал план Координатору поверх живого ответа — тот самый сброс хода,
+    // ради которого очередь и перестала быть последовательной.
+    if (answerQueueSize() > 0) return true;
     const mission = await activeMission().catch(() => null);
     if (!mission) {
       log(`Ответ на вопрос «${event.questionId || "?"}» сохранён${directDelivered ? " и возвращён автору" : ""}; активной миссии нет, Coordinator не вызываю.`);
@@ -1220,11 +1320,28 @@
     // На границе выдачи кеш недостаточен: функция или Agent URL могли только
     // что измениться. Ошибка чтения не разрешает выдачу по устаревшим данным.
     const directory = await roleRows({ fresh: true, requireFresh: true });
+    // Страж «этот адрес принадлежит приёмке» остаётся, но срабатывает только
+    // когда id известен: у неадминских ролей после D-015 адреса строки нет, и
+    // id пуст законно. Пустой id — не улика, а отсутствие данных; подмену
+    // агента в этом случае ловит сверка ниже.
     if (role.id && directory.some((r) => r.fn === "Reviewer" && r.id && norm(r.id) === norm(role.id)))
-      return "этот Agent URL принадлежит Reviewer; рабочую карточку переназначь другому агенту";
-    const confirmed = directory.filter((r) => norm(r.name) === norm(role.name) && r.id && role.id &&
-      norm(r.id) === norm(role.id) && r.url && r.status === "Активна");
-    if (confirmed.length !== 1 || confirmed[0].fn !== role.fn || !["Executor", "Auditor"].includes(confirmed[0].fn))
+      return "этот агент принадлежит Reviewer; рабочую карточку переназначь другому агенту";
+    // D-015: сверка идёт по имени и функции, а не по непустому `Agent URL`
+    // строки: у неадминских ролей его больше нет, и прежний фильтр отказывал бы
+    // в выдаче каждому исполнителю после снятия адресов. Адрес проверяется
+    // отдельно — пара (роль, слот) должна существовать в «Экземплярах».
+    const confirmed = directory.filter((r) => norm(r.name) === norm(role.name) && r.status === "Активна");
+    const confirmedUrl = confirmed.length === 1
+      ? String(confirmed[0].url || "").trim() || (await roleInstanceUrl(confirmed[0].name).catch(() => ""))
+      : "";
+    const seenId = norm(role.id);
+    const nowId = confirmed.length === 1 ? norm(confirmed[0].id) : "";
+    const seenUrl = norm(role.url);
+    if ((seenId && nowId && seenId !== nowId) || (seenUrl && confirmedUrl && norm(confirmedUrl) !== seenUrl)) {
+      return "агент роли сменился перед выдачей; перечитай «Экземпляры» и выбери роль заново";
+    }
+    if (confirmed.length !== 1 || !confirmedUrl || confirmed[0].fn !== role.fn ||
+      !["Executor", "Auditor"].includes(confirmed[0].fn))
       return "роль или её функция изменились перед выдачей; перечитай базу «Роли» и выбери активного исполнителя или аудитора";
 
     // Цель выдачи — репозиторий сессии роли (карта route репозиториев профиля)

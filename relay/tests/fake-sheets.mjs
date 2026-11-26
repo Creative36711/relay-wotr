@@ -17,7 +17,11 @@ export function createFakeStore(initial = {}) {
     writes: 0,
     appends: 0,
     async read(key) {
-      const rows = sheets[key] || [];
+      // Как настоящий Sheets: чтение несуществующего листа — ошибка, а не
+      // пустота. Иначе тест «лист создаётся сам» проходил бы на книге, где
+      // листа нет, и не проверял бы ничего.
+      if (!sheets[key]) throw new Error(`не удалось прочитать диапазон ${key}: листа нет`);
+      const rows = sheets[key];
       return { header: rows[0] || [], rows: rows.slice(1) };
     },
     async write() {
@@ -45,6 +49,12 @@ export function createFakeStore(initial = {}) {
     },
     async meta() {
       return { sheets: Object.keys(sheets).map((key) => ({ properties: { title: SHEETS[key].name } })) };
+    },
+    async ensureSheet(key) {
+      if (!SHEETS[key]) throw new Error(`листа ${key} нет в схеме`);
+      if (sheets[key]) return { created: false, name: SHEETS[key].name };
+      sheets[key] = [SHEETS[key].columns.slice()];
+      return { created: true, name: SHEETS[key].name };
     },
     /** Строки листа как объекты — для утверждений в тестах. */
     objects(key) {

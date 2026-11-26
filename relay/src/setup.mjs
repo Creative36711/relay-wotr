@@ -10,6 +10,7 @@
 // ключи, а расширенные остаются со значениями по умолчанию.
 
 import { SETTINGS, basicKeys, auditSettings } from "./settings.mjs";
+import { SHEETS } from "./schema.mjs";
 
 const norm = (value) => String(value ?? "").trim().toLowerCase();
 
@@ -118,8 +119,19 @@ export function planSetup({ projectName = "", settings = {}, databases = [], gat
   };
 }
 
-/** Проверка готовности перед запуском: то, что человек увидит вместо падения. */
-export function readiness({ settings = {}, slots = [] } = {}) {
+/**
+ * Проверка готовности перед запуском: то, что человек увидит вместо падения.
+ *
+ * `sheets` — имена листов, которые реально есть в книге (`store.meta()`).
+ * Проверка появилась в 1.24.0 после того, как выяснилось: книга владельца жила
+ * без листа «Экземпляры» с 1.20.0, а готовность этого не замечала. Цена
+ * молчания — адрес созданного агента некуда записать, и каждая карточка роли
+ * заново требует создания. Теперь недостающий лист назван, а не потерян.
+ *
+ * Отсутствие `sheets` (старый вызов, демо) проверку не включает: молчаливое
+ * «всё хорошо» здесь честнее ложной тревоги.
+ */
+export function readiness({ settings = {}, slots = [], sheets = null } = {}) {
   const problems = [];
   if (!settings["notion.rolesDb"]) problems.push("не найдена база «Роли» — запустите мастер настройки");
   if (!settings["notion.slotsDb"]) problems.push("не найдена база «Слоты» — запустите мастер настройки");
@@ -127,6 +139,13 @@ export function readiness({ settings = {}, slots = [] } = {}) {
   if (!active.length) problems.push("нет ни одного активного слота: цикл некому работать");
   if (!active.some((slot) => slot.admin)) problems.push("нет административного слота: Координатору негде жить");
   if (!active.some((slot) => !slot.admin)) problems.push("нет рабочего слота: исполнительские роли некуда выдавать");
+  if (Array.isArray(sheets) && sheets.length) {
+    const have = new Set(sheets.map((name) => norm(name)));
+    const missing = Object.values(SHEETS).map((sheet) => sheet.name).filter((name) => !have.has(norm(name)));
+    if (missing.length) {
+      problems.push(`в книге нет листов: ${missing.join(", ")} — служба создаст их при первом чтении, но проверьте доступ`);
+    }
+  }
   const audit = auditSettings();
   problems.push(...audit);
   return { ok: problems.length === 0, problems };

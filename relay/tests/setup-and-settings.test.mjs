@@ -135,3 +135,31 @@ test("готовность замечает перекос: только раб�
 test("мастер не пишет режим цикла — это решение человека", () => {
   assert.ok(!discoverableKeys().includes("cycle.mode"));
 });
+
+/**
+ * Готовность видит недостающий лист.
+ *
+ * Аудит 23.11: в книге владельца не было листа «Экземпляры», а готовность
+ * отвечала «ok». Цена — адрес созданного агента некуда записать, и каждая
+ * карточка роли заново требует создания. Лист теперь создаёт служба, но
+ * молчать о доступе всё равно нельзя: «лист создан сам» и «лист не создан,
+ * потому что нет прав» — разные новости для владельца.
+ */
+test("готовность называет недостающие листы книги", async () => {
+  const settings = parseSettings(settingsRows());
+  const slots = [
+    { slotId: "admin", admin: true, enabled: true },
+    { slotId: "worker-1", admin: false, enabled: true },
+  ];
+  const full = await import("../src/schema.mjs").then(({ SHEETS }) =>
+    Object.values(SHEETS).map((sheet) => sheet.name));
+  const intact = readiness({ settings, slots, sheets: full });
+  assert.equal(intact.ok, true, intact.problems.join("; "));
+  assert.ok(!intact.problems.some((line) => /нет листов/.test(line)), "полная книга молчит");
+
+  const missing = readiness({ settings, slots, sheets: full.filter((name) => name !== "Экземпляры") });
+  assert.equal(missing.ok, false);
+  assert.ok(missing.problems.some((line) => /нет листов: Экземпляры/.test(line)));
+  assert.ok(missing.problems.some((line) => /создаст их при первом чтении/.test(line)),
+    "сказано, что лист появится сам, а не «создайте руками»");
+});

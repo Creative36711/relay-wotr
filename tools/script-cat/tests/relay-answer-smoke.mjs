@@ -90,9 +90,13 @@ assert.match(src, /await answerStep\(me, expect, fromToggle\);/, 'адресны
 // приёмку не попадал вовсе — Координатор спрашивал, а Warden не получал хода.
 assert.match(src, /if \(\(fromToggle \|\| autoOn\(\)\) && !GM_getValue\(K\.expect, null\)\)/,
   'очередь приёмки запускается только без другого живого ожидания');
-assert.match(src, /const waiting = answerPending\(\);/, 'очередь ответов читается в начале тика');
+// 1.24.0: в тике читается не «голова», а ПЕРВАЯ СВОБОДНАЯ строка очереди.
+// Прежняя форма (`const waiting = answerPending();`) означала одну строку на всю
+// очередь: пока её адресат не готов, остальная обратная связь стояла.
+assert.match(src, /let waiting = answerPending\(\);/, 'очередь ответов читается в начале тика');
 {
-  const at = src.indexOf('const waiting = answerPending();');
+  // Ветка чужого ожидания по-прежнему ниже: сначала очередь, потом разбор хода.
+  const at = src.indexOf('let waiting = answerPending();');
   const ownerBranch = src.indexOf('if (expect && norm(expect.roleId) !== norm(me.id)) {');
   assert.ok(at > 0 && ownerBranch > 0 && at < ownerBranch, 'и стоит раньше ветки чужого ожидания');
 }

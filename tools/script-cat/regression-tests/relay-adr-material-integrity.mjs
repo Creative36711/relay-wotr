@@ -12,13 +12,15 @@ const base={id:'q',url:'https://github.com/example/repo/blob/main/docs/decisions
 function harness(fullText,adrBlocks,{offline=false,status='Ждёт'}={}){
   const sends=[],logs=[];
   const fn=new Function('notion','sel','Q','questionFromRowComplete','logThrottled','reviewerRole','dropAnswer','uid','log','oneLine','sendToRole','answerPrompt','missionForQuestion','roleRows','norm',
+    'GM_getValue','GM_setValue','K','answerQueue','C','roleInstanceUrl','roleAddressWhy',
     `${block}\nreturn {startAnswer,verifiedAdrMaterial};`)(
     async()=>{if(offline)throw Error('offline');return {properties:{'Статус':{select:{name:status}}}}},
     p=>p?.select?.name||'',{wait:'Ждёт'},async()=>({fullText,adrBlocks,url:base.url}),(...x)=>logs.push(x),
     async()=>({id:'w',name:'Warden'}),()=>{},()=> 'turn',()=>{},x=>x,
     async(_r,prompt,kind,ref)=>sends.push({prompt,kind,ref}),(_m,_r,item)=>item.fullText,
     async(_item,candidate)=>candidate||null,async()=>[],
-    x=>String(x||'').replace(/-/g,'').toLowerCase());
+    x=>String(x||'').replace(/-/g,'').toLowerCase(),
+    ()=>null,()=>{}, { answers:'answers' }, ()=>[], {}, async()=>'', async()=>'нет адреса');
   return {...fn,sends,logs};
 }
 {
