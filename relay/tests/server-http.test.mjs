@@ -116,6 +116,26 @@ test("пульт открывается как страница и не зави
   }
 });
 
+test("пульт: поле токена Notion и честная подпись кнопки режима", async () => {
+  // Владелец видит пульт, а не исходники: обе вещи проверяются по странице.
+  const ctx = await startServer();
+  try {
+    const html = await (await fetch(`${ctx.base}/`)).text();
+    assert.match(html, /id="notion-token"/, "есть куда вставить токен Notion");
+    assert.match(html, /Проверить токен/, "и чем его проверить");
+
+    const js = await (await fetch(`${ctx.base}/app.js`)).text();
+    // Токен уходит на свой маршрут и без перезапуска службы.
+    assert.match(js, /\/api\/notion-token/);
+    // Кнопка называет действие, а не состояние: «Автоцикл» при включённом
+    // автоцикле читается как «включить ещё раз».
+    assert.match(js, /Остановить автоцикл/);
+    assert.match(js, /Включить автоцикл/);
+  } finally {
+    await ctx.close();
+  }
+});
+
 test("неизвестный путь отвечает словами, а не пустотой", async () => {
   const ctx = await startServer();
   try {

@@ -109,13 +109,17 @@ server.listen(PORT, HOST, async () => {
     return;
   }
   const state = await serverReadiness({ service });
-  if (!state.ok) {
+  if (state.ok) {
+    console.log("Готовность: цикл можно запускать");
+  } else {
     console.log("Готовность: не всё на месте");
     for (const problem of state.problems) console.log(`  • ${problem}`);
-    console.log("Откройте пульт и запустите мастер настройки: он найдёт базы и запишет ключи.");
-  } else {
-    console.log("Готовность: цикл можно запускать");
   }
+  // Замечания — не отказ: справочник ролей и папка логов улучшают работу, но
+  // цикл без них идёт. Печатаются отдельно, чтобы «можно запускать» не
+  // соседствовало с непонятным списком.
+  for (const note of state.notes || []) console.log(`  ! ${note}`);
+  if (!state.ok) console.log("Откройте пульт: мастер настройки найдёт базы и запишет ключи.");
 });
 
 const stop = () => server.close(() => process.exit(0));

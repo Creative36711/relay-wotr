@@ -36,11 +36,17 @@ test("мастер не трогает расширенные настройки
   assert.ok(plan.advancedLeftToDefaults > 0);
 });
 
-test("две базы с одинаковым названием — ошибка, а не выбор наугад", () => {
+test("две базы с одинаковым названием — не выбираем наугад и говорим об этом", () => {
+  // Справочник ролей необязателен, поэтому цикл из-за неоднозначности не
+  // останавливается. Но и записывать ID «какой-то из двух» нельзя: тогда
+  // транспорт неделю читал бы чужую копию базы.
   const duplicate = [...databases, { title: "Роли", dataSourceId: "ds-roles-2" }];
   const plan = planSetup({ projectName: "WOTR", databases: duplicate });
-  assert.equal(plan.ok, false);
-  assert.match(plan.why, /несколько/);
+  assert.equal(plan.discovered["notion.rolesDb"], undefined, "ID не записан");
+  assert.ok(plan.notes.some((line) => /несколько/.test(line)), "причина названа");
+  const step = plan.steps.find((item) => item.key === "notion.rolesDb");
+  assert.equal(step.ok, false);
+  assert.equal(step.required, false);
 });
 
 test("похожее название подсказывается вместо пустого отказа", () => {
@@ -49,17 +55,17 @@ test("похожее название подсказывается вместо 
   assert.match(pick.why, /похожие/);
 });
 
-test("без базы «Слоты» в Notion мастер не блокирует: слоты читаются из книги", () => {
-  const plan = planSetup({ projectName: "WOTR", databases: databases.filter((item) => item.title !== "Слоты") });
-  // Ключ остался в шаге — чтобы старые книги не теряли значение, — но
-  // обязательным он больше не является: `notion.slotsDb` не читает ни одна
-  // строка службы, и требовать базу, которой транспорт не пользуется, значит
-  // отправлять человека делать работу без результата.
+test("базы, которые транспорт не читает, не показываются как нехватка", () => {
+  // `notion.slotsDb` и `notion.requestsDb` не читает ни одна строка службы:
+  // слоты — лист книги, карточки приходят строкой очереди. Пока они висели в
+  // плане с ✕, пульт выглядел сломанным при полностью рабочем цикле.
+  const plan = planSetup({ projectName: "WOTR", databases: databases.filter((item) => !["Слоты", "Запросы"].includes(item.title)) });
   assert.equal(plan.ok, true);
   assert.deepEqual(plan.requiredMissing, []);
-  const step = plan.steps.find((item) => item.key === "notion.slotsDb");
-  assert.equal(step.required, false);
-  assert.match(step.why, /лист книги/);
+  const keys = plan.steps.map((step) => step.key);
+  assert.ok(!keys.includes("notion.slotsDb"), "нет шага про ненужную базу слотов");
+  assert.ok(!keys.includes("notion.requestsDb"), "нет шага про ненужную базу запросов");
+  assert.ok(!plan.notes.some((line) => /Запросы|Слоты/.test(line)), "и в замечаниях их нет");
 });
 
 test("демо-режим: мастер не советует чинить доступ, которого нет", () => {
@@ -73,11 +79,19 @@ test("демо-режим: мастер не советует чинить до�
 });
 
 test("пустой поиск назван отсутствием токена, а не доступом к странице", () => {
-  // Транспорт без NOTION_TOKEN ищет не «и не находит», а не ищет вообще.
-  // Это разные поломки и разные действия человека.
-  const plan = planSetup({ projectName: "WOTR", databases: [] });
-  assert.match(plan.why, /NOTION_TOKEN/);
+  // Транспорт без токена ищет не «и не находит», а не ищет вообще. Это разные
+  // поломки и разные действия человека. Токен теперь вводится в пульте, и
+  // причина называет именно это, а не переменную, которую надо передать при
+  // запуске: перезапуск ради токена — лишний шаг.
+  const plan = planSetup({ projectName: "WOTR", databases: [], searchable: false });
+  assert.match(plan.why, /Notion не подключён/);
+  assert.match(plan.why, /токен/i);
   assert.doesNotMatch(plan.why, /дайте интеграции доступ/);
+  assert.doesNotMatch(plan.why, /NOTION_TOKEN/);
+  // Токен есть, а базы не видно — это про доступ интеграции, и совет другой.
+  const blind = planSetup({ projectName: "WOTR", databases: [], searchable: true });
+  assert.match(blind.why, /дайте интеграции доступ/);
+  assert.doesNotMatch(blind.why, /не знает токен/);
 });
 
 test("снапшот говорит, что служба в демо-режиме", async () => {
@@ -98,9 +112,12 @@ test("применение плана пишет найденные ключи �
   assert.equal(roles["Значение"], "ds-roles");
 });
 
-test("план без готовности не применяется", async () => {
-  const store = createFakeStore({ settings: settingsRows() });
-  const plan = planSetup({ projectName: "WOTR", databases: [] });
+test("план без обязательного шага не применяется", async () => {
+  const store = createFakeStore({ settings: [] });
+  // Название проекта — единственное обязательное: без него карточки и отчёты
+  // подписываются безымянно. Справочник ролей обязательным больше не является.
+  const plan = planSetup({ projectName: "", settings: {}, databases: [] });
+  assert.equal(plan.ok, false);
   const result = await applySetup({ store, plan });
   assert.equal(result.ok, false);
 });
@@ -144,8 +161,11 @@ test("неизвестный режим цикла откатывается к �
 test("готовность объясняет каждую нехватку по отдельности", () => {
   const bare = readiness({ settings: {}, slots: [] });
   assert.equal(bare.ok, false);
-  assert.ok(bare.problems.some((line) => /«Роли»/.test(line)));
+  // Нехватка слота — отказ: работать некому. Отсутствие справочника ролей —
+  // замечание: роль и функция есть в строке очереди.
   assert.ok(bare.problems.some((line) => /активного слота/.test(line)));
+  assert.ok(!bare.problems.some((line) => /«Роли»/.test(line)), "справочник не блокирует");
+  assert.ok(bare.notes.some((line) => /справочник ролей/.test(line)), "но и не замалчивается");
 
   const ready = readiness({
     settings: parseSettings(settingsRows()),
@@ -161,6 +181,105 @@ test("готовность замечает перекос: только раб�
   });
   assert.equal(state.ok, false);
   assert.ok(state.problems.some((line) => /административного слота/.test(line)));
+});
+
+test("токен Notion из пульта: проверяется сразу и включает справочник ролей", async () => {
+  // Владелец получает токен в Notion, а не в командной строке. Значит токен
+  // принимается в пульте, проверяется тем же поиском и начинает действовать
+  // без перезапуска службы.
+  const calls = [];
+  const service = createService({
+    store: createFakeStore({ slots: slotRows(), settings: settingsRows() }),
+    notionFetch: async (url, init) => {
+      calls.push({ url, auth: init.headers.Authorization });
+      return {
+        ok: true, status: 200,
+        text: async () => JSON.stringify({ results: [
+          { id: "db-1", object: "database", title: [{ plain_text: "Роли" }], data_sources: [{ id: "ds-roles" }] },
+        ] }),
+      };
+    },
+  });
+
+  const bad = await service.notionTokenSet({ token: "мусор" });
+  assert.equal(bad.ok, false, "не тот текст отвергается до сети");
+  assert.match(bad.why, /ntn_|secret_/);
+  assert.equal(calls.length, 0, "и в сеть не ходит");
+
+  const ok = await service.notionTokenSet({ token: "ntn_1234567890abcdef" });
+  assert.equal(ok.ok, true, ok.why);
+  assert.match(ok.why, /Видно баз: 1/);
+  assert.equal(calls[0].auth, "Bearer ntn_1234567890abcdef");
+  assert.equal(service.memory.notionToken, "ntn_1234567890abcdef");
+
+  // Токен действует: «Найти и применить» видит базы без окружения.
+  const plan = await service.setup({});
+  assert.equal(plan.ok, true, plan.why);
+  assert.equal(plan.hasNotionToken, true, "мастер работает тем токеном, что ввели в пульте");
+  // Роли записаны: тот же ID, что видела проверка токена.
+  const settings = await service.loadAll();
+  assert.equal(settings.settings["notion.rolesDb"], "ds-roles");
+});
+
+test("токен, который Notion не принял, не запоминается", async () => {
+  const service = createService({
+    store: createFakeStore({ slots: slotRows(), settings: settingsRows() }),
+    notionFetch: async () => ({ ok: false, status: 401, text: async () => JSON.stringify({ message: "API token is invalid." }) }),
+  });
+  const result = await service.notionTokenSet({ token: "ntn_плохой" });
+  assert.equal(result.ok, false);
+  assert.match(result.why, /не принял/);
+  assert.equal(service.memory.notionToken, "", "недействующий токен не сохраняется");
+});
+
+test("сеть недоступна — так и сказано, а не «токен плохой»", async () => {
+  // `fetch failed` не значит «неверный токен». Одинаковый текст на два разных
+  // случая заставляет перевыпускать рабочий токен вместо проверки VPN.
+  const service = createService({
+    store: createFakeStore({ slots: slotRows(), settings: settingsRows() }),
+    notionFetch: async () => { throw new Error("fetch failed"); },
+  });
+  const result = await service.notionTokenSet({ token: "ntn_1234567890abcdef" });
+  assert.equal(result.ok, false);
+  assert.match(result.why, /не дозвонились/);
+  assert.doesNotMatch(result.why, /неверн|плохой|invalid/i);
+});
+
+test("справочник ролей читается: настройки не теряются в кеше", async () => {
+  // Прежняя ошибка: `loadRoles` брал настройки из памяти, а память никто не
+  // заполнял. В итоге ID ролей был в книге, токен был в окружении, а
+  // справочник не читался никогда — и «почему роль без адреса» искали наугад.
+  const queries = [];
+  const service = createService({
+    store: createFakeStore({ slots: slotRows(), settings: settingsRows() }),
+    notionToken: "ntn_из_окружения",
+    notionFetch: async (url) => {
+      queries.push(url);
+      if (url.includes("/search")) {
+        return { ok: true, status: 200, text: async () => JSON.stringify({ results: [] }) };
+      }
+      return {
+        ok: true, status: 200,
+        text: async () => JSON.stringify({
+          results: [{ id: "p1", properties: {
+            "Роль": { title: [{ plain_text: "Executor" }] },
+            "Функция": { select: { name: "Executor" } },
+            "Статус": { select: { name: "активна" } },
+          } }],
+          has_more: false,
+        }),
+      };
+    },
+  });
+  const data = await service.loadAll();
+  assert.equal(data.settings["notion.rolesDb"], "ds-roles", "настройки прочитаны");
+
+  // Справочник читается там, где нужен, — при выдаче работы: без него нельзя
+  // понять, административная роль или нет. `snapshot` его не тянет и не должен.
+  await service.pull({ slotId: "worker-1", tab: "t1" });
+  assert.ok(queries.some((url) => url.includes("databases/ds-roles/query")), "справочник ролей запрошен");
+  const shot = await service.snapshot();
+  assert.equal(shot.notion.ready, true);
 });
 
 test("мастер не пишет режим цикла — это решение человека", () => {
@@ -193,4 +312,10 @@ test("готовность называет недостающие листы к
   assert.ok(missing.problems.some((line) => /нет листов: Экземпляры/.test(line)));
   assert.ok(missing.problems.some((line) => /создаст их при первом чтении/.test(line)),
     "сказано, что лист появится сам, а не «создайте руками»");
+
+  // Лист «Состояние» схема описывает, но служба его не читает и не пишет:
+  // единственная строка состояния живёт в «Настройках». Требовать его —
+  // отправлять владельца создавать лист без пользы.
+  const withoutState = readiness({ settings, slots, sheets: full.filter((name) => name !== "Состояние") });
+  assert.equal(withoutState.ok, true, withoutState.problems.join("; "));
 });

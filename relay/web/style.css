@@ -154,6 +154,10 @@ main {
 .step .mark { width: 14px; }
 .step .key { font-family: var(--mono); font-size: 12px; color: var(--muted); }
 .step.bad .mark { color: var(--bad); }
+/* Замечание: цикл работает, но кое-чего не хватает (справочник ролей, папка
+   логов). Отдельный цвет, чтобы это не читалось как «сломано». */
+.step.note .mark { color: var(--warn); }
+.step.note { color: var(--muted); }
 .step.ok .mark { color: var(--ok); }
 
 .counter { font-size: 12px; color: var(--muted); font-weight: 400; }

@@ -112,7 +112,10 @@ function renderHeader(shot) {
     `${shot.mode === "auto" ? "автоцикл" : "ручной шаг"} · предел ${shot.maxParallel}` +
     (shot.paused ? " · на паузе" : "") +
     (shot.demo ? " · ДЕМО (книга не подключена)" : "");
-  $("btn-mode").textContent = shot.mode === "auto" ? "Ручной шаг" : "Автоцикл";
+  // На кнопке — то, что произойдёт по нажатию, а не текущий режим. Текущий
+  // уже назван в строке выше; дублировать его на кнопке значит заставлять
+  // человека проверять: «Автоцикл» — это я включил или ещё нет?
+  $("btn-mode").textContent = shot.mode === "auto" ? "Остановить автоцикл" : "Включить автоцикл";
   $("btn-pause").textContent = shot.paused ? "Продолжить" : "Пауза";
   if (shot.paused) banner(`Пауза: ${shot.pauseReason || "по решению человека"}`);
   else if (shot.lastStep) banner("");
@@ -165,10 +168,14 @@ function renderSetupHint(shot) {
   const hint = $("setup-hint");
   if (!hint) return;
   hint.textContent = shot.demo
-    ? "Служба запущена в демо-режиме: книга не подключена, поэтому базы Notion искать негде. " +
-      "Остановите транспорт, положите рядом ключ sa.json и запустите Запустить транспорт.bat заново."
+    ? "Служба в демо-режиме: книга не подключена, искать в Notion нечего. " +
+      "Нажмите «Код для входа в книгу» — там два поля, и демо снимется само."
     : "Ключи и ID подставляются сами: мастер находит базы в Notion и папку логов в Drive. " +
       "Расширенные настройки трогать не нужно — без них цикл работает.";
+  // Поле токена нужно только пока Notion не подключён: когда он отвечает,
+  // поле превращается в приглашение сломать рабочее.
+  const row = $("notion-row");
+  if (row) row.style.display = shot.demo || shot.notion?.ready ? "none" : "";
 }
 
 /**
@@ -194,14 +201,46 @@ async function discover() {
   host.innerHTML = "";
   for (const item of result.steps || []) {
     const node = document.createElement("div");
-    node.className = `step ${item.ok ? "ok" : "bad"}`;
-    node.innerHTML = `<span class="mark">${item.ok ? "✓" : "✕"}</span>
+    // Три состояния, а не два: сделано, замечание (цикл работает), отказ.
+    const state = item.ok ? "ok" : item.required === false ? "note" : "bad";
+    node.className = `step ${state}`;
+    node.innerHTML = `<span class="mark">${item.ok ? "✓" : item.required === false ? "!" : "✕"}</span>
       <span><span class="key">${escapeHtml(item.key)}</span> — ${escapeHtml(item.why)}${item.hint ? ` <span class="muted">(${escapeHtml(item.hint)})</span>` : ""}</span>`;
     host.append(node);
   }
-  $("setup-note").textContent = result.ok
+  // Замечания не красят результат в «сломано»: цикл работает, а справочник
+  // ролей или папка логов — улучшение. ✕ остаётся только для того, без чего
+  // шаг не проходит.
+  const notes = result.notes || [];
+  const tail = notes.length ? ` Замечание: ${notes.join("; ")}` : "";
+  $("setup-note").textContent = (result.ok
     ? `готово, записано: ${(result.written || []).join(", ") || "ничего нового"}`
-    : result.why || "не всё найдено";
+    : result.why || "не всё найдено") + tail;
+  await refresh();
+}
+
+/**
+ * Токен Notion из пульта.
+ *
+ * Раньше единственным способом был `NOTION_TOKEN` при запуске: остановить
+ * транспорт, вспомнить синтаксис set в cmd, запустить заново. Владелец
+ * получает токен в Notion за десять секунд, а платил за это перезапуском.
+ */
+async function setNotionToken() {
+  const field = $("notion-token");
+  const note = $("notion-note");
+  const token = field.value.trim();
+  if (!token) {
+    note.className = "bad";
+    note.textContent = "вставьте токен";
+    return;
+  }
+  note.className = "muted";
+  note.textContent = "проверяю…";
+  const result = await post("/api/notion-token", { token });
+  note.className = result.ok ? "ok" : "bad";
+  note.textContent = result.why || (result.ok ? "токен принят" : "не принят");
+  if (result.ok) field.value = "";
   await refresh();
 }
 
@@ -218,9 +257,18 @@ function bind() {
     const next = snapshot?.mode === "auto" ? "manual" : "auto";
     await post("/api/control", { action: "ui", text: `переключён режим: ${next}` });
     await post("/api/control", { action: "mode", mode: next });
+    if (next === "auto") {
+      // Автоцикл не делает работу сам: карточки выдаются только когда их
+      // просит вкладка. Сказать об этом сразу честнее, чем оставить
+      // «автоцикл» в шапке и тишину в очереди.
+      banner("Автоцикл включён: транспорт будет выдавать работу сам, когда вкладка спросит. " +
+        "Очередь наполняет Координатор — вручную или карточкой Notion.");
+    }
     await refresh();
   };
   $("btn-discover").onclick = discover;
+  const notionButton = $("btn-notion");
+  if (notionButton) notionButton.onclick = setNotionToken;
   const mountButton = $("btn-mount");
   if (mountButton) mountButton.onclick = () => { window.open("/api/mount", "_blank", "noopener"); };
   $("event-filter").onchange = () => snapshot && renderEvents(snapshot);

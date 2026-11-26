@@ -163,10 +163,16 @@ export function createTransportServer({
 
   // Мастер ищет базы тем же токеном, что и всё остальное: отдельного секрета
   // для настройки нет, иначе «минимум ввода» превратится в «ещё один ключ».
+  //
+  // Токен спрашивается на каждый поиск, а не берётся при старте: владелец
+  // вставляет его в пульте, и «перезапустите с переменной» — шаг, который
+  // откладывают. Пустой ответ — это «нечего искать», а не ошибка.
   const notionToken = NOTION_TOKEN || process.env.NOTION_TOKEN || process.env.RELAY_NOTION_TOKEN || "";
-  const notionSearch = notionToken
-    ? () => searchDatabases({ token: notionToken, fetchImpl, query: "" })
-    : null;
+  const notionSearch = () => {
+    const token = notionToken || process.env.NOTION_TOKEN || process.env.RELAY_NOTION_TOKEN || "";
+    if (!token) return Promise.resolve([]);
+    return searchDatabases({ token, fetchImpl, query: "" });
+  };
 
   // Токен передаётся явно, а не читается службой из окружения: иначе тесты и
   // вложенные вызовы незаметно ходили бы в настоящий Notion.
@@ -238,6 +244,14 @@ export function createTransportServer({
             saved: true,
           });
         }
+      }
+
+      // Токен Notion из пульта. Отдельный маршрут, а не «настройка»: ключ и
+      // его проверка — одна операция, и человек ждёт ответа сразу («видно
+      // баз: 3»), а не после нажатия второй кнопки.
+      if (url.pathname === "/api/notion-token" && request.method === "POST") {
+        const body = (await readBody(request)) || {};
+        return send(response, 200, await service.notionTokenSet({ token: body.token }));
       }
 
       // Проверка связи с мостом. Владелец должен узнать «не тот адрес» или
