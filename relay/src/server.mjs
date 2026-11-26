@@ -23,7 +23,7 @@ import { normalizeBridgeInput, writeBridgeFile } from "./bridge-config.mjs";
 import { currentProxy, deepDiagnose } from "./notion-db.mjs";
 import { createService } from "./service.mjs";
 import { readiness } from "./setup.mjs";
-import { searchDatabases } from "./notion-db.mjs";
+import { searchDatabases, createNotionFetch } from "./notion-db.mjs";
 import { createDemoStore } from "./demo-store.mjs";
 
 const here = fileURLToPath(new URL(".", import.meta.url));
@@ -123,6 +123,12 @@ export function createTransportServer({
   // убираем. Поэтому они живут в изменяемой паре, а не в параметрах.
   let bridge = { url: bridgeUrl, key: bridgeKey };
   const bridgeReady = () => Boolean(bridge.url);
+  // Рабочие запросы к Notion — через мост, когда он настроен: прямой путь с
+  // машины владельца может резаться VPN или фильтром по домену, а мост живёт
+  // в Google. `bridge` читается на каждый запрос — адрес меняется на ходу,
+  // когда владелец вставляет его в пульте. Проверка сети и диагностика
+  // этим fetch не пользуются: им нужен именно прямой путь.
+  const notionDataFetch = createNotionFetch({ bridge: () => bridge, fetchImpl });
   if (!spreadsheetId && !demo) throw new Error("не задан spreadsheetId: службе негде хранить состояние");
 
   const tokenFor = async () => {
@@ -172,12 +178,12 @@ export function createTransportServer({
   const notionSearch = () => {
     const token = notionToken || process.env.NOTION_TOKEN || process.env.RELAY_NOTION_TOKEN || "";
     if (!token) return Promise.resolve([]);
-    return searchDatabases({ token, fetchImpl, query: "" });
+    return searchDatabases({ token, fetchImpl: notionDataFetch, query: "" });
   };
 
   // Токен передаётся явно, а не читается службой из окружения: иначе тесты и
   // вложенные вызовы незаметно ходили бы в настоящий Notion.
-  const service = createService({ store, now, log, notionSearch, notionToken });
+  const service = createService({ store, now, log, notionSearch, notionToken, notionDataFetch });
 
   const server = createServer(async (request, response) => {
     allowOrigin(response);

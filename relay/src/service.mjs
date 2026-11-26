@@ -92,6 +92,10 @@ export function createService({
   // Сеть для проверки токена из пульта. Параметром, а не глобальным fetch:
   // тест «токен принят» не должен ходить в настоящий Notion.
   notionFetch = globalThis.fetch,
+  // Рабочие чтения из Notion (поиск баз, справочник ролей): если задан, идут
+  // через него — обычно это fetch с мостом (см. createNotionFetch). Проверка
+  // сети (`notionNet`) этим параметром не пользуется: она меряет прямой путь.
+  notionDataFetch = null,
   now = () => Date.now(),
   memory = createMemoryState(),
   slotsCacheMs = SLOT_CACHE_MS,
@@ -153,7 +157,7 @@ export function createService({
     if (!dataSourceId || !token) return memory.rolesCache || [];
     if (memory.rolesCache && now() - (memory.rolesAt || 0) < ROLES_CACHE_MS) return memory.rolesCache;
     try {
-      const rows = await fetchRoles({ token, dataSourceId, fetchImpl: notionFetch });
+      const rows = await fetchRoles({ token, dataSourceId, fetchImpl: notionDataFetch || notionFetch });
       memory.rolesCache = rows;
       memory.rolesAt = now();
       return rows;
@@ -1020,7 +1024,7 @@ export function createService({
     }
     let rows = [];
     try {
-      rows = await fetchRoles({ token, dataSourceId, fetchImpl: notionFetch });
+      rows = await fetchRoles({ token, dataSourceId, fetchImpl: notionDataFetch || notionFetch });
     } catch (error) {
       return { ok: false, why: `Notion не ответил: ${error.message}` };
     }
@@ -1132,7 +1136,7 @@ export function createService({
     }
     let found = [];
     try {
-      found = await searchDatabases({ token: value, fetchImpl: notionFetch });
+      found = await searchDatabases({ token: value, fetchImpl: notionDataFetch || notionFetch });
     } catch (error) {
       // «Не принял токен» и «до Notion не дошли» — разные новости, и лечатся
       // они в разных местах. Первое — в Notion, второе — в сети, и склеивать

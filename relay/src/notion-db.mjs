@@ -559,6 +559,107 @@ export function describeNonJson({ status = 0, url = "", headers = {}, text = "" 
   };
 }
 
+/**
+ * fetch для рабочих запросов к Notion: сначала мост, потом прямой путь.
+ *
+ * Зачем. Служба на машине владельца ходит к `api.notion.com` напрямую, и
+ * локальный VPN или фильтр по домену рвёт там TLS: TCP проходит, запрос не
+ * проходит. Раньше те же запросы шли из браузера (ScriptCat) и миновали
+ * локальное правило; теперь прямой путь — не единственный. Мост в Apps Script
+ * живёт в Google и дотуда доходит: владельцу не надо чинить VPN ради ролей и
+ * поиска баз.
+ *
+ * Поведение:
+ *   • моста нет (демо, ключевой вход) — обычный прямой fetch, как раньше;
+ *   • мост ответил данными — берём их, статус Notion доходит как есть;
+ *   • мост молчит, недоступен или отвечает старым кодом без действия
+ *     «notion» — откат на прямой запрос, а если и тот мёртв, ошибка
+ *     называет обе причины;
+ *   • старый Code.gs (владелец не обновил книгу) — явная просьба обновить
+ *     код: молчаливый откат спрятал бы её за сетевой ошибкой.
+ *
+ * Сюда НЕ попадают проверка сети (`pingNotion`) и диагностика по звеньям:
+ * им нужен именно прямой путь, иначе пульт сказал бы «Notion отвечает»,
+ * пока домен срезан.
+ */
+export function createNotionFetch({
+  bridge = null,
+  fetchImpl = globalThis.fetch,
+  timeoutMs = 20000,
+} = {}) {
+  const conf = () => (typeof bridge === "function" ? bridge() : bridge) || {};
+  return async function notionDataFetch(target, options = {}) {
+    const direct = () => fetchImpl(target, options);
+    const { url = "", key = "" } = conf();
+    const token = String(options.headers?.Authorization || "").replace(/^Bearer\s+/i, "");
+    // Без адреса и без токена мосту делать нечего: токен — только рабочие
+    // вызовы (поиск, роли); проверка сети его не носит и остаётся прямой.
+    if (!url || !token) return direct();
+
+    let path = "";
+    try {
+      const parsed = new URL(target);
+      path = `${parsed.pathname}${parsed.search}`;
+    } catch {
+      return direct();
+    }
+
+    let data = null;
+    try {
+      const response = await fetchImpl(url, {
+        method: "POST",
+        headers: { "Content-Type": "text/plain;charset=utf-8" },
+        body: JSON.stringify({
+          action: "notion",
+          key,
+          path,
+          method: options.method || "GET",
+          token,
+          notionVersion: options.headers?.["Notion-Version"] || VERSION,
+          payload: options.body ?? null,
+        }),
+        signal: options.signal,
+        redirect: "follow",
+      });
+      if (!response.ok) return direct();
+      const text = await response.text();
+      data = text ? JSON.parse(text) : null;
+    } catch {
+      return direct();
+    }
+
+    // Ответ моста — всегда `{ok, status, text}`. Всё остальное (старый код
+    // без действия, чужая страница, квота) не повод ломать работу при живом
+    // прямом пути: уходим на него, кроме явного «код не обновили».
+    if (!data || data.ok !== true || !Number.isFinite(Number(data.status))) {
+      const why = String(data?.why || "");
+      if (/неизвестное действие/.test(why)) {
+        throw new Error(
+          "мост в книге устарел и не знает действия «notion»: откройте «Расширения → Apps Script» " +
+          "и замените код на relay/apps-script/Code.gs. Без обновления моста Notion недоступен, " +
+          "пока срезан прямой путь",
+        );
+      }
+      // Прочие отказы моста (ключ, quota, ответ не JSON) не должны ломать
+      // работу при живом прямом пути — уходим на него.
+      return direct();
+    }
+
+    const status = Number(data.status);
+    const bodyText = String(data.text ?? "");
+    return {
+      ok: status >= 200 && status < 300,
+      status,
+      // Свой адрес, а не чужой: проверка «ответ пришёл не от api.notion.com»
+      // в searchDatabases сравнивает именно его, и мост её не обманывает.
+      url: String(target),
+      headers: new Headers(),
+      text: async () => bodyText,
+      json: async () => JSON.parse(bodyText || "{}"),
+    };
+  };
+}
+
 export async function searchDatabases({ token, fetchImpl = globalThis.fetch, query = "", timeoutMs = NOTION_TIMEOUT_MS } = {}) {
   if (!token) throw new Error("нет токена Notion: мастер не может искать базы");
   const controller = new AbortController();
