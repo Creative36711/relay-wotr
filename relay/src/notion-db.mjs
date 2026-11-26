@@ -108,6 +108,33 @@ export function networkReason(error) {
 }
 
 /**
+ * Через какой прокси идёт служба — своими словами.
+ *
+ * `(не задан)` здесь важнее адреса: пока человек думает, что прокси «уже
+ * настроен» (он задал его в Firefox или в Windows), а Node о нём не знает,
+ * любой текст про сеть читается как «сломано». Одна строка снимает этот спор.
+ *
+ * Пустое окружение ещё не значит «напрямую»: без флага `--use-env-proxy`
+ * Node 22 переменные просто игнорирует, поэтому отдельно говорим и про это.
+ */
+export function currentProxy(env = process.env) {
+  const value = env.HTTPS_PROXY || env.https_proxy || env.HTTP_PROXY || env.http_proxy || "";
+  const flag = (process.execArgv || []).includes("--use-env-proxy")
+    || /--use-env-proxy/.test(env.NODE_OPTIONS || "");
+  if (!value) {
+    return { url: "", used: false, text: "(не задан) — служба ходит напрямую, без прокси" };
+  }
+  if (!flag) {
+    return {
+      url: value,
+      used: false,
+      text: `задан (${value}), но не применяется: Node читает прокси только с флагом --use-env-proxy`,
+    };
+  }
+  return { url: value, used: true, text: value };
+}
+
+/**
  * Диагностика «до Notion не дошли»: проверяем каждое звено отдельно.
  *
  * Зачем так подробно. Владелец видел `UND_ERR_CONNECT_TIMEOUT` при живом
@@ -162,6 +189,7 @@ export async function pingNotion({ fetchImpl = globalThis.fetch, timeoutMs = 150
     return {
       ok: false,
       code: "DNS-HIJACK",
+      proxy: currentProxy(),
       addresses,
       probes,
       why: `системный DNS отдал для ${NOTION_HOST} локальные адреса ` +
@@ -202,6 +230,7 @@ export async function pingNotion({ fetchImpl = globalThis.fetch, timeoutMs = 150
       status: response.status,
       addresses,
       probes,
+      proxy: currentProxy(),
       why: `Notion отвечает за ${ms} мс (HTTP ${response.status} без токена — так и должно быть). ` +
         "Сеть в порядке, дело не в ней",
     };
@@ -221,6 +250,7 @@ export async function pingNotion({ fetchImpl = globalThis.fetch, timeoutMs = 150
         code: code || "IPv6",
         addresses,
         probes,
+        proxy: currentProxy(),
         why: `IPv6 до Notion не доходит (${ipv6.code}), а IPv4 доходит (${ipv4.ms} мс). ` +
           "Служба пробует IPv6 первым и ждёт впустую; браузер в такой сети сам переходит на IPv4. " +
           "Это про сеть/VPN, а не про токен. Попробуйте выключить IPv6 в VPN или запустить службу с " +
@@ -234,6 +264,7 @@ export async function pingNotion({ fetchImpl = globalThis.fetch, timeoutMs = 150
         code: code || "сеть",
         addresses,
         probes,
+        proxy: currentProxy(),
         why: `до ${NOTION_HOST} не дозвонились вообще (${codes}): это сеть, VPN или фильтр, ` +
           "а не токен. В браузере тот же адрес может работать: у Firefox свой прокси и своё переключение IPv4/IPv6",
       };
@@ -243,6 +274,7 @@ export async function pingNotion({ fetchImpl = globalThis.fetch, timeoutMs = 150
       code: code || "сеть",
       addresses,
       probes,
+      proxy: currentProxy(),
       why: `соединение с ${NOTION_HOST} есть (${probes.filter((item) => item.ok).map((item) => `IPv${item.family} ${item.ms} мс`).join(", ")}), ` +
         `но запрос не прошёл${code ? ` (${code})` : ""}: ${networkReason(error) || "обрыв на стороне сети"}. Токен тут не при чём`,
     };

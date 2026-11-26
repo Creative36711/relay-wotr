@@ -129,7 +129,11 @@ async function refresh() {
   try {
     const response = await fetch("/api/snapshot", { cache: "no-store" });
     const shot = await response.json();
-    if (!response.ok || shot.ok === false) throw new Error(shot.why || `HTTP ${response.status}`);
+    if (!response.ok || shot.ok === false) {
+      const error = new Error(shot.why || `HTTP ${response.status}`);
+      error.network = Boolean(shot.network);
+      throw error;
+    }
     snapshot = shot;
     renderHeader(shot);
     renderSetupHint(shot);
@@ -139,7 +143,11 @@ async function refresh() {
     renderEvents(shot);
   } catch (error) {
     $("health-dot").className = "dot bad";
-    banner(`Служба не отвечает: ${error.message}\nПроверьте, что процесс запущен и что таблица состояния доступна.`);
+    // «Служба не отвечает» — неправда, когда служба отвечает и говорит, что
+    // не дотянулась до книги: человек перезапускает процесс, а дело в сети.
+    banner(error.network
+      ? `${error.message}\nСлужба работает; не проходит запрос наружу. Нажмите «Проверить сеть» в настройке.`
+      : `Служба не отвечает: ${error.message}\nПроверьте, что процесс запущен и что таблица состояния доступна.`);
   }
 }
 
@@ -234,21 +242,52 @@ async function discover() {
  * перевыпускать рабочий ключ. Эта проверка стучится в Notion без токена и
  * называет код отказа — по нему видно, что чинить.
  */
+/**
+ * Прокси из пульта.
+ *
+ * Это единственная настройка, ради которой раньше надо было лезть в переменные
+ * окружения и помнить про флаг `--use-env-proxy`. Служба пишет `proxy.txt`
+ * рядом с `bridge.txt`, применяет сразу и говорит, дошла ли книга.
+ */
+async function applyProxy() {
+  const field = $("proxy-url");
+  const note = $("notion-note");
+  const value = field.value.trim();
+  if (!value) {
+    note.className = "bad";
+    note.textContent = "впишите адрес прокси вида 127.0.0.1:8080";
+    return;
+  }
+  note.className = "muted";
+  note.textContent = "применяю прокси…";
+  const result = await post("/api/proxy", { proxy: value });
+  note.className = result.ok ? "ok" : "bad";
+  note.textContent = result.why || (result.ok ? "прокси применён" : "не принят");
+  // Прокси, введённый в уже запущенную службу, подхватывается только после
+  // перезапуска: Node читает переменные окружения с флагом, а флаг задаётся
+  // при старте. Молчать об этом — оставить человека с «записал, а не помогло».
+  if (result.needsRestart) {
+    note.textContent += " Перезапустите транспорт (закройте окно и запустите Запустить транспорт.bat), прокси подхватится сам.";
+  }
+  if (result.ok) field.value = "";
+}
+
 async function checkNotionNet() {
   const note = $("notion-note");
   note.className = "muted";
-  note.textContent = "проверяю сеть…";
+  note.textContent = "проверяю: Notion, книга, прокси…";
   try {
-    const result = await (await fetch("/api/notion-net", { cache: "no-store" })).json();
+    const result = await (await fetch("/api/net-doctor", { cache: "no-store" })).json();
     note.className = result.ok ? "ok" : "bad";
-    // Проверка идёт из службы, а не из браузера, и это главное, что нужно
-    // знать человеку: у Firefox свой прокси, свой DNS и своё переключение
-    // IPv4/IPv6, поэтому «в браузере Notion открывается» ничего не говорит о
-    // службе. Пишем это прямо, иначе поиск причины начинается не там.
-    const where = result.ok
-      ? ""
-      : " Проверка шла из службы (Node), а не из браузера: у Firefox свои настройки сети, DNS и прокси.";
-    note.textContent = (result.why || "нет ответа") + where;
+    // Проверяются оба выхода сразу. Когда не проходит ни один — это сеть, и
+    // искать надо там; когда один — виновник назван по имени. Плюс видно,
+    // каким прокси пользуется служба: «задан, но не применяется» объясняет
+    // половину случаев «я же всё настроил».
+    const lines = [result.why, `Notion: ${result.notion?.why || "нет ответа"}`];
+    if (result.bridge) lines.push(`Книга: ${result.bridge.why || "нет ответа"}`);
+    if (result.proxy) lines.push(`Прокси службы: ${result.proxy.text}`);
+    lines.push("Проверка идёт из службы (Node), а не из браузера: у Firefox свои прокси, DNS и порядок адресов.");
+    note.textContent = lines.join(" · ");
   } catch (error) {
     note.className = "bad";
     note.textContent = `служба не ответила: ${error.message}`;
@@ -302,6 +341,8 @@ function bind() {
   if (notionButton) notionButton.onclick = setNotionToken;
   const netButton = $("btn-notion-net");
   if (netButton) netButton.onclick = checkNotionNet;
+  const proxyButton = $("btn-proxy");
+  if (proxyButton) proxyButton.onclick = applyProxy;
   const mountButton = $("btn-mount");
   if (mountButton) mountButton.onclick = () => { window.open("/api/mount", "_blank", "noopener"); };
   $("event-filter").onchange = () => snapshot && renderEvents(snapshot);

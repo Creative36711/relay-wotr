@@ -129,13 +129,105 @@ test("пульт: поле токена Notion и честная подпись 
     const js = await (await fetch(`${ctx.base}/app.js`)).text();
     // Токен уходит на свой маршрут и без перезапуска службы.
     assert.match(js, /\/api\/notion-token/);
-    assert.match(js, /\/api\/notion-net/);
+    assert.match(js, /\/api\/net-doctor/);
+    // Проверка одна на всё: иначе «мост молчит» и «Notion молчит» лечатся
+    // по отдельности, хотя причина общая — нет исходящего HTTPS.
+    assert.match(js, /Прокси службы/);
     // Кнопка называет действие, а не состояние: «Автоцикл» при включённом
     // автоцикле читается как «включить ещё раз».
     assert.match(js, /Остановить автоцикл/);
     assert.match(js, /Включить автоцикл/);
   } finally {
     await ctx.close();
+  }
+});
+
+test("сеть наружу не проходит — служба говорит об этом, а не «не отвечает»", async () => {
+  // Хранилище, которое не дотягивается до книги: ровно сценарий владельца.
+  const failing = {
+    demo: false,
+    async read() { throw new Error("мост не ответил за 20000 мс"); },
+    async write() { throw new Error("мост не ответил за 20000 мс"); },
+    async append() { throw new Error("мост не ответил за 20000 мс"); },
+    async updateRange() { throw new Error("мост не ответил за 20000 мс"); },
+    async meta() { throw new Error("мост не ответил за 20000 мс"); },
+    async ensureSheet() { throw new Error("мост не ответил за 20000 мс"); },
+  };
+  const { server } = createTransportServer({
+    spreadsheetId: "bridge",
+    storeFactory: () => failing,
+    log: () => {},
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  try {
+    const response = await fetch(`${base}/api/snapshot`);
+    // 504, а не 500: служба жива, недоступен внешний мир.
+    assert.equal(response.status, 504);
+    const body = await response.json();
+    assert.equal(body.network, true);
+    assert.match(body.why, /Служба работает/, "человеку сказано, что перезапускать нечего");
+    assert.match(body.why, /Проверить сеть/);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test("прокси из пульта: записан рядом с мостом и сразу применён", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "relay-proxy-"));
+  const proxyFile = join(dir, "proxy.txt");
+  const { server } = createTransportServer({
+    spreadsheetId: "fake", token: "fake", storeFactory: () => createFakeStore({ slots: slotRows() }),
+    proxyFile, log: () => {},
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const saved = { ...process.env };
+  try {
+    const bad = await (await fetch(`${base}/api/proxy`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ proxy: "socks5://1.2.3.4:1080" }),
+    })).json();
+    assert.equal(bad.ok, false, "socks не принимается");
+    assert.match(bad.why, /не поддерживается/);
+
+    const ok = await (await fetch(`${base}/api/proxy`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ proxy: "127.0.0.1:8080" }),
+    })).json();
+    assert.equal(ok.ok, true, ok.why);
+    assert.equal(typeof ok.needsRestart, "boolean", "служба говорит, нужен ли перезапуск");
+    assert.match(ok.why, /прокси/, "в ответе есть адрес прокси");
+    assert.equal(readFileSync(proxyFile, "utf8"), "http://127.0.0.1:8080\n");
+    // Переменная процесса — это и есть «применено»: её читает fetch.
+    assert.equal(process.env.HTTPS_PROXY, "http://127.0.0.1:8080");
+  } finally {
+    for (const key of ["HTTPS_PROXY", "HTTP_PROXY", "https_proxy", "http_proxy"]) {
+      if (saved[key] === undefined) delete process.env[key];
+      else process.env[key] = saved[key];
+    }
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test("проверка сети: Notion и книга проверяются вместе, виден прокси", async () => {
+  const { server } = createTransportServer({
+    spreadsheetId: "fake", token: "fake", storeFactory: () => createFakeStore({ slots: slotRows() }),
+    bridgeUrl: "http://127.0.0.1:1/exec", bridgeKey: "k".repeat(40),
+    log: () => {},
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  try {
+    const doctor = await (await fetch(`${base}/api/net-doctor`)).json();
+    assert.equal(typeof doctor.ok, "boolean");
+    assert.ok(doctor.notion, "проверка Notion есть");
+    assert.ok(doctor.bridge, "проверка книги есть");
+    // Без прокси это должно быть видно словами, а не пустым полем.
+    assert.match(doctor.proxy.text, /прямую|не применяется/);
+    assert.match(doctor.why, /сеть|Notion|книга/i);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
   }
 });
 
