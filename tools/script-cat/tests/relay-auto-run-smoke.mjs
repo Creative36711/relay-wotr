@@ -108,6 +108,8 @@ const makeNav = ({ store, path = '/', now = Date.now() }) => {
     // D-045: переход ждёт подтверждения записей; проверяем и порядок.
     // D-008: переход спрашивает, чья страница; здесь аккаунт не размечен.
     'flushBeforeNavigate', 'handoffKeys', 'roleFromPath', 'accountPageCheck', 'wakeOnce',
+    // 1.24.0: адрес страницы резолвится у пары (роль, слот) — D-015.
+    'roleDeliveryUrl', 'roleAddressWhy',
     `${navSrc}; return navigateTo;`,
   );
   const navigateTo = fn(
@@ -124,6 +126,8 @@ const makeNav = ({ store, path = '/', now = Date.now() }) => {
     () => '',
     async () => ({ verdict: 'no-label' }),
     () => null,
+    async (r) => String(r?.url || ''),
+    async () => '',
   );
   return { navigateTo, pauses, logs, assigned, flushes };
 };

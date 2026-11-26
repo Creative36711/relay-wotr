@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Relay — передача хода между агентами
 // @namespace    https://arena.ai/
-// @version      1.24.0
+// @version      1.24.1
 // @description  Цикл Координатор → исполнитель → Координатор: агент сам коммитит, пушит и мержит PR; ScriptCat ждёт мерж и нажимает Continue.
 // @match        https://arena.ai/*
 // @match        https://www.arena.ai/*
@@ -93,7 +93,7 @@
     // D-073: отпечаток сборки вшивает build.mjs (SHA-256 источника). Номер версии
     // говорит «какой выпуск», отпечаток — «какая именно сборка»: без него проверка
     // «работает новая версия, а не прежняя под новым номером» невозможна.
-    buildFingerprint: "ad94fbfd86b2bd65",
+    buildFingerprint: "66ae4bb198b6306d",
     repo: "", // для ссылки на PR из номера
     tickMs: 15000,
     mergeGraceMs: 90000, // сколько ждём мерж, прежде чем нажать кнопки за агента
@@ -798,7 +798,7 @@
 
   const NTFY_BASE = "https://ntfy.sh";
   const SCRIPT_VERSION =
-    (typeof GM_info !== "undefined" && GM_info?.script?.version) || "1.24.0";
+    (typeof GM_info !== "undefined" && GM_info?.script?.version) || "1.24.1";
 
   /** «https://ntfy.sh/topic?x=1» и «topic» одинаково дают topic. */
   function normalizeNtfyTopic(raw) {
@@ -2019,11 +2019,15 @@
       gwUrl: String(GM_getValue(K.gwUrl, "") || "").trim(),
       gwKey: String(GM_getValue(K.gwKey, "") || "").trim(),
       github: String(GM_getValue(K.ghToken, "") || "").trim(),
+      // D-015: адрес службы Relay — не секрет и не шлюз Drive. Без него скрипт
+      // не видит лист «Экземпляры» и не может назвать адрес пары (роль, слот).
+      relayUrl: String(GM_getValue("cfn-relay-url", "") || "").trim().replace(/\/+$/, ""),
     };
   }
 
   const sameConnections = (a, b) =>
-    a.notion === b.notion && a.gwUrl === b.gwUrl && a.gwKey === b.gwKey && a.github === b.github;
+    a.notion === b.notion && a.gwUrl === b.gwUrl && a.gwKey === b.gwKey && a.github === b.github &&
+    a.relayUrl === b.relayUrl;
 
   /** Не отправлять ключ по HTTP или на похожий на Google чужой адрес без согласия. */
   function connectionEndpoint(value) {
@@ -2173,6 +2177,13 @@
           <div style="${quiet}">Маскировка скрывает секреты на экране, но введённые значения доступны коду страницы и расширениям. Пользуйтесь только доверенной страницей Arena.</div>
           <button id="cfn-connection-projects" type="button" style="${action};justify-self:start">Управление проектами</button>
           <button id="cfn-connection-stop-auto" type="button" style="${action};justify-self:start">Остановить автоцикл этой вкладки</button>
+          <section style="${card}" aria-labelledby="cfn-connection-relay-title">
+            <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap"><strong id="cfn-connection-relay-title" style="font-size:15px;color:#fff">Служба Relay</strong><span style="${quiet}">лист «Экземпляры» и адреса агентов</span></div>
+            <div id="cfn-connection-relay-status" role="status" style="${quiet};margin:4px 0 8px"></div>
+            <label for="cfn-connection-relay-url" style="font-weight:600">Адрес службы</label>
+            <input id="cfn-connection-relay-url" type="url" autocomplete="off" spellcheck="false" placeholder="http://localhost:8787" style="${field}">
+            <div style="${quiet};margin-top:8px">Адрес, который печатает транспорт при запуске. По нему скрипт читает «Экземпляры»: рабочее место агента — пара (роль, слот), а не поле «Agent URL» в «Ролях». Пусто — скрипт работает по старым правилам и адрес у неадминских ролей не найдёт.</div>
+          </section>
           <section style="${card}" aria-labelledby="cfn-connection-notion-title">
             <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap"><strong id="cfn-connection-notion-title" style="font-size:15px;color:#fff">Notion</strong><span style="${quiet}">базы и очередь</span></div>
             <div id="cfn-connection-notion-status" role="status" style="${quiet};margin:4px 0 8px"></div>
@@ -2225,6 +2236,7 @@
     document.body.appendChild(box);
     const find = (id) => box.querySelector(`#cfn-connection-${id}`);
     const notionInput = find("notion"), urlInput = find("url"), keyInput = find("key"), githubInput = find("github");
+    const relayInput = find("relay-url");
     const notionRemove = find("notion-remove"), driveRemove = find("drive-remove"), githubRemove = find("github-remove");
     const trust = find("trust"), trustWrap = find("trust-wrap");
     const checkButton = box.querySelector("#cfn-connections-check"), saveButton = box.querySelector("#cfn-connections-save");
@@ -2232,6 +2244,7 @@
     find("repo").textContent = C.repo;
     find("project-name").textContent = C.projectName || "Relay";
     urlInput.value = saved.gwUrl;
+    relayInput.value = saved.relayUrl;
 
     const say = (text, error = false) => {
       note.textContent = text;
@@ -2252,6 +2265,7 @@
       gwUrl: driveRemove.checked ? "" : urlInput.value.trim(),
       gwKey: driveRemove.checked ? "" : keyInput.value.trim() || saved.gwKey,
       github: githubRemove.checked ? "" : githubInput.value.trim() || saved.github,
+      relayUrl: relayInput.value.trim().replace(/\/+$/, ""),
     });
     const needsTrust = (settings, endpoint = connectionEndpoint(settings.gwUrl)) =>
       endpoint.ok && Boolean(settings.gwUrl) && (!endpoint.standard ||
@@ -2262,6 +2276,7 @@
       const locked = checking || performing;
       trustWrap.style.display = needsTrust(settings, endpoint) ? "block" : "none";
       notionInput.disabled = locked || notionRemove.checked;
+      relayInput.disabled = locked;
       urlInput.disabled = locked || driveRemove.checked;
       keyInput.disabled = locked || driveRemove.checked;
       githubInput.disabled = locked || githubRemove.checked;
@@ -2280,6 +2295,8 @@
       status("drive", !endpoint.ok ? "Сохранён небезопасный или неверный URL. Замените его на HTTPS." :
         saved.gwUrl && saved.gwKey ? "Сохранён · ещё не проверен" : "Не настроен полностью", endpoint.ok ? "idle" : "error");
       status("github", saved.github ? "Сохранён · ещё не проверен" : "Без токена · доступ не проверен");
+      status("relay", !saved.relayUrl ? "Не задан · адреса пар не читаются"
+        : /^https?:\/\//.test(saved.relayUrl) ? "Задан · проверю связь при сохранении" : "Нужен полный адрес, начиная с http://");
     };
     const changed = () => !sameConnections(read(), saved);
     const close = () => {
@@ -2372,6 +2389,12 @@
       // к нему. Но не блокируем правку другого подключения: ранее сохранённый
       // адрес остаётся неизменным и показан как небезопасный до его замены.
       if (!endpoint.ok && driveChanged) { say(endpoint.message, true); return; }
+      // Адрес службы Relay: опечатка здесь молча оставила бы «Экземпляры»
+      // невидимыми, поэтому проверяем форму до сохранения.
+      if (next.relayUrl && !/^https?:\/\/[^\s]+$/.test(next.relayUrl)) {
+        say("Адрес службы Relay должен быть полным: http://localhost:8787 или https://…", true);
+        return;
+      }
       if (driveChanged && needsTrust(next, endpoint) && !trust.checked) {
         say("Подтвердите доверие к указанному шлюзу: при работе ему будет отправлен ключ.", true);
         return;
@@ -2385,6 +2408,7 @@
       const updates = [
         [K.notion, saved.notion, next.notion], [K.gwUrl, saved.gwUrl, next.gwUrl],
         [K.gwKey, saved.gwKey, next.gwKey], [K.ghToken, saved.github, next.github],
+        ["cfn-relay-url", saved.relayUrl, next.relayUrl],
       ].filter(([, before, after]) => before !== after);
       if (!updates.length) { say("Изменений для сохранения нет."); return; }
       // Допуск привязан к проверенным данным. Меняем доступ — сначала снимаем
@@ -4868,6 +4892,24 @@
       if (any.url) return any.url;
     }
     return "";
+  }
+
+  /**
+   * Адрес роли для отправки: свежий или из «Экземпляров».
+   *
+   * Единственная точка, через которую доставка узнаёт адрес. Прежний код брал
+   * `role.url` напрямую, и после D-015 у неадминских ролей там пусто — задание
+   * не нашло бы страницу. Строка «Ролей» проверяется первой (у админских ролей
+   * адрес там по закону), экземпляры — вторыми, то есть ровно наоборот тому,
+   * как выбирается адрес ПАРЫ: здесь слот отправителя не важен, важно, что
+   * роль существует и её агент открыт хоть где-то.
+   */
+  async function roleDeliveryUrl(role) {
+    const direct = String(role?.url || "").trim();
+    if (direct) return direct;
+    const name = String(role?.name || "").trim();
+    if (!name) return "";
+    return (await roleInstanceUrl(name).catch(() => "")) || "";
   }
 
   /** Почему адреса нет — человеческим языком, для журнала и пауз. */
@@ -8586,9 +8628,12 @@
     // Если адресат — текущая страница, перезагружать её незачем: чат уже
     // открыт, и задание уйдёт со следующего тика (человек видит, что кнопка
     // сработала, без мигания страницы).
+    // D-015: у неадминских ролей адреса в «Ролях» нет — он в «Экземплярах».
+    // Без этой строки задание не нашло бы страницу вовсе и не ушло никуда.
+    const deliveryUrl = await roleDeliveryUrl(role);
     let same = false;
     try {
-      same = new URL(role.url, location.href).pathname === location.pathname;
+      same = new URL(deliveryUrl, location.href).pathname === location.pathname;
     } catch {
       same = false;
     }
@@ -8624,10 +8669,18 @@
         return true;
       }
     }
+    if (!deliveryUrl) {
+      // Адреса нет ни в строке, ни в «Экземплярах»: это не «подожду», а
+      // нехватка агента. Говорим об этом прямо — иначе задание молча висело бы
+      // в очереди, а Мастер искал причину в отправке.
+      const why = await roleAddressWhy(role.name).catch(() => "");
+      log(`Задание «${role.name}» не отправлено: ${why || "нет адреса агента ни в «Ролях», ни в «Экземплярах»"}.`, true);
+      return false;
+    }
     log(`Перехожу к «${role.name}», чтобы отправить задание.`);
     // Уход со страницы — только после подтверждения записи (D-045).
     await flushBeforeNavigate(handoffKeys());
-    location.assign(role.url);
+    location.assign(deliveryUrl);
     return true;
   }
 
@@ -17734,7 +17787,10 @@
       return "";
     };
     const named = asked ? directory.find((r) => norm(r.name) === norm(asked)) : null;
-    const addresseeReady = Boolean(named && named.status === "Активна" && named.url);
+    // D-015: адрес адресата — в «Экземплярах», если в строке «Ролей» его нет.
+    const namedUrl = named ? (String(named.url || "").trim() ||
+      (await roleInstanceUrl(named.name).catch(() => ""))) : "";
+    const addresseeReady = Boolean(named && named.status === "Активна" && namedUrl);
     if (asked && !addresseeReady) {
       const why = named ? "не активна или пуст «Agent URL»" : "нет в «Ролях»";
       // 1.24.0: заголовок «не готова» говорит по делу — адрес роли больше не
@@ -17767,7 +17823,7 @@
         { ntfy: "quiet", title: "Relay: адресат обратной связи не готов" },
       );
     }
-    let role = (addresseeReady ? named : null) || (await reviewerRole());
+    let role = (addresseeReady ? { ...named, url: namedUrl } : null) || (await reviewerRole());
     // Вопрос Warden'а без `need` не должен отправляться Warden'у самому.
     // Явный `need` к себе — ошибка адресации; не подменяем его молча.
     if (role && norm(role.name) === norm(item.role || "")) {
@@ -17775,8 +17831,16 @@
         logThrottled(`answer-self:${item.id}`, `Вопрос «${oneLine(item.text, 90)}» адресован автору «${role.name}» самому: назовите другую роль в need.`, true);
         return false;
       }
-      role = directory.find((r) => r.fn === "Coordinator" && r.status === "Активна" && r.url &&
-        norm(r.name) !== norm(item.role || "")) || null;
+      // Coordinator — админская роль, его адрес живёт в строке; но если его там
+      // нет, экземпляр пары тоже годится: отказ здесь означал бы «отвечать
+      // некому» при живом Coordinator'е.
+      let coord = null;
+      for (const row of directory.filter((r) => r.fn === "Coordinator" && r.status === "Активна" &&
+        norm(r.name) !== norm(item.role || ""))) {
+        const url = String(row.url || "").trim() || (await roleInstanceUrl(row.name).catch(() => ""));
+        if (url) { coord = { ...row, url }; break; }
+      }
+      role = coord;
     }
     if (!role) {
       logThrottled(
@@ -23326,13 +23390,21 @@ function reviewPullRequest({ files, pr, zone } = {}) {
       );
       return true;
     }
+    // D-015: адрес берётся у пары (роль, слот), если в строке «Ролей» его нет.
+    // Пустой адрес — не «поеду в никуда», а причина, названная вслух.
+    const deliveryUrl = await roleDeliveryUrl(role);
+    if (!deliveryUrl) {
+      const addressWhy = await roleAddressWhy(role.name).catch(() => "");
+      log(`Страница «${role.name}» не открыта: ${addressWhy || "нет адреса агента"}.`, true);
+      return false;
+    }
     GM_setValue("cfn-nav", { roleId: role.id, from, at: Date.now() });
     log(`Сейчас ${from} — открываю страницу «${role.name}»: ${why}.`);
     // D-045: отметку перехода и журнал надо довести до хранилища до ухода со
     // страницы, иначе защита от петли прочитает прежнюю отметку и цикл прыгнет
     // снова — уже без памяти о первом переходе.
     await flushBeforeNavigate(handoffKeys());
-    location.assign(role.url);
+    location.assign(deliveryUrl);
     return true;
   }
 
@@ -23775,8 +23847,8 @@ function reviewPullRequest({ files, pr, zone } = {}) {
         if (!target) {
           log(
             list.length
-              ? "Шаг не выполнен: нет активного Coordinator с заполненным «Agent URL»."
-              : "Шаг не выполнен: нет ни одной активной роли с заполненным «Agent URL» — заполните поле в базе «Роли».",
+              ? "Шаг не выполнен: нет активного Coordinator с адресом агента."
+              : "Шаг не выполнен: нет ни одной активной роли — проверьте «Статус» в базе «Роли».",
             true,
           );
           return;
@@ -23792,16 +23864,50 @@ function reviewPullRequest({ files, pr, zone } = {}) {
         return navigateTo(target, why);
       }
       const list = await roles();
-      let me = list.find((r) => norm(r.id) === norm(meId));
-      // Список мог устареть в кеше: Мастер только что вписал этот Agent URL.
-      // Один перечит мимо кеша дешевле, чем «страница не привязана к роли».
-      if (!me) me = (await rolesFresh().catch(() => [])).find((r) => norm(r.id) === norm(meId));
+      // 1.24.0: страница опознаёт себя не только по «Agent URL» строки.
+      //
+      // До 1.24.0 id роли выводился из ссылки на агента, и адрес страницы был
+      // единственным способом понять, кто здесь стоит. Теперь у неадминских
+      // ролей адреса в «Ролях» нет — его знает лист «Экземпляры», — и после
+      // создания первого агента вкладка осталась бы «не привязанной к роли»
+      // ровно в тот момент, когда ей впервые есть что делать.
+      //
+      // Поэтому: сначала адрес страницы против строки и против экземпляров,
+      // затем — почта аккаунта вкладки. Аккаунт слабее адреса (в контейнере
+      // может жить несколько ролей), поэтому он идёт вторым и только при
+      // однозначном совпадении.
+      const mineByPath = (rows) => rows.find((r) => norm(r.id) === norm(meId)) || null;
+      let me = mineByPath(list);
+      if (!me) me = mineByPath(await rolesFresh().catch(() => []));
+      if (!me) {
+        const rowsNow = await roleRows().catch(() => []);
+        const pairs = await relayInstances(await relaySnapshot().catch(() => null)).catch(() => []);
+        const byPair = pairs.find((item) => norm(item["Agent URL"]).includes(norm(meId)) && item["Agent URL"]);
+        if (byPair) me = rowsNow.find((r) => norm(r.name) === norm(byPair["Роль"])) || null;
+      }
+      if (!me) {
+        // Аккаунт вкладки → слот → роли этого слота. Одна роль в слоте — ответ;
+        // несколько — не угадываем: пусть Мастер откроет нужную страницу.
+        const slotId = await relayCurrentSlot().catch(() => "");
+        if (slotId) {
+          const rowsNow = await roleRows().catch(() => []);
+          const pairs = await relayInstances(await relaySnapshot().catch(() => null)).catch(() => []);
+          const here = pairs.filter((item) => norm(item["Слот"]) === norm(slotId) && item["Agent URL"]);
+          const names = [...new Set(here.map((item) => norm(item["Роль"])))];
+          if (names.length === 1) {
+            const one = here.find((item) => norm(item["Роль"]) === names[0]);
+            const row = rowsNow.find((r) => norm(r.name) === norm(one["Роль"]));
+            if (row) me = { ...row, id: row.id || String(one["Agent URL"]).match(/\/agent\/([\w-]+)/)?.[1] || "", url: one["Agent URL"] };
+          }
+        }
+      }
       if (!me) {
         if (fromToggle)
           log(
             list.length
-              ? `Шаг не выполнен: страница ${meId} не привязана к активной роли. Проверьте её «Agent URL».`
-              : "Шаг не выполнен: нет ни одной активной роли с заполненным «Agent URL» — заполните поле в базе «Роли».",
+              ? `Шаг не выполнен: страница ${meId} не привязана к активной роли. ` +
+                "Ни строки роли, ни «Экземпляров» с этим адресом нет; если агент только что создан, обновите страницу."
+              : "Шаг не выполнен: нет ни одной активной роли — проверьте «Статус» в базе «Роли».",
             true,
           );
         return;
@@ -23952,7 +24058,7 @@ function reviewPullRequest({ files, pr, zone } = {}) {
         if ((fromToggle || autoOn()) && owner) {
           let samePage = false;
           try {
-            samePage = new URL(owner.url, location.href).pathname === location.pathname;
+            samePage = new URL(owner.url || (await roleDeliveryUrl(owner)), location.href).pathname === location.pathname;
           } catch {
             samePage = false;
           }

@@ -88,6 +88,8 @@ function makeDispatch({ active = all, directory = all, freshCard = fixture(), di
     },
     norm, rt, K, C: { repo: 'example/relay-fixture', branch: 'main' },
     roleInstanceUrl: async (name) => instances[String(name || '')] || '',
+    // 1.24.0: адрес доставки — свойство строки или пары (D-015).
+    roleDeliveryUrl: async (role) => String(role?.url || '') || (instances[String(role?.name || '')] || ''),
     roleAddressWhy: async (name) => (instances[String(name || '')] ? '' : 'нет адреса пары в «Экземплярах»'), ACTIVE_PROFILE: { legacy: false, repo: 'example/relay-fixture', branch: 'main', repos: [{ repo: 'example-org/fixture-source-core', branch: 'main' }, { repo: 'example/relay-fixture', branch: 'main' }] },
     GM_getValue: (key, fallback) => storage.has(key) ? storage.get(key) : fallback,
     GM_setValue: (key, value) => storage.set(key, clone(value)),
@@ -128,7 +130,7 @@ function makeDispatch({ active = all, directory = all, freshCard = fixture(), di
     location: { href: 'https://arena.ai/agent/coord-1', pathname: '/agent/coord-1', assign: (url) => calls.navigations.push(url) },
   };
   const make = new Function('env', `
-    const {roles, roleRows, norm, rt, K, C, ACTIVE_PROFILE, GM_getValue, GM_setValue, notion, patch, gateway, roleInstanceUrl, roleAddressWhy,
+    const {roles, roleRows, norm, rt, K, C, ACTIVE_PROFILE, GM_getValue, GM_setValue, notion, patch, gateway, roleInstanceUrl, roleAddressWhy, roleDeliveryUrl,
       taskTitle, taskState, taskRole, taskTargetRepository, reworkSeen, profileSessionRepo, canonicalTargetRepository, profileRepoBranch,
       redispatchClearProps, redispatchWhy, noteRedispatch, REDISPATCH_LIMIT,
       answerStampKey, reworkKey, pause, log, uid, nowIso, taskLogEntry, executorPrompt,

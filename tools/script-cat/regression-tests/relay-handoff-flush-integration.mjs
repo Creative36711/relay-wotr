@@ -183,11 +183,15 @@ function makeSend({ samePage = false } = {}) {
       return true;
     },
     location: { href: 'https://arena.ai/agent/coord', pathname: samePage ? '/agent/exec' : '/agent/coord', assign: (url) => { calls.navigations.push(url); calls.order.push('assign'); } },
+    // 1.24.0: адрес адресата резолвится у пары (роль, слот) — D-015. Здесь
+    // строка «Ролей» ещё несёт адрес, поэтому резолвер возвращает его же.
+    roleDeliveryUrl: async (role) => String(role?.url || ''),
+    roleAddressWhy: async () => '',
   };
   const make = new Function('env', `
     const {K, norm, C, GM_getValue, GM_setValue, projectRoleAllowed, textHash, lastMessageId, messages, nodeId,
       profileSessionRepo, profileRepoBranch, recordPromptAttempt, dbg, setStatus, setTimeout, tick, log, pause,
-      handoffKeys, flushBeforeNavigate, location} = env;
+      handoffKeys, flushBeforeNavigate, location, roleDeliveryUrl, roleAddressWhy} = env;
     ${sendBlock}\nreturn sendToRole;`);
   return { sendToRole: make(env), store, calls };
 }
@@ -409,7 +413,7 @@ for (const [why, over] of [
 // ── 5. Проводка: барьер стоит перед каждым уходом со страницы ───────────────
 {
   const nav = cut('  async function navigateTo(role, why) {', '  /**\n   * Отправка без подтверждения');
-  assert.match(nav, /await flushBeforeNavigate\(handoffKeys\(\)\);\s*location\.assign\(role\.url\);/, 'переход ждёт записи');
+  assert.match(nav, /await flushBeforeNavigate\(handoffKeys\(\)\);\s*location\.assign\(deliveryUrl\);/, 'переход ждёт записи');
   const cycle = readFileSync(new URL('../src/28-cycle.js', import.meta.url), 'utf8');
   assert.match(cycle, /await flushBeforeNavigate\(\[K\.expect, K\.log\]\);\s*location\.reload\(\);/, 'перечитывание страницы ждёт записи');
   const missing = readFileSync(new URL('../src/14-missing-marker.js', import.meta.url), 'utf8');

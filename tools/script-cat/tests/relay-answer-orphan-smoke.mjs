@@ -34,7 +34,7 @@ const answers = readFileSync(new URL('../src/27-review-answers.js', import.meta.
 const config = readFileSync(new URL('../src/01-config.js', import.meta.url), 'utf8');
 
 // ── 0. Выпуск назван (номер меняется каждым релизом транспорта)
-assert.match(src, /^\/\/ @version\s+1\.24\.0\s*$/m, 'сборка 1.24.0 объявлена');
+assert.match(src, /^\/\/ @version\s+1\.24\.1\s*$/m, 'сборка 1.24.1 объявлена');
 
 // ── 1. Отметка «передано» больше не пожизненная ─────────────────────────────
 {
@@ -153,12 +153,17 @@ assert.match(src, /^\/\/ @version\s+1\.24\.0\s*$/m, 'сборка 1.24.0 объ�
   assert.match(branch.slice(0, branch.indexOf('внешний D-019')), /return false;/,
     'и только он: удерживается в очереди до готовности роли');
   assert.match(branch, /answer-need-fallback:/, 'обычный вопрос уходит приёмке с отметкой в журнале');
-  assert.match(branch, /let role = \(addresseeReady \? named : null\) \|\| \(await reviewerRole\(\)\);/,
+  // 1.24.0: адрес адресата берётся из «Экземпляров», если в строке его нет
+  // (D-015), поэтому готовность считается по резолвленному адресу, а сам
+  // адресат уходит с ним, а не с пустым `url` строки.
+  assert.match(branch, /let role = \(addresseeReady \? \{ \.\.\.named, url: namedUrl \} : null\) \|\| \(await reviewerRole\(\)\);/,
     'неготовый адресат не подменяется молча: отвечает приёмка');
 
   // Фолбэк не должен съедать явный `need` к готовой роли.
-  assert.match(answers, /const addresseeReady = Boolean\(named && named\.status === "Активна" && named\.url\);/,
-    'готовность адресата считается по тем же трём признакам, что и ход');
+  assert.match(answers, /const addresseeReady = Boolean\(named && named\.status === "Активна" && namedUrl\);/,
+    'готовность адресата считается по статусу и резолвленному адресу');
+  assert.match(answers, /roleInstanceUrl\(named\.name\)/,
+    'адрес берётся у пары (роль, слот), а не только из строки');
 }
 
 // ── 4. Ожидание свободного слота видно в журнале ────────────────────────────

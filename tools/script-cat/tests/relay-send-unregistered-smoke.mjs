@@ -38,8 +38,8 @@ const cut = (from, to) => {
 };
 
 // ── 0. Версия: D-122 из 1.16.1 присутствует и в выпуске 1.19.0 ────────────
-assert.match(src, /^\/\/ @version\s+1\.24\.0\s*$/m, 'сборка 1.24.0 объявлена');
-assert.match(src, /\|\| "1\.24\.0";/, 'SCRIPT_VERSION совпадает с @version');
+assert.match(src, /^\/\/ @version\s+1\.24\.1\s*$/m, 'сборка 1.24.1 объявлена');
+assert.match(src, /\|\| "1.24.1";/, 'SCRIPT_VERSION совпадает с @version');
 
 // ── 1. Факт приёма ввода запоминается в writePrompt ────────────────────────
 const writeSrc = cut('  function writePrompt(editor, text, attempt = 1) {', '  const composerText =');

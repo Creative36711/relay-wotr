@@ -94,13 +94,21 @@
       );
       return true;
     }
+    // D-015: адрес берётся у пары (роль, слот), если в строке «Ролей» его нет.
+    // Пустой адрес — не «поеду в никуда», а причина, названная вслух.
+    const deliveryUrl = await roleDeliveryUrl(role);
+    if (!deliveryUrl) {
+      const addressWhy = await roleAddressWhy(role.name).catch(() => "");
+      log(`Страница «${role.name}» не открыта: ${addressWhy || "нет адреса агента"}.`, true);
+      return false;
+    }
     GM_setValue("cfn-nav", { roleId: role.id, from, at: Date.now() });
     log(`Сейчас ${from} — открываю страницу «${role.name}»: ${why}.`);
     // D-045: отметку перехода и журнал надо довести до хранилища до ухода со
     // страницы, иначе защита от петли прочитает прежнюю отметку и цикл прыгнет
     // снова — уже без памяти о первом переходе.
     await flushBeforeNavigate(handoffKeys());
-    location.assign(role.url);
+    location.assign(deliveryUrl);
     return true;
   }
 
@@ -543,8 +551,8 @@
         if (!target) {
           log(
             list.length
-              ? "Шаг не выполнен: нет активного Coordinator с заполненным «Agent URL»."
-              : "Шаг не выполнен: нет ни одной активной роли с заполненным «Agent URL» — заполните поле в базе «Роли».",
+              ? "Шаг не выполнен: нет активного Coordinator с адресом агента."
+              : "Шаг не выполнен: нет ни одной активной роли — проверьте «Статус» в базе «Роли».",
             true,
           );
           return;
@@ -560,16 +568,50 @@
         return navigateTo(target, why);
       }
       const list = await roles();
-      let me = list.find((r) => norm(r.id) === norm(meId));
-      // Список мог устареть в кеше: Мастер только что вписал этот Agent URL.
-      // Один перечит мимо кеша дешевле, чем «страница не привязана к роли».
-      if (!me) me = (await rolesFresh().catch(() => [])).find((r) => norm(r.id) === norm(meId));
+      // 1.24.0: страница опознаёт себя не только по «Agent URL» строки.
+      //
+      // До 1.24.0 id роли выводился из ссылки на агента, и адрес страницы был
+      // единственным способом понять, кто здесь стоит. Теперь у неадминских
+      // ролей адреса в «Ролях» нет — его знает лист «Экземпляры», — и после
+      // создания первого агента вкладка осталась бы «не привязанной к роли»
+      // ровно в тот момент, когда ей впервые есть что делать.
+      //
+      // Поэтому: сначала адрес страницы против строки и против экземпляров,
+      // затем — почта аккаунта вкладки. Аккаунт слабее адреса (в контейнере
+      // может жить несколько ролей), поэтому он идёт вторым и только при
+      // однозначном совпадении.
+      const mineByPath = (rows) => rows.find((r) => norm(r.id) === norm(meId)) || null;
+      let me = mineByPath(list);
+      if (!me) me = mineByPath(await rolesFresh().catch(() => []));
+      if (!me) {
+        const rowsNow = await roleRows().catch(() => []);
+        const pairs = await relayInstances(await relaySnapshot().catch(() => null)).catch(() => []);
+        const byPair = pairs.find((item) => norm(item["Agent URL"]).includes(norm(meId)) && item["Agent URL"]);
+        if (byPair) me = rowsNow.find((r) => norm(r.name) === norm(byPair["Роль"])) || null;
+      }
+      if (!me) {
+        // Аккаунт вкладки → слот → роли этого слота. Одна роль в слоте — ответ;
+        // несколько — не угадываем: пусть Мастер откроет нужную страницу.
+        const slotId = await relayCurrentSlot().catch(() => "");
+        if (slotId) {
+          const rowsNow = await roleRows().catch(() => []);
+          const pairs = await relayInstances(await relaySnapshot().catch(() => null)).catch(() => []);
+          const here = pairs.filter((item) => norm(item["Слот"]) === norm(slotId) && item["Agent URL"]);
+          const names = [...new Set(here.map((item) => norm(item["Роль"])))];
+          if (names.length === 1) {
+            const one = here.find((item) => norm(item["Роль"]) === names[0]);
+            const row = rowsNow.find((r) => norm(r.name) === norm(one["Роль"]));
+            if (row) me = { ...row, id: row.id || String(one["Agent URL"]).match(/\/agent\/([\w-]+)/)?.[1] || "", url: one["Agent URL"] };
+          }
+        }
+      }
       if (!me) {
         if (fromToggle)
           log(
             list.length
-              ? `Шаг не выполнен: страница ${meId} не привязана к активной роли. Проверьте её «Agent URL».`
-              : "Шаг не выполнен: нет ни одной активной роли с заполненным «Agent URL» — заполните поле в базе «Роли».",
+              ? `Шаг не выполнен: страница ${meId} не привязана к активной роли. ` +
+                "Ни строки роли, ни «Экземпляров» с этим адресом нет; если агент только что создан, обновите страницу."
+              : "Шаг не выполнен: нет ни одной активной роли — проверьте «Статус» в базе «Роли».",
             true,
           );
         return;
@@ -720,7 +762,7 @@
         if ((fromToggle || autoOn()) && owner) {
           let samePage = false;
           try {
-            samePage = new URL(owner.url, location.href).pathname === location.pathname;
+            samePage = new URL(owner.url || (await roleDeliveryUrl(owner)), location.href).pathname === location.pathname;
           } catch {
             samePage = false;
           }
