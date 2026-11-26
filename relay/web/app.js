@@ -241,7 +241,14 @@ async function checkNotionNet() {
   try {
     const result = await (await fetch("/api/notion-net", { cache: "no-store" })).json();
     note.className = result.ok ? "ok" : "bad";
-    note.textContent = result.why;
+    // Проверка идёт из службы, а не из браузера, и это главное, что нужно
+    // знать человеку: у Firefox свой прокси, свой DNS и своё переключение
+    // IPv4/IPv6, поэтому «в браузере Notion открывается» ничего не говорит о
+    // службе. Пишем это прямо, иначе поиск причины начинается не там.
+    const where = result.ok
+      ? ""
+      : " Проверка шла из службы (Node), а не из браузера: у Firefox свои настройки сети, DNS и прокси.";
+    note.textContent = (result.why || "нет ответа") + where;
   } catch (error) {
     note.className = "bad";
     note.textContent = `служба не ответила: ${error.message}`;

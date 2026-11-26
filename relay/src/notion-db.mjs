@@ -7,8 +7,32 @@
 // Сеть здесь одна: `/v1/search`. Токен берётся у вызывающего, служба его не
 // хранит.
 
+import { setDefaultResultOrder } from "node:dns";
+import { lookup } from "node:dns/promises";
+import { connect } from "node:net";
+
 const API = "https://api.notion.com/v1";
 const VERSION = "2022-06-28";
+const NOTION_HOST = "api.notion.com";
+
+/**
+ * IPv4 вперёд при разрешении имён.
+ *
+ * Владелец сидит за VPN, который отдаёт IPv6-адрес Notion, но не пропускает
+ * трафик по нему. Браузер это переживает (Happy Eyeballs), Node — не всегда:
+ * запрос уходит в мёртвое семейство и умирает по `UND_ERR_CONNECT_TIMEOUT`.
+ * Поэтому порядок адресов фиксируем здесь, один раз, а не просим человека
+ * помнить про `NODE_OPTIONS`.
+ *
+ * `dns.setDefaultResultOrder` влияет на весь процесс, и это осознанно: та же
+ * проблема ждёт любой внешний запрос службы, а не только Notion.
+ */
+try {
+  setDefaultResultOrder("ipv4first");
+} catch {
+  // Старая версия Node: остаётся поведение по умолчанию, и диагностика
+  // назовёт причину словами.
+}
 
 /**
  * Сколько ждать Notion.
@@ -83,15 +107,92 @@ export function networkReason(error) {
   return "";
 }
 
-export async function pingNotion({ fetchImpl = globalThis.fetch, timeoutMs = 15000 } = {}) {
+/**
+ * Диагностика «до Notion не дошли»: проверяем каждое звено отдельно.
+ *
+ * Зачем так подробно. Владелец видел `UND_ERR_CONNECT_TIMEOUT` при живом
+ * VPN — и это не «медленная сеть», а конкретный обрыв на конкретном шаге.
+ * Одна фраза «проверьте сеть» на четыре разные поломки не помогает; код
+ * Node при этом прячет причину в `error.cause`, а браузер — нет.
+ *
+ * Проверяем то, что видит **служба**, а не браузер: у Node своё разрешение
+ * имён и свои сокеты, поэтому настройки Firefox (включая выключенный WebRTC —
+ * он про UDP и браузерные соединения) на него не действуют. Одинаковый запрос
+ * в браузере и в службе идёт разными путями, и это первое, что нужно
+ * показать.
+ */
+/** Локальный или служебный адрес: значит, имя подменили. */
+export function isPrivateAddress(address = "") {
+  const value = String(address);
+  if (value.includes(":")) {
+    // IPv6: ::1, fe80::/10, fc00::/7
+    return /^::1$/.test(value) || /^fe[89ab]/i.test(value) || /^f[cd]/i.test(value);
+  }
+  const parts = value.split(".").map(Number);
+  if (parts.length !== 4 || parts.some((part) => !Number.isFinite(part))) return false;
+  const [a, b] = parts;
+  return a === 10 || a === 127 || a === 0
+    || (a === 172 && b >= 16 && b <= 31)
+    || (a === 192 && b === 168)
+    || (a === 169 && b === 254)
+    || (a === 100 && b >= 64 && b <= 127);
+}
+
+export async function pingNotion({ fetchImpl = globalThis.fetch, timeoutMs = 15000, probeMs = 5000 } = {}) {
+  const addresses = [];
+  const probes = [];
+  try {
+    const found = await lookup(NOTION_HOST, { all: true });
+    for (const item of found) addresses.push({ address: item.address, family: item.family });
+  } catch (error) {
+    return {
+      ok: false,
+      code: error.code || "DNS",
+      addresses,
+      probes,
+      why: `имя ${NOTION_HOST} не разрешилось (${error.code || error.message}): это DNS или VPN. Токен тут не при чём`,
+    };
+  }
+
+  // Подмена DNS: VPN или фильтр отдаёт «свой» адрес, и запрос уходит не в
+  // Notion. В браузере это может не проявиться (у Firefox свой DoH и своя
+  // таблица), а служба идёт по системному DNS — и молча стучится не туда.
+  const suspicious = addresses.filter((item) => isPrivateAddress(item.address));
+  if (suspicious.length) {
+    return {
+      ok: false,
+      code: "DNS-HIJACK",
+      addresses,
+      probes,
+      why: `системный DNS отдал для ${NOTION_HOST} локальные адреса ` +
+        `(${suspicious.map((item) => item.address).join(", ")}). Так делает VPN, роутер или фильтр. ` +
+        "В Firefox может работать: там свой DNS-over-HTTPS. Это про сеть, а не про токен",
+    };
+  }
+
+  for (const family of [4, 6]) {
+    const target = addresses.find((item) => item.family === family);
+    if (!target) continue;
+    const started = Date.now();
+    const result = await new Promise((resolve) => {
+      const socket = connect({ host: target.address, port: 443, timeout: probeMs });
+      socket.once("connect", () => { socket.destroy(); resolve({ ok: true }); });
+      socket.once("timeout", () => { socket.destroy(); resolve({ ok: false, code: "TIMEOUT" }); });
+      socket.once("error", (error) => resolve({ ok: false, code: error.code || "ERROR" }));
+    });
+    probes.push({ family, address: target.address, ms: Date.now() - started, ...result });
+  }
+
+  // Код ниже объясняет отказ. Он не должен противоречить собственному зонду:
+  // IPv6 может не работать, пока итоговый запрос проходит по IPv4 — тогда
+  // ищем настоящую причину, а не валим всё на семейство адресов.
+  const reachable = probes.filter((item) => item.ok);
   const started = Date.now();
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const response = await fetchImpl(`${API}/users/me`, {
       method: "GET",
-      signal: controller.signal,
       headers: { "Notion-Version": VERSION },
+      signal: AbortSignal.timeout(timeoutMs),
     });
     const ms = Date.now() - started;
     // 401 без токена — это ровно то, что нужно: сервер ответил.
@@ -99,30 +200,52 @@ export async function pingNotion({ fetchImpl = globalThis.fetch, timeoutMs = 150
       ok: true,
       ms,
       status: response.status,
+      addresses,
+      probes,
       why: `Notion отвечает за ${ms} мс (HTTP ${response.status} без токена — так и должно быть). ` +
         "Сеть в порядке, дело не в ней",
     };
   } catch (error) {
     const ms = Date.now() - started;
-    if (error.name === "AbortError") {
+    const code = error?.cause?.code || error?.code || "";
+    const ipv6 = probes.find((item) => item.family === 6);
+    const ipv4 = probes.find((item) => item.family === 4);
+
+    // Отдельный случай: IPv6 в системе есть, но наружу не ходит, и итоговый
+    // запрос из-за этого умер. Браузер в такой сети выживает на IPv4, служба
+    // может упереться в IPv6 — это частая причина «в браузере работает, в
+    // службе нет».
+    if (!reachable.length && ipv6 && !ipv6.ok && ipv4 && ipv4.ok) {
       return {
         ok: false,
-        ms,
-        why: `Notion не ответил за ${Math.round(timeoutMs / 1000)} с: запрос не доходит. ` +
-          "Это VPN, прокси или фильтрация — токен тут не при чём",
+        code: code || "IPv6",
+        addresses,
+        probes,
+        why: `IPv6 до Notion не доходит (${ipv6.code}), а IPv4 доходит (${ipv4.ms} мс). ` +
+          "Служба пробует IPv6 первым и ждёт впустую; браузер в такой сети сам переходит на IPv4. " +
+          "Это про сеть/VPN, а не про токен. Попробуйте выключить IPv6 в VPN или запустить службу с " +
+          "NODE_OPTIONS=--dns-result-order=ipv4first",
       };
     }
-    const reason = networkReason(error);
-    const code = error?.cause?.code || error?.code || "";
+    if (!reachable.length) {
+      const codes = probes.map((item) => `IPv${item.family}: ${item.code || "нет ответа"}`).join(", ");
+      return {
+        ok: false,
+        code: code || "сеть",
+        addresses,
+        probes,
+        why: `до ${NOTION_HOST} не дозвонились вообще (${codes}): это сеть, VPN или фильтр, ` +
+          "а не токен. В браузере тот же адрес может работать: у Firefox свой прокси и своё переключение IPv4/IPv6",
+      };
+    }
     return {
       ok: false,
-      ms,
-      code,
-      why: `до api.notion.com не дозвонились${code ? ` (${code})` : ""}: ` +
-        `${reason || "это сеть, VPN или прокси"}. Токен тут не при чём — исправьте сеть и нажмите ещё раз`,
+      code: code || "сеть",
+      addresses,
+      probes,
+      why: `соединение с ${NOTION_HOST} есть (${probes.filter((item) => item.ok).map((item) => `IPv${item.family} ${item.ms} мс`).join(", ")}), ` +
+        `но запрос не прошёл${code ? ` (${code})` : ""}: ${networkReason(error) || "обрыв на стороне сети"}. Токен тут не при чём`,
     };
-  } finally {
-    clearTimeout(timer);
   }
 }
 
