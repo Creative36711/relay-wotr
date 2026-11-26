@@ -85,8 +85,13 @@ const changedFiles = () => {
     // нельзя: при коде из одного знака (` M`) пробела меньше, и первая буква
     // пути терялась — проверка зоны показывала «ocs/DECISIONS.md».
     const rest = line.replace(/^[ MADRCU?!]{1,2}\s/, "").trim();
-    const f = rest.includes(" -> ") ? rest.split(" -> ")[1] : rest;
-    if (f) set.add(f.trim());
+    const renamed = rest.includes(" -> ") ? rest.split(" -> ")[1] : rest;
+    // Git закавычивает путь, если в нём есть не-ASCII: `?? "relay/Запустить.bat"`.
+    // Кавычки — часть вывода, а не имени. Пока их снимали, зона объявляла файл
+    // вне зоны, хотя `relay/**` его покрывает: проверка падала на кириллице в
+    // имени, то есть ровно на русских файлах запуска.
+    const f = renamed.replace(/^"(.*)"$/s, "$1").trim();
+    if (f) set.add(f);
   }
   return [...set];
 };

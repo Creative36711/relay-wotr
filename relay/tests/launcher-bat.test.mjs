@@ -1,0 +1,66 @@
+// Файл запуска для Windows: проверяем его как текст, а не запускаем.
+//
+// Причина существования пробы — скучная и дорогая. Батник нельзя прогнать в
+// CI (Windows-шелл), но можно проверить то, что обычно и ломает запуск по
+// двойному клику:
+//
+//   1. Файл сохранён с CRLF. `cmd` ломается на одиночных \n в конструкциях
+//      `for`/`if` — а именно они здесь и есть.
+//   2. Кириллица в UTF-8 без BOM. С `chcp 65001` cmd читает файл как UTF-8;
+//      без этого строка «Запускаю транспорт» превращалась бы в мусор.
+//   3. Ключ ищется сам, а не вписан путём конкретной машины.
+//   4. Демо-режим включается только когда ключа действительно нет, и об этом
+//      сказано вслух — иначе «пульт открылся, а книга не та» ищется наугад.
+//   5. Останов транспорта не закрывает окно: прочитать ошибку важнее.
+
+import test from "node:test";
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+
+const path = new URL("../Запустить транспорт.bat", import.meta.url);
+const bytes = readFileSync(path);
+const text = bytes.toString("utf8");
+
+test("батник: переводы строк CRLF — cmd иначе ломается на for/if", () => {
+  assert.ok(bytes.includes(0x0d), "в файле нет ни одного \r");
+  const loneLf = (text.match(/\n/g) || []).length - (text.match(/\r\n/g) || []).length;
+  assert.equal(loneLf, 0, "есть одиночные \n: cmd прочитает такую строку как обрыв команды");
+});
+
+test("батник: UTF-8 без BOM и переключение кодовой страницы", () => {
+  assert.notDeepEqual([...bytes.subarray(0, 3)], [0xef, 0xbb, 0xbf], "BOM перед @echo off — cmd его не переварит");
+  assert.match(text, /^@echo off\r?\nchcp 65001/, "первая строка — @echo off, вторая — chcp 65001");
+});
+
+test("батник: работает из своей папки, а не из текущей", () => {
+  assert.match(text, /cd \/d "%~dp0"/, "переход в папку файла: двойной клик запускает из C:\\Windows");
+  assert.doesNotMatch(text, /cd \/d "[A-Za-z]:\\\\/, "путь не вписан под конкретную машину");
+});
+
+test("батник: ключ сервисного аккаунта ищется сам", () => {
+  for (const candidate of ["..\\sa.json", "sa.json"]) {
+    assert.ok(text.includes(candidate), `не ищет ключ рядом: ${candidate}`);
+  }
+  assert.match(text, /findstr \/m \/c:"client_email"/, "запасной поиск: любой *.json с client_email");
+  assert.match(text, /set "RELAY_GOOGLE_SA_FILE=%SA_FILE%"/, "найденный ключ передаётся службе");
+});
+
+test("батник: книга задана, демо — только при отсутствии ключа", () => {
+  assert.match(text, /set "BOOK_ID=1_MohMfnUvl40CT689gfch_MgPtzqokSw5Bylbl89PFQ"/, "книга владельца прописана");
+  const demo = text.slice(text.indexOf('echo [!] Файл ключа'));
+  assert.match(demo, /set "RELAY_DEMO=1"/, "без ключа включается демо-режим");
+  assert.match(demo, /НЕ подключена/, "и это сказано человеку, а не только в коде");
+  // Демо не должно протекать из прошлой попытки: иначе «пустая книга» выглядит как поломка.
+  assert.match(text, /set "RELAY_DEMO="\r?\n/, "переменная демо-режима сбрасывается на старте");
+});
+
+test("батник: окно не закрывается само — ошибку надо прочитать", () => {
+  const tail = text.slice(text.indexOf("node src\\index.mjs"));
+  assert.match(tail, /^\s*pause\s*$/m, "после падения транспорта окно ждёт нажатия клавиши");
+  assert.match(text, /Это окно закрывать нельзя/, "сказано, что окно — и есть работающий транспорт");
+});
+
+test("батник: без Node.js объясняет, что делать, а не падает молча", () => {
+  assert.match(text, /where node >nul 2>&1/, "проверка наличия Node.js");
+  assert.match(text, /https:\/\/nodejs\.org/, "ссылка на установку");
+});
