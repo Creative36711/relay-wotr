@@ -109,6 +109,8 @@ export function createTransportServer({
   // выбран при старте — под Google-токен или под что-то ещё.
   bridgeStoreFactory = ({ url, key }) => createAppsScriptStore({ url, key, fetchImpl }),
   onBridgeChange = null,
+  // Куда положить принятый из пульта токен Notion (пусто — только память).
+  saveNotionToken = null,
 } = {}) {
   // Демо-режим — не игрушка, а первое знакомство: пульт показывается до того,
   // как заведена книга. Служба при этом та же, меняется только хранилище.
@@ -183,7 +185,7 @@ export function createTransportServer({
 
   // Токен передаётся явно, а не читается службой из окружения: иначе тесты и
   // вложенные вызовы незаметно ходили бы в настоящий Notion.
-  const service = createService({ store, now, log, notionSearch, notionToken, notionDataFetch });
+  const service = createService({ store, now, log, notionSearch, notionToken, notionDataFetch, saveNotionToken });
 
   const server = createServer(async (request, response) => {
     allowOrigin(response);

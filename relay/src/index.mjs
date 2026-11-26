@@ -19,10 +19,11 @@ import { createTransportServer, serverReadiness } from "./server.mjs";
 import { createAppsScriptStore } from "./appsscript-bridge.mjs";
 import { defaultBridgePath, readBridgeConfig } from "./bridge-config.mjs";
 import { defaultProxyPath, readProxyConfig } from "./proxy-config.mjs";
+import { defaultNotionTokenPath, readNotionToken, writeNotionToken } from "./notion-token-config.mjs";
 import { serviceAccountFromEnv, createServiceAccountToken } from "./google-auth.mjs";
 
 // Версия службы в одном месте: она печатается в шапке страницы установки.
-const VERSION = "1.25.3";
+const VERSION = "1.25.4";
 
 const PORT = Number(process.env.PORT || 8787);
 const HOST = process.env.HOST || "0.0.0.0";
@@ -48,6 +49,15 @@ const proxyFromFile = readProxyConfig(proxyFile).url;
 if (proxyFromFile && !process.env.HTTPS_PROXY && !process.env.https_proxy) {
   process.env.HTTPS_PROXY = proxyFromFile;
   process.env.HTTP_PROXY = proxyFromFile;
+}
+// Токен Notion: файл рядом с bridge.txt. Вводится один раз в пульте —
+// служба кладёт его сама; здесь читается при старте, чтобы перезапуск не
+// требовал ввода снова. Окружение (NOTION_TOKEN / RELAY_NOTION_TOKEN)
+// остаётся старшим: скриптовой запуск не обязан заводить файл.
+const notionTokenFile = process.env.RELAY_NOTION_TOKEN_FILE || defaultNotionTokenPath(bridgeFile);
+const notionTokenFromFile = readNotionToken(notionTokenFile);
+if (notionTokenFromFile && !process.env.NOTION_TOKEN && !process.env.RELAY_NOTION_TOKEN) {
+  process.env.NOTION_TOKEN = notionTokenFromFile;
 }
 const fromFile = readBridgeConfig(bridgeFile);
 let bridgeUrl = process.env.RELAY_BRIDGE_URL || fromFile.url || "";
@@ -104,6 +114,9 @@ const { server, service } = createTransportServer({
   bridgeUrl,
   bridgeKey,
   bridgeFile,
+  // Принятый в пульте токен служба кладёт сюда — дальше он переживает
+  // перезапуск без повторного ввода.
+  saveNotionToken: (value) => writeNotionToken(notionTokenFile, value),
   version: VERSION,
   // Владелец ввёл адрес в браузере — служба уже не в демо, но процесс об этом
   // узнаёт только здесь. Сбрасываем флаг и не перезапускаем службу.
@@ -116,6 +129,7 @@ const { server, service } = createTransportServer({
 server.listen(PORT, HOST, async () => {
   console.log(`Транспорт слушает http://${HOST}:${PORT}`);
   if (bridgeUrl) console.log("Книга: через мост Apps Script (ключ Google не нужен)");
+  if (notionTokenFromFile) console.log(`Токен Notion: из ${notionTokenFile} (ввод не нужен)`);
   if (demo) {
     console.log("Режим: демонстрация (состояние в памяти). Для работы задайте RELAY_SPREADSHEET_ID и ключ сервисного аккаунта.");
     return;

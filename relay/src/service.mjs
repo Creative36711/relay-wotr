@@ -92,6 +92,9 @@ export function createService({
   // Сеть для проверки токена из пульта. Параметром, а не глобальным fetch:
   // тест «токен принят» не должен ходить в настоящий Notion.
   notionFetch = globalThis.fetch,
+  // Куда положить принятый токен, чтобы перезапуск не требовал ввода снова.
+  // Пусто — токен живёт только в памяти (поведение прежних версий).
+  saveNotionToken = null,
   // Рабочие чтения из Notion (поиск баз, справочник ролей): если задан, идут
   // через него — обычно это fetch с мостом (см. createNotionFetch). Проверка
   // сети (`notionNet`) этим параметром не пользуется: она меряет прямой путь.
@@ -1158,10 +1161,25 @@ export function createService({
       text: `токен Notion принят: видно баз — ${found.length}`,
       data: { databases: found.map((item) => item.title) },
     });
+    // Локальное сохранение — отдельно от успеха проверки: токен принят, даже
+    // если файл записать не удалось (папка только для чтения). Человеку
+    // говорим правду о том, ждёт ли его ввод при следующем запуске.
+    let tail = " При перезапуске службы токен нужно будет ввести снова.";
+    if (typeof saveNotionToken === "function") {
+      let saved = null;
+      try {
+        saved = saveNotionToken(value);
+      } catch (error) {
+        saved = { ok: false, why: error.message };
+      }
+      tail = saved && saved.ok
+        ? " Токен сохранён локально (notion-token.txt) — при перезапуске вводить не нужно."
+        : ` Сохранить локально не удалось (${saved && saved.why ? saved.why : "неизвестная причина"}) — при перезапуске ввод будет нужен снова.`;
+    }
     return {
       ok: true,
       why: `токен принят. Видно баз: ${found.length}${found.length ? ` (${found.map((item) => item.title).join(", ")})` : ""}. ` +
-        "Нажмите «Найти и применить». При перезапуске службы токен нужно будет ввести снова.",
+        "Нажмите «Найти и применить»." + tail,
       databases: found.map((item) => item.title),
     };
   }
