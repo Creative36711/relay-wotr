@@ -277,9 +277,6 @@
         "Dependency": {
           "rich_text": {}
         },
-        "Проверка": {
-          "rich_text": {}
-        },
         "Кому": {
           "select": {
             "options": []
