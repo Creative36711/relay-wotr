@@ -22,7 +22,7 @@ import { defaultProxyPath, readProxyConfig } from "./proxy-config.mjs";
 import { serviceAccountFromEnv, createServiceAccountToken } from "./google-auth.mjs";
 
 // Версия службы в одном месте: она печатается в шапке страницы установки.
-const VERSION = "1.25.0";
+const VERSION = "1.25.1";
 
 const PORT = Number(process.env.PORT || 8787);
 const HOST = process.env.HOST || "0.0.0.0";
