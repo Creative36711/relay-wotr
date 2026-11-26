@@ -19,7 +19,17 @@ const asJson = argv.includes("--json");
 const zoneIndex = argv.indexOf("--zone");
 // Кавычки в `--zone "a/**, b/**"` снимает сам шелл, но при вызове из npm-скрипта
 // они иногда доезжают — тогда первый символ зоны не совпадает с путём.
-const zone = zoneIndex >= 0 && argv[zoneIndex + 1] ? argv[zoneIndex + 1].replace(/^["']|["']$/g, "").trim() : null;
+const ZONE_ARG = zoneIndex >= 0 && argv[zoneIndex + 1] ? argv[zoneIndex + 1].replace(/^["']|["']$/g, "").trim() : "";
+/**
+ * Зона роли объявлена здесь, а не в workflow.
+ *
+ * Раньше её список жил строкой в `.github/workflows/scriptcat.yml`, и забытое
+ * `relay/` делало каждый PR со службой «чужим кодом» — гейт падал не на ошибке,
+ * а на устаревшей копии списка. Теперь копия одна: `--zone` остаётся для ручных
+ * прогонов и проб, а пустой аргумент означает «зона роли».
+ */
+const DEFAULT_ZONE = "tools/script-cat/**, tools/relay-*.mjs, tools/*.mjs, relay/**, docs/**, package.json, .gitignore, AGENTS.md, README.md, WARDEN-SCRIPTCAT-MIGRATION.md, .github/**";
+const zone = ZONE_ARG || DEFAULT_ZONE;
 
 const checks = [];
 const add = (id, title, ok, detail) => checks.push({ id, title, ok, detail });
@@ -43,10 +53,32 @@ const hasCommit = (ref) => git(["rev-parse", "--verify", "--quiet", `${ref}^{com
 
 // Изменённые файлы: закоммиченные относительно origin/main плюс ещё не закоммиченные
 // и новые — preflight гоняют и до коммита, поэтому смотреть только на HEAD мало.
+/**
+ * Настоящая база PR. В CI проверяется коммит слияния (`GITHUB_SHA`), и `git diff
+ * origin/main` показывает слитое в обратную сторону: у нас усаживаются все файлы,
+ * которые origin/main принёс после точки ветвления. Так зона роли объявляла чужими
+ * 30 файлов `relay/**` — для maintenance-ветки это невинно, но блокировало каждый
+ * PR, где есть скрипт `npm test`.
+ *
+ * База PR — то, от чего действительно ответвлялись: `merge-base`. Она нужна
+ * только когда мы сравниваемся именно со своей базой; обычный запуск в рабочей
+ * копии по-прежнему смотрит на `origin/main`.
+ */
+const prBase = () => {
+  const base = process.env.GITHUB_BASE_REF;
+  if (!base) return null;
+  const ref = `origin/${base}`;
+  if (!hasCommit(ref)) return null;
+  const merged = git(["merge-base", "HEAD", ref], { optional: true });
+  return merged ? { ref, merged } : null;
+};
+
 const changedFiles = () => {
   const set = new Set();
-  if (hasCommit("origin/main")) {
-    for (const f of git(["diff", "--name-only", "origin/main"]).split("\n")) if (f) set.add(f);
+  const base = prBase();
+  const target = base ? base.merged : "origin/main";
+  if (hasCommit("origin/main") || base) {
+    for (const f of git(["diff", "--name-only", target]).split("\n")) if (f) set.add(f);
   }
   for (const line of git(["status", "--porcelain"]).split("\n")) {
     // `status --porcelain` печатает XY, один пробел и путь. Срезать «три знака»
@@ -105,7 +137,12 @@ add(
 );
 
 // 2. Ветка не отстала от origin/main.
-if (!hasCommit("origin/main")) {
+//    Это правило для рабочей копии перед push. В CI оно бессмысленно: PR по
+//    определению может стоять на старой базе, и `behind` там растёт от чужих
+//    коммитов, а не от наших ошибок.
+if (prBase()) {
+  add("behind", "ветка не отстала от origin/main", true, "для PR не проверяется: сравниваемся с merge-base");
+} else if (!hasCommit("origin/main")) {
   add("behind", "ветка не отстала от origin/main", false, "нет ref origin/main — выполните git fetch origin main");
 } else {
   const behind = Number(git(["rev-list", "--count", "HEAD..origin/main"], { optional: true }) || "0");
