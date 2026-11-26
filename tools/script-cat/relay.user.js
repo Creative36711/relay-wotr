@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Relay — передача хода между агентами
 // @namespace    https://arena.ai/
-// @version      1.23.0
+// @version      1.24.0
 // @description  Цикл Координатор → исполнитель → Координатор: агент сам коммитит, пушит и мержит PR; ScriptCat ждёт мерж и нажимает Continue.
 // @match        https://arena.ai/*
 // @match        https://www.arena.ai/*
@@ -93,7 +93,7 @@
     // D-073: отпечаток сборки вшивает build.mjs (SHA-256 источника). Номер версии
     // говорит «какой выпуск», отпечаток — «какая именно сборка»: без него проверка
     // «работает новая версия, а не прежняя под новым номером» невозможна.
-    buildFingerprint: "ab9992b3724b1b61",
+    buildFingerprint: "ad94fbfd86b2bd65",
     repo: "", // для ссылки на PR из номера
     tickMs: 15000,
     mergeGraceMs: 90000, // сколько ждём мерж, прежде чем нажать кнопки за агента
@@ -798,7 +798,7 @@
 
   const NTFY_BASE = "https://ntfy.sh";
   const SCRIPT_VERSION =
-    (typeof GM_info !== "undefined" && GM_info?.script?.version) || "1.23.0";
+    (typeof GM_info !== "undefined" && GM_info?.script?.version) || "1.24.0";
 
   /** «https://ntfy.sh/topic?x=1» и «topic» одинаково дают topic. */
   function normalizeNtfyTopic(raw) {
@@ -4006,11 +4006,22 @@
     return roles();
   }
 
+  /**
+   * Активные роли — по строке «Ролей», без требования адреса.
+   *
+   * D-015: у неадминских ролей «Agent URL» снят, потому что рабочий адрес —
+   * пара (роль, слот) в «Экземплярах». Прежний фильтр `r.id && r.url` был
+   * написан, когда адрес выводился из ссылки, и после снятия адресов состав
+   * миссии стал бы пустым: гейт укомплектованности объявил бы «некомплект» по
+   * каждой роли сразу, хотя роли есть и работают.
+   *
+   * Поэтому здесь остаётся только «Активна». `id` заполняется адресом строки,
+   * если он есть, и адресом экземпляра — если его нет; это делает
+   * `roleAddress`, а не этот список.
+   */
   async function roles() {
     const rows = await roleRows();
-    const active = rows.filter((r) => r.id && r.url && r.status === "Активна");
-    const ids = active.map((r) => norm(r.id));
-    if (new Set(ids).size !== ids.length) throw new Error("Две активные роли указывают на один Agent URL.");
+    const active = rows.filter((r) => r.status === "Активна" && (r.name || r.id));
     if (active.filter((r) => r.fn === "Coordinator").length > 1)
       throw new Error("Активных Coordinator больше одного.");
     return active;
@@ -4677,6 +4688,198 @@
       }
     }
     return kept;
+  }
+
+  // ───────────────────── экземпляры: адрес пары (роль, слот) ─────────────────────
+  // D-015 (1.24.0): у неадминских ролей «Agent URL» в «Ролях» больше нет.
+  //
+  // Причина не в чистоте базы, а в том, что адрес роли перестал быть адресом
+  // работы. У роли столько агентов, сколько рабочих контейнеров, и «Agent URL»
+  // в строке роли — один. Пока он держал рабочий адрес, всё зависело от того,
+  // какой контейнер его вписал последним: три агента одной роли в трёх
+  // контейнерах смотрели в одну строку, и задание уезжало не тому.
+  //
+  // Теперь рабочий адрес — строка листа «Экземпляры»: `Роль | Слот | Agent URL`.
+  // В «Ролях» адрес остался только у админских ролей (Warden, Coordinator) и
+  // означает «адрес по умолчанию»: у администратора ровно один агент, и
+  // отдельная строка пары для него ничего не уточняет.
+  //
+  // Здесь только чтение через службу Relay (`/api/snapshot`, CORS `*`), ни
+  // записи, ни создания: создаёт лист и строки служба. Нет службы — нет адреса
+  // пары, и работает прежний порядок (адрес строки роли), а не тишина.
+
+  /** Сколько живёт прочитанный снимок: шаг читает его несколько раз. */
+  const INSTANCES_CACHE_MS = 30000;
+
+  /**
+   * Основа службы Relay.
+   *
+   * Хранится в профиле (`cfn-relay-url`), потому что у каждого проекта своя
+   * книга, а значит и свой адрес: это настройка, а не константа сборки.
+   * `http://` разрешён нарочно: служба живёт на машине владельца, и HTTPS для
+   * localhost — самообман, а не защита.
+   */
+  function relayBase() {
+    const raw = String(GM_getValue("cfn-relay-url", "") || "").trim().replace(/\/+$/, "");
+    if (!raw) return "";
+    if (!/^https?:\/\/[^\s/]+/i.test(raw)) return "";
+    return raw;
+  }
+
+  const relayConfigured = () => Boolean(relayBase());
+
+  /**
+   * Снимок состояния из службы.
+   *
+   * Живёт в памяти вкладки: шаг спрашивает экземпляры несколько раз (очередь
+   * приёмки, охрана дублей, гейт состава), и три одинаковых запроса на шаг —
+   * это три отказа сети, после которых шаг падает. Тридцать секунд — меньше
+   * шага, поэтому свежесть не страдает, а цена сбоя падает.
+   */
+  let relaySnapshotCache = { at: 0, data: null, base: "" };
+
+  async function relaySnapshot({ fresh = false } = {}) {
+    const base = relayBase();
+    if (!base) return null;
+    const age = Date.now() - Number(relaySnapshotCache.at || 0);
+    if (!fresh && relaySnapshotCache.data && relaySnapshotCache.base === base && age < INSTANCES_CACHE_MS) {
+      return relaySnapshotCache.data;
+    }
+    const data = await request("GET", `${base}/api/snapshot`, {}, undefined, { retry: false });
+    if (!data || typeof data !== "object") throw new Error("служба Relay вернула не снимок");
+    relaySnapshotCache = { at: Date.now(), data, base };
+    return data;
+  }
+
+  /** Слоты книги: служба знает их имена и аккаунты, скрипт — нет. */
+  async function relaySlots() {
+    try {
+      const shot = await relaySnapshot();
+      const list = Array.isArray(shot?.slots) ? shot.slots : [];
+      return list.map((slot) => ({
+        slotId: String(slot.slotId || slot["Слот"] || "").trim(),
+        account: String(slot.account || "").trim(),
+        admin: slot.admin === true,
+      })).filter((slot) => slot.slotId);
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * Слот этой вкладки — по почте её аккаунта.
+   *
+   * Слот в книге и есть «контейнер»: у него имя (`admin`, `worker-1`…) и почта
+   * Arena. Брать первый попавшийся слот нельзя — тогда все вкладки считали бы
+   * себя одним контейнером, и адрес пары указывал бы не на того агента.
+   * Почты нет (подпись не прочитана) — слот неизвестен: пусть решает
+   * вызывающий, а не догадка.
+   */
+  async function relayCurrentSlot() {
+    // `readAccountEmail` объявлен в 44-accounts.js, то есть ниже по сборке:
+    // обращение по имени, а не по значению на момент объявления.
+    const read = typeof readAccountEmail === "function"
+      ? await readAccountEmail({ expand: false }).catch(() => null)
+      : null;
+    const email = String((read && read.email) || accountSeen().email || "").trim();
+    if (!email) return "";
+    const slots = await relaySlots();
+    const mine = slots.find((slot) => norm(slot.account) === norm(email));
+    return mine ? mine.slotId : "";
+  }
+
+  /**
+   * Экземпляры из снимка, в форме листа «Экземпляры».
+   *
+   * Служба отдаёт снимок кратко (`role`, `slot`, `url`), а правила состава и
+   * очереди ждут имена колонок (`Роль`, `Слот`, `Agent URL`). Переводим здесь,
+   * один раз: иначе каждая функция повторяла бы перевод по-своему и
+   * разошлась бы с книгой.
+   */
+  function relayInstances(shot) {
+    const list = Array.isArray(shot?.instances) ? shot.instances : [];
+    return list.map((item) => ({
+      "Роль": String(item.role || item["Роль"] || "").trim(),
+      "Слот": String(item.slot || item["Слот"] || "").trim(),
+      "Agent URL": String(item.url || item["Agent URL"] || "").trim(),
+      "Состояние": String(item.state || item["Состояние"] || "").trim(),
+      "Последняя жизнь": String(item.lastSeen || item["Последняя жизнь"] || "").trim(),
+      "Заметка": String(item.note || item["Заметка"] || "").trim(),
+    })).filter((item) => item["Роль"]);
+  }
+
+  /**
+   * Рабочий адрес пары (роль, слот).
+   *
+   * Возвращает `{ url, state, slot, why }`. Пусто и без причины — это не ответ:
+   * вызывающий должен знать, чего именно не хватает («пары нет», «адрес не
+   * заполнен», «служба не настроена»), иначе на экране снова появится
+   * «Agent URL пуст» там, где дело в другом.
+   */
+  async function instanceFor(roleName, slotId) {
+    const name = String(roleName || "").trim();
+    if (!name) return { url: "", state: "", why: "роль не названа" };
+    if (!relayConfigured()) return { url: "", state: "", why: "адрес службы Relay не задан в ⚙" };
+    let shot = null;
+    try {
+      shot = await relaySnapshot();
+    } catch (error) {
+      return { url: "", state: "", why: `служба Relay не ответила: ${firstLine(String((error && error.message) || error))}` };
+    }
+    const instances = relayInstances(shot);
+    // Слот не задан — это «в моём контейнере»: вкладка знает свой слот по
+    // почте аккаунта. Без этой подстановки роль с тремя агентами находилась бы
+    // «где-то», и задание уезжало бы в чужой контейнер.
+    const wantSlot = String(slotId || "").trim() || (await relayCurrentSlot());
+    const inSlot = instances.filter((item) => norm(item["Роль"]) === norm(name) &&
+      (!wantSlot || norm(item["Слот"]) === norm(wantSlot)));
+    const withUrl = inSlot.find((item) => item["Agent URL"]);
+    if (withUrl) {
+      return { url: withUrl["Agent URL"], state: withUrl["Состояние"], slot: withUrl["Слот"], why: "" };
+    }
+    if (inSlot.length) {
+      const one = inSlot[0];
+      return {
+        url: "", state: one["Состояние"], slot: one["Слот"],
+        why: `экземпляр «${name}» в ${one["Слот"]} есть, но адрес не заполнен`,
+      };
+    }
+    return { url: "", state: "", why: wantSlot ? `пары «${name}» / ${wantSlot} нет в «Экземплярах»` : `«${name}» нет в «Экземплярах»` };
+  }
+
+  /**
+   * Адрес роли для доставки — без «слота этой вкладки».
+   *
+   * Нужен там, где адресат не привязан к контейнеру отправителя: обратная связь
+   * уходит Warden'у, и его агент живёт в админском слоте, а не в том, откуда
+   * пишут. Правило: экземпляр пары, если он есть, затем строка роли.
+   *
+   * Строка роли — запасной путь, а не равноправный источник: у неадминских
+   * ролей её адрес снят (D-015), и пустое значение здесь означает именно
+   * «адреса нет», а не «ещё не читали».
+   */
+  async function roleInstanceUrl(roleName, { slotId = "" } = {}) {
+    const found = await instanceFor(roleName, slotId);
+    if (found.url) return found.url;
+    // Второй заход без слота: у роли может быть агент в другом контейнере —
+    // это хуже, чем «свой», но лучше, чем «нет адреса» для обратной связи.
+    if (slotId) {
+      const any = await instanceFor(roleName, "");
+      if (any.url) return any.url;
+    }
+    return "";
+  }
+
+  /** Почему адреса нет — человеческим языком, для журнала и пауз. */
+  async function roleAddressWhy(roleName, { slotId = "" } = {}) {
+    const found = await instanceFor(roleName, slotId);
+    if (found.url) return "";
+    if (slotId && !found.why.startsWith("пары")) return found.why;
+    if (slotId) {
+      const any = await instanceFor(roleName, "");
+      return any.url ? "" : any.why;
+    }
+    return found.why;
   }
 
   // ───────────────────────────── сообщения чата ─────────────────────────────
@@ -13212,9 +13415,11 @@
    *
    * Теперь у вопроса есть место и цена. Агент пишет его полем `question` в
    * маркере и обязан назвать вариант по умолчанию: транспорт записывает строку в
-   * базу «Вопросы», цикл идёт дальше по этому варианту, ответ Мастера приходит
-   * на следующем ходе. Без варианта по умолчанию вопрос не принимается — иначе
-   * это не вопрос, а остановка.
+   * базу «Вопросы», цикл идёт дальше по этому варианту. С 1.24.0 ответ Мастера
+   * не ждёт «следующего хода»: очередь приёмки передаёт любую свободную строку
+   * сразу, потому что контейнеры Warden/TM и исполнителей не пересекаются.
+   * Без варианта по умолчанию вопрос не принимается — иначе это не вопрос, а
+   * остановка.
    */
   const Q = { wait: "Ждёт", done: "Решено", byDefault: "Принят дефолт", cancelled: "Отменён" };
 
@@ -13787,7 +13992,10 @@
     const head = "Обратная связь без ответа (вопросы и предложения): ";
     // Хвост — не украшение: без него агент примет сжатый текст за полный вопрос.
     // Поэтому при сжатии он уходит вперёд, вместе с отметкой (D-078).
-    const tail = " Ответ придёт на следующем ходе — не задавай их снова и не останавливайся.";
+    // 1.24.0: «на следующем ходе» больше не правда — приёмка передаёт вопрос
+    // сразу, как только он записан. Агент не должен из-за старой формулировки
+    // ждать хода или повторять вопрос.
+    const tail = " Ответ придёт сразу, отдельным ходом — не задавай их снова и не останавливайся.";
     // Вторая половина общего порога — открытым вопросам. Без этого деления
     // каждая часть держалась в своём пороге, а вместе они давали 3904 и план
     // снова упирался в предел профиля (D-078).
@@ -16205,10 +16413,16 @@
       // хватает — статуса, Agent URL или самой роли (D-075 п. 4).
       const directoryNow = await roleRows().catch(() => []);
       const recipientOptions = await recipientOptionNames().catch(() => []);
-      const roster = missionRoster(rosterCards, { directory: directoryNow, recipientOptions });
+      // D-015: адрес роли — пара (роль, слот) в «Экземплярах». Гейт состава без
+      // этих строк объявил бы некомплект по каждой неадминской роли: в «Ролях»
+      // её «Agent URL» больше нет, и это норма, а не недозаполненность.
+      const instancesNow = await relayInstances(await relaySnapshot().catch(() => null));
+      const roster = missionRoster(rosterCards, { directory: directoryNow, recipientOptions, instances: instancesNow });
       if (!roster.ok) {
         const provisionPlan = provisionRosterRequest(roster.broken, provisionConfig(), provisionRequestState());
-        const gate = rosterGate(rosterCards, { directory: directoryNow, recipientOptions, provision: provisionPlan });
+        const gate = rosterGate(rosterCards, {
+          directory: directoryNow, recipientOptions, instances: instancesNow, provision: provisionPlan,
+        });
         pause(gate.reason, { kind: "mission-roster", ref: mission.id, need: roster.broken.map((r) => r.name).join(", ") });
         return true;
       }
@@ -16785,9 +16999,21 @@
    * функции два разных права.
    */
   async function arbiterRole() {
+    // D-015: адрес приёмки — экземпляр пары (роль, слот). Строка «Ролей»
+    // остаётся вторым источником: у админских ролей адрес там есть по закону,
+    // у старых книг — по наследству.
     const list = await roles().catch(() => []);
-    return list.find((r) => r.fn === "Reviewer" && r.url && r.status === "Активна") ||
-      list.find((r) => r.fn === "Reviewer" && r.url) || null;
+    const reviewers = list.filter((r) => r.fn === "Reviewer");
+    const active = reviewers.filter((r) => r.status === "Активна");
+    for (const row of active) {
+      const url = row.url || (await roleInstanceUrl(row.name).catch(() => ""));
+      if (url) return { ...row, url };
+    }
+    for (const row of reviewers) {
+      const url = row.url || (await roleInstanceUrl(row.name).catch(() => ""));
+      if (url) return { ...row, url };
+    }
+    return null;
   }
 
   /** Короткая строка ответа для промпта: без разметки и лишних переводов. */
@@ -17347,7 +17573,39 @@
     return clean;
   }
 
-  const answerPending = () => answerQueue()[0] || null;
+  /**
+   * Очередь приёмки: любая строка, которой ещё не занимаются.
+   *
+   * 1.24.0. Раньше здесь стояло `answerQueue()[0]`, и это делало очередь
+   * строго последовательной: голова одна на весь транспорт, и пока адресат
+   * головы не готов (не «Активна», пуст адрес, контейнер занят), за ней не
+   * проходила ни одна другая строка. Владелец сформулировал прямо: контейнеры
+   * не пересекаются, обратная связь от любого агента должна уходить Warden
+   * или TM сразу, а не «выждать ходы».
+   *
+   * Теперь голова — это первая СВОБОДНАЯ строка: та, по которой не стоит
+   * отправка и по которой не идёт ход. Строка, которую нельзя передать
+   * сейчас, не задерживает остальные; ждёт только она сама.
+   *
+   * `gate`-вопросы (они держат ход) остаются первыми в очереди — не по
+   * порядку вставки, а по праву: ход без ответа на них дальше не идёт.
+   */
+  const answerInFlight = (item) => Boolean(item && item.sendingAt &&
+    Date.now() - Number(item.sendingAt) < (Number(C.answerSendHoldMs) || 120_000));
+
+  function answerPending(exclude = null) {
+    const skip = exclude instanceof Set ? exclude : new Set(exclude ? [norm(exclude)] : []);
+    const list = answerQueue().filter((item) => item && item.id && !skip.has(norm(item.id)));
+    if (!list.length) return null;
+    const live = GM_getValue(K.expect, null);
+    const liveId = String(live?.ref || "");
+    const free = (item) => !answerInFlight(item) && norm(item.id) !== norm(liveId);
+    const gated = list.filter((item) => item.gate === true);
+    return gated.find(free) || list.find(free) || null;
+  }
+
+  /** Сколько строк очереди приёмки ещё не передано — для панели и журнала. */
+  const answerQueueSize = () => answerQueue().filter((item) => item && item.id).length;
 
   /**
    * Сколько очередь приёмки ждёт свободного слота.
@@ -17461,16 +17719,36 @@
     const questionMission = await missionForQuestion(item, mission);
     const asked = String(item.need || "").trim();
     const directory = await roleRows().catch(() => []);
+    // 1.24.0: адрес экземпляра важнее адреса строки.
+    //
+    // До 1.24.0 у роли был один `Agent URL`, и он же был адресом доставки.
+    // Теперь у роли столько агентов, сколько рабочих контейнеров, и рабочий
+    // адрес пары (роль, слот) — лист «Экземпляры». Адрес в строке роли
+    // остался только у админских ролей как «адрес по умолчанию». Поэтому
+    // сначала спрашиваем экземпляр, потом строку: иначе после снятия адреса
+    // у неадминских ролей очередь считала бы живого агента «неготовым».
+    const instanceUrlOf = (name) => {
+      try {
+        if (typeof roleInstanceUrl === "function") return roleInstanceUrl(name);
+      } catch { /* лист «Экземпляры» недоступен — работает адрес строки */ }
+      return "";
+    };
     const named = asked ? directory.find((r) => norm(r.name) === norm(asked)) : null;
     const addresseeReady = Boolean(named && named.status === "Активна" && named.url);
     if (asked && !addresseeReady) {
       const why = named ? "не активна или пуст «Agent URL»" : "нет в «Ролях»";
+      // 1.24.0: заголовок «не готова» говорит по делу — адрес роли больше не
+      // хранится в «Ролях» (там остались только админские адреса по
+      // умолчанию), а рабочий адрес пары (роль, слот) живёт в «Экземплярах».
+      const whyText = named
+        ? "не «Активна» либо адреса нет ни в строке роли, ни в «Экземплярах»"
+        : "нет в «Ролях»";
       if (item.gate === true) {
         logThrottled(
           `answer-need:${item.id}`,
           `Обратная связь «${oneLine(item.text, 90)}» адресована роли «${asked}», а она не готова ` +
-            `(${why}). Вопрос держит ход и остаётся в очереди: ` +
-            "как только роль дозаполнят, ход уйдёт без повторной записи.",
+            `(${whyText}). Вопрос держит ход и остаётся в очереди: ` +
+            "остальные строки он не задерживает, а ход уйдёт без повторной записи, как только роль дозаполнят.",
           true,
           { ntfy: "quiet", title: "Relay: адресат обратной связи не готов" },
         );
@@ -17483,7 +17761,7 @@
       // не она — перенаправит своим ответом, и это видно в журнале.
       logThrottled(
         `answer-need-fallback:${item.id}`,
-        `Обратная связь «${oneLine(item.text, 90)}» адресована роли «${asked}», а она не готова (${why}). ` +
+        `Обратная связь «${oneLine(item.text, 90)}» адресована роли «${asked}», а она не готова (${whyText}). ` +
           "Ход этот вопрос не держит, поэтому отвечает приёмка — строка не ждёт в голове очереди.",
         true,
         { ntfy: "quiet", title: "Relay: адресат обратной связи не готов" },
@@ -17510,6 +17788,21 @@
       return false;
     }
     const turnId = uid();
+    // 1.24.0: отметка «по этой строке идёт отправка».
+    //
+    // Раньше последовательность очереди держалась порядком в массиве. Теперь,
+    // когда первая свободная строка уходит не по порядку, нужен явный признак
+    // занятости: иначе каждый следующий тик заново выбирал бы ту же строку и
+    // отправлял второй такой же вопрос. Отметка снимается при записи ответа и
+    // сама гаснет по сроку (`answerSendHoldMs`) — после перезагрузки страницы
+    // она не превращает строку в вечно занятую.
+    const markSending = (on) => {
+      const list = answerQueue().map((row) => norm(row.id) === norm(item.id)
+        ? { ...row, sendingAt: on ? Date.now() : 0 }
+        : row);
+      GM_setValue(K.answers, list);
+    };
+    markSending(true);
     const queued = await sendToRole(role, answerPrompt(questionMission, role, item, turnId), "answer", item.id, {
       questionId: item.id,
       missionId: questionMission?.id || item.missionId || "",
@@ -17525,6 +17818,7 @@
       deferred: item.deferred || null,
     });
     if (!queued) {
+      markSending(false);
       logThrottled(
         `answer-send:${item.id}:${turnId}`,
         `Вопрос «${oneLine(item.text, 90)}» не передан «${role.name}»: транспорт не поставил ход в очередь. Вопрос остаётся «Ждёт» и не теряется.`,
@@ -18020,6 +18314,24 @@
         log(`Continue на странице приёмки не нажата: ${e.message}. Адресный возврат сохранён.`, true);
       });
     }
+    // 1.24.0: ответ закрыт — сразу передаём следующую свободную строку.
+    //
+    // Владелец: «последовательная механика устарела, обратная связь должна
+    // уходить Warden/TM сразу». Здесь кончается один ответ, и больше ничего
+    // не держит очередь: следующая строка уходит тем же шагом, а не «на
+    // следующем ходе». Адресный возврат автору от этого не страдает — он
+    // живёт отдельной записью и отправляется там, где его видит его вкладка.
+    const nextFree = answerPending(expect.ref);
+    if (nextFree) {
+      const missionForNext = await missionForQuestion(nextFree, null).catch(() => null);
+      const handed = await startAnswer(missionForNext, nextFree).catch((e) => {
+        logThrottled(`answer-next:${nextFree.id}`, `Следующая строка очереди не передана: ${e.message}. Она осталась «Ждёт».`, true);
+        return false;
+      });
+      if (handed) {
+        log(`Следующий вопрос «${oneLine(nextFree.text, 60)}» передан сразу, без ожидания хода.`, false, { ntfy: "quiet" });
+      }
+    }
     if (returnEvent) {
       const result = await startAnswerReturn(returnEvent);
       if (result === "queued" || result === "recovered" || result === "held") return true;
@@ -18072,14 +18384,20 @@
       return "held";
     }
     const row = hits[0];
-    if (row.status !== "Активна" || !row.url) {
+    // D-015: адрес автора — экземпляр пары (роль, слот), а не строка «Ролей».
+    // Автор вопроса работает в своём контейнере, и адрес его агента живёт в
+    // «Экземплярах»; пустой «Agent URL» строки больше не признак неготовности.
+    const authorUrl = String(row.url || "").trim() ||
+      (await roleInstanceUrl(row.name).catch(() => ""));
+    if (row.status !== "Активна" || !authorUrl) {
+      const addressWhy = authorUrl ? "" : await roleAddressWhy(row.name).catch(() => "");
       pause(`Ответ на «${event.questionId}» сохранён, но автор «${row.name}» не готов к прямой доставке ` +
-        `(${row.status || "без статуса"}${row.url ? "" : ", Agent URL пуст"}). Очередь сохранена: включите роль и продолжите.`, {
+        `(${row.status || "без статуса"}${addressWhy ? `, ${addressWhy}` : ""}). Очередь сохранена: включите роль и продолжите.`, {
         kind: "answer-return-role", ref: event.questionId, turnId: event.turnId,
       });
       return "held";
     }
-    const role = { ...row, id: row.id, name: row.name, url: row.url, fn: row.fn || "" };
+    const role = { ...row, id: row.id, name: row.name, url: authorUrl, fn: row.fn || "" };
     const text = answerReturnText(event, "ответчика");
     const expected = {
       roleId: role.id, roleName: role.name, roleUrl: role.url, roleFn: role.fn,
@@ -18126,6 +18444,14 @@
       if (await startAnswer(missionForNext, next)) return true;
       if (answerQueue().some((item) => norm(item.id) === norm(next.id))) return true;
     }
+    // 1.24.0: «свободной строки нет» больше не значит «очередь пуста».
+    //
+    // Строка, по которой только что ушла отправка, помечена `sendingAt` и по
+    // правилам занятости свободной не считается. Без этой проверки транспорт
+    // объявлял бы очередь пустой ровно в тот момент, когда она работает, и
+    // возвращал план Координатору поверх живого ответа — тот самый сброс хода,
+    // ради которого очередь и перестала быть последовательной.
+    if (answerQueueSize() > 0) return true;
     const mission = await activeMission().catch(() => null);
     if (!mission) {
       log(`Ответ на вопрос «${event.questionId || "?"}» сохранён${directDelivered ? " и возвращён автору" : ""}; активной миссии нет, Coordinator не вызываю.`);
@@ -18378,11 +18704,28 @@
     // На границе выдачи кеш недостаточен: функция или Agent URL могли только
     // что измениться. Ошибка чтения не разрешает выдачу по устаревшим данным.
     const directory = await roleRows({ fresh: true, requireFresh: true });
+    // Страж «этот адрес принадлежит приёмке» остаётся, но срабатывает только
+    // когда id известен: у неадминских ролей после D-015 адреса строки нет, и
+    // id пуст законно. Пустой id — не улика, а отсутствие данных; подмену
+    // агента в этом случае ловит сверка ниже.
     if (role.id && directory.some((r) => r.fn === "Reviewer" && r.id && norm(r.id) === norm(role.id)))
-      return "этот Agent URL принадлежит Reviewer; рабочую карточку переназначь другому агенту";
-    const confirmed = directory.filter((r) => norm(r.name) === norm(role.name) && r.id && role.id &&
-      norm(r.id) === norm(role.id) && r.url && r.status === "Активна");
-    if (confirmed.length !== 1 || confirmed[0].fn !== role.fn || !["Executor", "Auditor"].includes(confirmed[0].fn))
+      return "этот агент принадлежит Reviewer; рабочую карточку переназначь другому агенту";
+    // D-015: сверка идёт по имени и функции, а не по непустому `Agent URL`
+    // строки: у неадминских ролей его больше нет, и прежний фильтр отказывал бы
+    // в выдаче каждому исполнителю после снятия адресов. Адрес проверяется
+    // отдельно — пара (роль, слот) должна существовать в «Экземплярах».
+    const confirmed = directory.filter((r) => norm(r.name) === norm(role.name) && r.status === "Активна");
+    const confirmedUrl = confirmed.length === 1
+      ? String(confirmed[0].url || "").trim() || (await roleInstanceUrl(confirmed[0].name).catch(() => ""))
+      : "";
+    const seenId = norm(role.id);
+    const nowId = confirmed.length === 1 ? norm(confirmed[0].id) : "";
+    const seenUrl = norm(role.url);
+    if ((seenId && nowId && seenId !== nowId) || (seenUrl && confirmedUrl && norm(confirmedUrl) !== seenUrl)) {
+      return "агент роли сменился перед выдачей; перечитай «Экземпляры» и выбери роль заново";
+    }
+    if (confirmed.length !== 1 || !confirmedUrl || confirmed[0].fn !== role.fn ||
+      !["Executor", "Auditor"].includes(confirmed[0].fn))
       return "роль или её функция изменились перед выдачей; перечитай базу «Роли» и выбери активного исполнителя или аудитора";
 
     // Цель выдачи — репозиторий сессии роли (карта route репозиториев профиля)
@@ -21220,13 +21563,24 @@
     // отказа: «нет активной роли». Раньше код брал первую строку с заполненным
     // URL и молча считал её активной — роль со статусом «Ждёт» уезжала разбор,
     // которого Мастер ещё не разрешил (D-074 п. 3: строка и доступ — разные шаги).
-    const hit = list.find((r) => r.fn === "Maintainer" && r.url && r.status === "Активна") || null;
+    // D-015: адрес Maintainer'а — экземпляр пары (роль, слот), а не строка
+    // «Ролей». Его агент живёт в админском контейнере, и `url` строки после
+    // снятия адресов у неадминских ролей пуст законно.
+    const withUrl = [];
+    for (const row of list.filter((r) => r.fn === "Maintainer" && r.status === "Активна")) {
+      const url = row.url || (await roleInstanceUrl(row.name).catch(() => ""));
+      if (url) withUrl.push({ ...row, url });
+    }
+    const hit = withUrl[0] || null;
     if (!hit) {
       const seenRow = list.find((r) => r.fn === "Maintainer") || null;
+      const addressWhy = seenRow
+        ? await roleAddressWhy(seenRow.name).catch(() => "")
+        : "";
       const why = !seenRow
         ? "в базе «Роли» нет строки с функцией Maintainer"
-        : !seenRow.url
-          ? "у роли Maintainer пуст «Agent URL» — разбор передавать некуда"
+        : addressWhy
+          ? `адрес Maintainer'а не найден: ${addressWhy} — разбор передавать некуда`
           : `роль Maintainer есть, но «Статус» = «${seenRow.status || "пуст"}»: нужна активная строка`;
       return { role: null, why };
     }
@@ -21722,8 +22076,19 @@
   //  • поломка доставки остаётся транспорту, и это разные причины.
   const ROSTER_SOURCE = 1;
 
-  /** Пункт проверки: что именно не так с ролью. Возвращает пустой список — роль годна. */
-  function rosterRoleGaps(role, { directory = [], recipientOptions = [] } = {}) {
+  /**
+   * Пункт проверки: что именно не так с ролью. Пустой список — роль годна.
+   *
+   * D-015: адрес проверяется как ПАРА (роль, слот), а не как `Agent URL` строки.
+   *
+   * До 1.24.0 у роли был один адрес, и «пуст Agent URL» был точным ответом.
+   * Теперь рабочих агентов у роли столько, сколько контейнеров, и адрес живёт
+   * в «Экземплярах». Требование адреса строки объявляло бы некомплект по
+   * каждой неадминской роли — то есть гейт останавливал бы выдачу там, где всё
+   * в порядке. Поэтому источник адреса — `instances`, а `row.url` остался
+   * запасным путём для админских ролей и старых книг.
+   */
+  function rosterRoleGaps(role, { directory = [], recipientOptions = [], instances = [] } = {}) {
     const gaps = [];
     const name = String(role?.name || "").trim();
     if (!role) return ["роль не названа"];
@@ -21735,9 +22100,22 @@
       (role.status || role.url || role.fn ? role : null);
     if (!row) return [`роли «${name}» нет в «Ролях»`];
     if ((row.status || "") !== "Активна") gaps.push(`Статус «${row.status || "пуст"}»`);
-    if (!String(row.url || "").trim()) gaps.push("Agent URL пуст");
-    else if (!/^https:\/\/[^\s/]+\/agent\/[\w-]+\/?$/i.test(String(row.url).trim()) &&
-      !/^\/agent\/[\w-]+\/?$/.test(String(row.url).trim())) gaps.push("Agent URL не похож на страницу агента");
+    // Экземпляр пары важнее строки: он и есть рабочий адрес (D-015).
+    const mine = (Array.isArray(instances) ? instances : [])
+      .filter((item) => norm(item && (item["Роль"] || item.role)) === norm(name));
+    const instanceUrl = mine.map((item) => String((item && (item["Agent URL"] || item.url)) || "").trim())
+      .find(Boolean) || "";
+    const declared = String(row.url || "").trim();
+    const admin = row.agentAdmin === true;
+    // У админской роли адрес в строке — адрес по умолчанию и остаётся.
+    // У неадминской пустая строка — норма: смотрим экземпляры.
+    const address = instanceUrl || declared;
+    if (!address) {
+      gaps.push(admin ? "Agent URL пуст" : "нет агента: в «Экземплярах» нет адреса пары (роль, слот)");
+    } else if (!/^https:\/\/[^\s/]+\/agent\/[\w-]+\/?$/i.test(address) &&
+      !/^\/agent\/[\w-]+\/?$/.test(address)) {
+      gaps.push("Agent URL не похож на страницу агента");
+    }
     if (!row.fn) gaps.push("Функция не задана");
     // «Кому» — только для рабочих ролей: карточку берут Executor и Auditor.
     if (["Executor", "Auditor"].includes(row.fn) && recipientOptions.length &&
@@ -21754,7 +22132,7 @@
    * список ролей, по каждой — годна она или что именно не так, и общий вердикт.
    * Пустая миссия — не некомплект: нарезать очередь вправе Координатор.
    */
-  function missionRoster(cards = [], { directory = [], recipientOptions = [] } = {}) {
+  function missionRoster(cards = [], { directory = [], recipientOptions = [], instances = [] } = {}) {
     const names = [];
     const seen = new Set();
     for (const card of cards || []) {
@@ -21765,8 +22143,14 @@
     }
     const roles = names.map((name) => {
       const row = (directory || []).find((r) => norm(r.name) === norm(name)) || null;
-      const gaps = rosterRoleGaps({ name, ...(row || {}) }, { directory, recipientOptions });
-      return { name, fn: row?.fn || "", status: row?.status || "", url: row?.url || "", gaps, ok: gaps.length === 0 };
+      const gaps = rosterRoleGaps({ name, ...(row || {}) }, { directory, recipientOptions, instances });
+      // `url` в ответе — рабочий адрес пары, если он есть: по нему вызывающий
+      // видит, куда поедет карточка, не повторяя поиск экземпляра.
+      const pairs = (Array.isArray(instances) ? instances : [])
+        .filter((item) => norm(item && (item["Роль"] || item.role)) === norm(name));
+      const url = pairs.map((item) => String(item["Agent URL"] || item.url || "").trim()).find(Boolean) ||
+        String(row?.url || "").trim();
+      return { name, fn: row?.fn || "", status: row?.status || "", url, gaps, ok: gaps.length === 0 };
     });
     const broken = roles.filter((role) => !role.ok);
     return {
@@ -21793,10 +22177,19 @@
         return `Роли «${role.name}» в базе «Роли» нет${where} — создайте агента в Arena, заполните «Agent URL» и поставьте «Статус» = «Активна».`;
       }
       if (role.status === "Активна" && role.url) {
-        return `Роль «${role.name}» активна и «Agent URL» заполнен${where} — проверьте «Функцию» и «Зону записи»: ${role.gaps.join(", ")}.`;
+        return `Роль «${role.name}» активна и адрес агента есть${where} — проверьте «Функцию» и «Зону записи»: ${role.gaps.join(", ")}.`;
+      }
+      // D-015: адрес пары не заполняют руками в «Ролях» — его ставит транспорт,
+      // когда контейнер создаёт агента. Совет «дозаполните Agent URL» после
+      // снятия адреса у неадминских ролей отправлял бы Мастера в пустое поле.
+      const addressGap = role.gaps.some((gap) => /Экземплярах|Agent URL/.test(gap));
+      if (addressGap && role.status === "Активна") {
+        return `Роль «${role.name}» активна${where}, но рабочего агента пока нет — ` +
+          "транспорт создаст его в контейнере и запишет адрес в «Экземпляры» сам; " +
+          "Мастеру заполнять нечего. Карточка выдастся, как только адрес появится.";
       }
       return `Роль «${role.name}» в «Ролях» есть${where}, но ${role.gaps.join(", ")} — агента создавать не нужно: ` +
-        "дозаполните существующую строку (Статус и Agent URL ставит Мастер).";
+        "дозаполните существующую строку (Статус ставит Мастер).";
     });
     return `${lines.join(" ")} Пока состав не укомплектован, ни одна карточка миссии не выдаётся: ` +
       "это нехватка роли, а не поломка транспорта (D-075).";
@@ -21810,8 +22203,8 @@
    * Гейт ничего не создаёт: он только не даёт выдать карточку и говорит, чего
    * именно ждём.
    */
-  function rosterGate(cards, { directory = [], recipientOptions = [], provision = null } = {}) {
-    const roster = missionRoster(cards, { directory, recipientOptions });
+  function rosterGate(cards, { directory = [], recipientOptions = [], instances = [], provision = null } = {}) {
+    const roster = missionRoster(cards, { directory, recipientOptions, instances });
     if (roster.ok) return { ok: true, roster, pause: null };
     const text = rosterReason(roster);
     const requested = provision && provision.requested;
@@ -23534,11 +23927,22 @@ function reviewPullRequest({ files, pr, zone } = {}) {
           }
           return;
         }
-        const waiting = answerPending();
-        if (waiting) {
+        // 1.24.0: передаём не «голову», а любую свободную строку.
+        //
+        // `answerPending()` уже отдаёт незанятую строку (и первой — ту, что
+        // держит ход), поэтому одна неготовая строка больше не останавливает
+        // остальную обратную связь. Если передача не удалась, строку не
+        // трогаем — она остаётся «Ждёт» и ждёт только себя.
+        let waiting = answerPending();
+        const tried = new Set();
+        let guard = 0;
+        while (waiting && guard < 5) {
+          guard += 1;
+          tried.add(norm(waiting.id));
           const missionForAnswer = await missionForQuestion(waiting, await activeMission().catch(() => null));
           const started = await startAnswer(missionForAnswer, waiting);
           if (started || answerQueue().some((item) => norm(item.id) === norm(waiting.id))) return;
+          waiting = answerPending(tried);
         }
       }
 

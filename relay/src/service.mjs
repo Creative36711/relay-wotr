@@ -20,6 +20,7 @@ import { parseSettings } from "./settings.mjs";
 import { planSetup, applySetup } from "./setup.mjs";
 import { searchDatabases, fetchRoles, notionTokenFrom } from "./notion-db.mjs";
 import { ACTIONS, CONTROL, PROTOCOL_VERSION, validateRequest, idle, work } from "./protocol.mjs";
+import { SHEETS } from "./schema.mjs";
 import { isoNow, norm, clip } from "./util.mjs";
 import { makeQueueItem, QUEUE } from "./queue.mjs";
 import {
@@ -132,13 +133,45 @@ export function createService({
   async function loadInstances() {
     try {
       const { rows } = await store.read("agents");
+      memory.instancesMissing = "";
       return { rows, instances: parseInstances(rows) };
     } catch (error) {
       memory.instancesMissing = error.message;
-      return { rows: [], instances: [] };
+      // 1.24.0: отсутствующий лист — не повод жить без адресов.
+      //
+      // Раньше книга, созданная до 1.20.0, отвечала ошибкой на чтение
+      // «Экземпляров», служба молчала, и ленивое создание агентов не
+      // замыкалось: вкладка создавала агента, а адрес некуда было записать.
+      // Теперь лист создаётся тем же хранилищем (`ensureSheet`: шапка из
+      // схемы, идемпотентно) и читается заново. Если создать не удалось —
+      // остаётся прежнее поведение: пустой список и запись в журнал.
+      try {
+        const made = await store.ensureSheet("agents");
+        if (made && made.created) {
+          log(`лист «Экземпляры» создан: ${SHEETS.agents.columns.join(", ")}`);
+        }
+        const { rows } = await store.read("agents");
+        memory.instancesMissing = "";
+        return { rows, instances: parseInstances(rows) };
+      } catch (again) {
+        memory.instancesMissing = again.message;
+        return { rows: [], instances: [] };
+      }
     }
   }
 
+
+  /**
+   * Имена листов книги — для готовности и пульта.
+   *
+   * Ошибку не глотаем и не превращаем в пустой список: «листов нет» и «книгу не
+   * прочитали» требуют разного поведения, и второе — это уже отказ доступа.
+   */
+  async function sheetTitles() {
+    const meta = await store.meta();
+    const list = Array.isArray(meta?.sheets) ? meta.sheets : [];
+    return list.map((sheet) => String(sheet?.properties?.title || sheet?.title || "")).filter(Boolean);
+  }
 
   async function loadAll() {
     const [slots, queueSheet, runsSheet, eventsSheet, settings, agentsSheet] = await Promise.all([
@@ -559,6 +592,30 @@ export function createService({
       run["Роль"], run["Agent URL"], status, run["Выдан"], at,
       waiting || run["Ожидание"], run["Попытка"], run["Маркер"], run["Ответ"],
     ]]);
+    // «Последняя жизнь» экземпляра — не украшение.
+    //
+    // В схеме листа эта колонка есть, но до 1.24.0 её никто не обновлял: она
+    // означала «когда создан». Теперь `beat` продлевает и её, поэтому по книге
+    // видно, какой агент пары (роль, слот) ещё открыт, а какой умер вместе со
+    // своим контейнером. Без этого приходилось открывать три вкладки глазами.
+    try {
+      const mine = (data.instances || []).find((item) =>
+        norm(item.slot) === norm(run["Слот"]) && norm(item.role) === norm(run["Роль"]));
+      if (mine) {
+        const rows = data.agentsRows || [];
+        const at2 = rows.findIndex((raw) => {
+          const found = parseInstances([raw])[0];
+          return found && found.key === mine.key;
+        });
+        if (at2 >= 0) {
+          await store.updateRange("agents", at2 + 2, [instanceToRow({ ...mine, lastSeen: at })]);
+        }
+      }
+    } catch (error) {
+      // Лист «Экземпляры» может быть недоступен — удар сердца от этого не
+      // перестаёт быть ударом сердца.
+      log(`«Последняя жизнь» экземпляра не обновлена: ${error.message}`);
+    }
     // Молчание дольше стража — это уже событие: по нему и строится окно пакета.
     // Каждый удар сюда писать нельзя: журнал превратится в шум и вытеснит
     // как раз те строки, которые нужны при разборе.
@@ -919,11 +976,11 @@ export function createService({
 
   return {
     handle, hello, pull, beat, report, event, step, pause, resume, setMode, agentReady,
-    enqueue, cancel, setup, snapshot, incidentPackage, loadAll, record, memory,
+    enqueue, cancel, setup, snapshot, incidentPackage, loadAll, record, memory, sheetTitles,
     // Только для тестов: эти функции не входят в протокол и не должны
     // вызываться из вкладки. Отдельным объектом, чтобы «наружу» случайно не
     // уехал лишний вход.
-    __test: { requestAgent, takeProvision, loadInstances, maxPerRole },
+    __test: { requestAgent, takeProvision, loadInstances, maxPerRole, sheetTitles },
   };
 }
 

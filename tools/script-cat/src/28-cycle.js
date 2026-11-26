@@ -695,11 +695,22 @@
           }
           return;
         }
-        const waiting = answerPending();
-        if (waiting) {
+        // 1.24.0: передаём не «голову», а любую свободную строку.
+        //
+        // `answerPending()` уже отдаёт незанятую строку (и первой — ту, что
+        // держит ход), поэтому одна неготовая строка больше не останавливает
+        // остальную обратную связь. Если передача не удалась, строку не
+        // трогаем — она остаётся «Ждёт» и ждёт только себя.
+        let waiting = answerPending();
+        const tried = new Set();
+        let guard = 0;
+        while (waiting && guard < 5) {
+          guard += 1;
+          tried.add(norm(waiting.id));
           const missionForAnswer = await missionForQuestion(waiting, await activeMission().catch(() => null));
           const started = await startAnswer(missionForAnswer, waiting);
           if (started || answerQueue().some((item) => norm(item.id) === norm(waiting.id))) return;
+          waiting = answerPending(tried);
         }
       }
 

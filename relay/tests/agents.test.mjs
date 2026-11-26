@@ -159,3 +159,31 @@ test("service: задание выдаётся только своему сло�
   assert.notEqual(pulled.kind, "provision", `worker-2 не должен создавать агента чужого слота: ${pulled.why}`);
   assert.equal(pulled.work, null);
 });
+
+/**
+ * `beat` продлевает «Последнюю жизнь» экземпляра.
+ *
+ * Колонка была в схеме с 1.20.0 и означала «когда создан». По ней нельзя было
+ * понять, живёт ли агент пары (роль, слот) или его контейнер закрыли, — а
+ * именно этот вопрос задаёт владелец, глядя на книгу: «три агента Godot World
+ * в трёх контейнерах, кто из них ещё открыт?»
+ */
+test("удар сердца вкладки обновляет «Последнюю жизнь» её экземпляра", async () => {
+  const store = createFakeStore({
+    slots,
+    agents: [["Technical Artist", "worker-1", "https://arena.example/agent/ta1", "создан", "2026-11-20T10:00:00Z", "job-1", "2026-11-20T10:00:00Z", ""]],
+    runs: [[
+      "run-1", "card-1", "Проверить сцену", "worker-1", "Creative36711@yandex.ru",
+      "Technical Artist", "https://arena.example/agent/ta1", "issued", "2026-11-20T10:00:00Z",
+      "", "1", "", "",
+    ]],
+  });
+  const service = createService({ store, now: () => Date.parse("2026-11-23T12:34:00Z"), log: () => {} });
+  const beaten = await service.beat({ slotId: "worker-1", runId: "run-1", tab: "aa11", silentMs: 5000 });
+  assert.equal(beaten.ok, true);
+  const row = store.objects("agents")[0];
+  assert.notEqual(row["Последняя жизнь"], "2026-11-20T10:00:00Z", "время жизни сдвинулось");
+  assert.match(row["Последняя жизнь"], /^2026-11-23T12:34/, "это момент удара, а не создания");
+  assert.equal(row["Создан"], "2026-11-20T10:00:00Z", "дата создания не перезаписывается");
+  assert.equal(row["Agent URL"], "https://arena.example/agent/ta1", "адрес на месте");
+});

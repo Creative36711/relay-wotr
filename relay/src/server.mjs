@@ -113,6 +113,9 @@ export function createTransportServer({
     append: async (...args) => (await getStore()).append(...args),
     updateRange: async (...args) => (await getStore()).updateRange(...args),
     meta: async () => (await getStore()).meta(),
+    // Самовосстановление листа: книга владельца живёт с прошлой версии, и
+    // нового листа («Экземпляры», 1.20.0) в ней может не быть вовсе.
+    ensureSheet: async (...args) => (await getStore()).ensureSheet(...args),
   };
   let cachedStore = null;
   let cachedToken = "";
@@ -209,7 +212,16 @@ export function createTransportServer({
 export async function serverReadiness({ service }) {
   try {
     const data = await service.loadAll();
-    return readiness({ settings: data.settings, slots: data.slots });
+    // Листы книги — вторая половина готовности: без «Экземпляров» адрес агента
+    // некуда записать, а цикл при этом выглядит живым (1.24.0).
+    let sheets = null;
+    try {
+      const meta = await service.sheetTitles();
+      sheets = Array.isArray(meta) ? meta : null;
+    } catch {
+      sheets = null;
+    }
+    return readiness({ settings: data.settings, slots: data.slots, sheets });
   } catch (error) {
     return { ok: false, problems: [`таблица состояния недоступна: ${error.message}`] };
   }

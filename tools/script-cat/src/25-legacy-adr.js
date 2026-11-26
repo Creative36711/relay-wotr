@@ -1353,10 +1353,16 @@
       // хватает — статуса, Agent URL или самой роли (D-075 п. 4).
       const directoryNow = await roleRows().catch(() => []);
       const recipientOptions = await recipientOptionNames().catch(() => []);
-      const roster = missionRoster(rosterCards, { directory: directoryNow, recipientOptions });
+      // D-015: адрес роли — пара (роль, слот) в «Экземплярах». Гейт состава без
+      // этих строк объявил бы некомплект по каждой неадминской роли: в «Ролях»
+      // её «Agent URL» больше нет, и это норма, а не недозаполненность.
+      const instancesNow = await relayInstances(await relaySnapshot().catch(() => null));
+      const roster = missionRoster(rosterCards, { directory: directoryNow, recipientOptions, instances: instancesNow });
       if (!roster.ok) {
         const provisionPlan = provisionRosterRequest(roster.broken, provisionConfig(), provisionRequestState());
-        const gate = rosterGate(rosterCards, { directory: directoryNow, recipientOptions, provision: provisionPlan });
+        const gate = rosterGate(rosterCards, {
+          directory: directoryNow, recipientOptions, instances: instancesNow, provision: provisionPlan,
+        });
         pause(gate.reason, { kind: "mission-roster", ref: mission.id, need: roster.broken.map((r) => r.name).join(", ") });
         return true;
       }

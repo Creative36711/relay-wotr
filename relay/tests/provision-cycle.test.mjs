@@ -194,3 +194,38 @@ test("шаг и вкладка не создают агента дважды", a
   const tasks = store.objects("queue").filter((row) => row["Вид"] === "provision");
   assert.equal(tasks.length, 1, "одна пара — одно задание, кто бы ни спросил");
 });
+
+/**
+ * Книга владельца живёт дольше версии.
+ *
+ * Лист «Экземпляры» появился в 1.20.0, а книга создана раньше. До 1.24.0
+ * чтение несуществующего листа давало ошибку, служба отдавала пустой список
+ * экземпляров — и адрес созданного агента было некуда записать: пара
+ * (роль, слот) навсегда оставалась «нет агента», а каждая следующая карточка
+ * этой роли снова требовала создания. Аудит 23.11 нашёл ровно это: в книге
+ * было шесть листов, «Экземпляров» среди них не было.
+ *
+ * Теперь отсутствие листа — повод создать его из схемы, а не жить без адресов.
+ */
+test("пропавший лист «Экземпляры» создаётся сам, и адрес находится", async () => {
+  const store = createFakeStore({
+    slots: slotRows(), settings: settingsRows(), queue: [], runs: [], events: [], agents: [],
+  });
+  delete store.sheets.agents;
+  const service = createService({ store, now: () => Date.parse("2026-11-26T10:00:00Z"), log: () => {} });
+
+  const data = await service.loadAll();
+  assert.deepEqual(data.instances, [], "лист создан пустым, а не прочитан как ошибка");
+  assert.ok(Array.isArray(store.sheets.agents), "лист появился в книге");
+  assert.equal(store.sheets.agents[0][0], "Роль", "шапка взята из схемы");
+  assert.ok(store.sheets.agents[0].includes("Agent URL"), "колонка адреса на месте");
+
+  const saved = await service.agentReady({
+    role: "Technical Artist", slotId: "worker-2", url: "https://arena.example/agent/ta-w2", tab: "aa22",
+  });
+  assert.equal(saved.ok, true);
+  assert.equal(saved.state, "создан");
+  const row = store.objects("agents").find((item) => item["Роль"] === "Technical Artist");
+  assert.equal(row["Слот"], "worker-2");
+  assert.equal(row["Agent URL"], "https://arena.example/agent/ta-w2");
+});

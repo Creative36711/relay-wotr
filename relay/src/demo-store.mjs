@@ -23,7 +23,7 @@ const DEMO_SETTINGS = [
   ["notion.requestsDb", "ds-requests", "text", "basic", "", ""],
   ["cycle.mode", "manual", "enum", "basic", "manual", ""],
   ["cycle.maxParallel", "2", "number", "advanced", "2", ""],
-  ["transport.version", "1.23.0", "text", "basic", "1.23.0", ""],
+  ["transport.version", "1.24.0", "text", "basic", "1.24.0", ""],
 ];
 
 export function createDemoStore({ now = () => Date.now() } = {}) {
@@ -42,7 +42,11 @@ export function createDemoStore({ now = () => Date.now() } = {}) {
     demo: true,
     sheets,
     async read(key) {
-      const rows = sheets[key] || [];
+      // Как настоящий Sheets: несуществующий лист — ошибка, а не пустота.
+      // Демо обязано вести себя так же, иначе путь самовосстановления листа
+      // проверялся бы только тестом и ломался бы на живой книге.
+      if (!sheets[key]) throw new Error(`не удалось прочитать диапазон ${key}: листа нет`);
+      const rows = sheets[key];
       return { header: rows[0] || [], rows: rows.slice(1) };
     },
     async write() {
@@ -64,6 +68,13 @@ export function createDemoStore({ now = () => Date.now() } = {}) {
     },
     async meta() {
       return { sheets: Object.keys(sheets).map((key) => ({ properties: { title: SHEETS[key].name } })) };
+    },
+    /** Демо-режим: лист создаётся шапкой из схемы, как в настоящем хранилище. */
+    async ensureSheet(key) {
+      if (!SHEETS[key]) throw new Error(`листа ${key} нет в схеме`);
+      if (sheets[key]) return { created: false, name: SHEETS[key].name };
+      sheets[key] = [SHEETS[key].columns.slice()];
+      return { created: true, name: SHEETS[key].name };
     },
     now,
   };

@@ -27,6 +27,9 @@ const run=(overrides={},settings={})=>{
     recordQuestionChange:()=>{},openQuestions:()=>({at:0,rows:[]}),paintQuestions:()=>{},dbg:()=>{},
     deferredResultFor:()=>({found:false,decision:null,error:''}),
     answerQueue:()=>[],answerPending:()=>null,
+    // 1.24.0: «свободной строки нет» ≠ «очередь пуста». Стенд пустой очереди
+    // обязан отвечать и на этот вопрос, иначе фрагмент падает на имени.
+    answerQueueSize:()=>0,
     oneLine:x=>x,activeMission:async()=>null,roles:async()=>[],queueOf:async()=>({}),requestPlan:async()=>{},
   };
   const keys=Object.keys(env),values=Object.values(env);

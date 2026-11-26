@@ -121,11 +121,22 @@
     return roles();
   }
 
+  /**
+   * Активные роли — по строке «Ролей», без требования адреса.
+   *
+   * D-015: у неадминских ролей «Agent URL» снят, потому что рабочий адрес —
+   * пара (роль, слот) в «Экземплярах». Прежний фильтр `r.id && r.url` был
+   * написан, когда адрес выводился из ссылки, и после снятия адресов состав
+   * миссии стал бы пустым: гейт укомплектованности объявил бы «некомплект» по
+   * каждой роли сразу, хотя роли есть и работают.
+   *
+   * Поэтому здесь остаётся только «Активна». `id` заполняется адресом строки,
+   * если он есть, и адресом экземпляра — если его нет; это делает
+   * `roleAddress`, а не этот список.
+   */
   async function roles() {
     const rows = await roleRows();
-    const active = rows.filter((r) => r.id && r.url && r.status === "Активна");
-    const ids = active.map((r) => norm(r.id));
-    if (new Set(ids).size !== ids.length) throw new Error("Две активные роли указывают на один Agent URL.");
+    const active = rows.filter((r) => r.status === "Активна" && (r.name || r.id));
     if (active.filter((r) => r.fn === "Coordinator").length > 1)
       throw new Error("Активных Coordinator больше одного.");
     return active;

@@ -85,7 +85,9 @@ function heldEvent(kind = 'dispatch', overrides = {}) {
   };
 }
 
-const returnStorageBlock = cut('  const answerReturns = () => {', '\n  const answerPending = () => answerQueue()[0] || null;');
+// 1.24.0: `answerPending` больше не «первая строка массива», поэтому границу
+// блока задаёт начало правил занятости (`answerInFlight`), а не старая строка.
+const returnStorageBlock = cut('  const answerReturns = () => {', '\n  const answerInFlight = (item) =>');
 function makeReturnApi(state = new Map(), pauses = []) {
   const get = (key, fallback) => (state.has(key) ? state.get(key) : fallback);
   const set = (key, value) => state.set(key, value);

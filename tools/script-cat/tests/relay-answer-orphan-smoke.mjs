@@ -34,7 +34,7 @@ const answers = readFileSync(new URL('../src/27-review-answers.js', import.meta.
 const config = readFileSync(new URL('../src/01-config.js', import.meta.url), 'utf8');
 
 // ── 0. Выпуск назван (номер меняется каждым релизом транспорта)
-assert.match(src, /^\/\/ @version\s+1\.23\.0\s*$/m, 'сборка 1.19.0 объявлена');
+assert.match(src, /^\/\/ @version\s+1\.24\.0\s*$/m, 'сборка 1.24.0 объявлена');
 
 // ── 1. Отметка «передано» больше не пожизненная ─────────────────────────────
 {
