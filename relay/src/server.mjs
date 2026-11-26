@@ -21,7 +21,6 @@ import { mountPage } from "./mount-page.mjs";
 import { createAppsScriptStore, bridgeReachability } from "./appsscript-bridge.mjs";
 import { normalizeBridgeInput, writeBridgeFile } from "./bridge-config.mjs";
 import { currentProxy } from "./notion-db.mjs";
-import { normalizeProxy, writeProxyFile } from "./proxy-config.mjs";
 import { createService } from "./service.mjs";
 import { readiness } from "./setup.mjs";
 import { searchDatabases } from "./notion-db.mjs";
@@ -105,9 +104,6 @@ export function createTransportServer({
   // Пусто — запись недоступна, и страница честно скажет об этом вместо
   // «сохранено», после которого ничего не работает.
   bridgeFile = "",
-  // Куда записать прокси, если владелец вводит его в пульте. Пусто — запись
-  // недоступна, и страница честно скажет, что дописать.
-  proxyFile = "",
   // Чем читать книгу, когда настроен мост. Отдельно от storeFactory: мост
   // может появиться на ходу (адрес ввели в браузере), а storeFactory уже
   // выбран при старте — под Google-токен или под что-то ещё.
@@ -276,60 +272,6 @@ export function createTransportServer({
               : notion.ok
                 ? "интернет есть, не отвечает только книга — смотрите развёртывание моста и доступ «Все»"
                 : "интернет есть, не отвечает только Notion — смотрите его доступность",
-        });
-      }
-
-      // Прокси из пульта: применить сейчас и запомнить для следующего запуска.
-      //
-      // Почему это в продукте, а не в инструкции. Настройка прокси в Node —
-      // это переменная окружения плюс флаг `--use-env-proxy`, о котором знают
-      // немногие. Человек, у которого «в браузере всё работает, а служба не
-      // дозванивается», хочет одну строку и одну кнопку.
-      if (url.pathname === "/api/proxy" && request.method === "POST") {
-        const body = (await readBody(request)) || {};
-        const check = normalizeProxy(body.proxy);
-        if (!check.ok) return send(response, 200, { ok: false, why: check.why });
-        if (!proxyFile) {
-          return send(response, 200, {
-            ok: false,
-            why: `Записать прокси служба не может. Запустите транспорт и укажите "${check.url}" на вопрос о прокси.`,
-          });
-        }
-        try {
-          writeProxyFile(proxyFile, check.url);
-        } catch (error) {
-          return send(response, 200, { ok: false, why: `файл прокси не записался: ${error.message}` });
-        }
-        // Применяем сразу: переменная окружения процесса — то, что читает
-        // `EnvHttpProxyAgent` при следующем запросе.
-        process.env.HTTPS_PROXY = check.url;
-        process.env.HTTP_PROXY = check.url;
-        process.env.https_proxy = check.url;
-        process.env.http_proxy = check.url;
-        // Не `await bridgeReady() ? …`: приоритет операторов делает `reach`
-        // промисом, и ответ уходил с `why: undefined`.
-        const reach = bridgeReady()
-          ? await bridgeReachability({ url: bridge.url })
-          : { ok: false, why: "мост не настроен: книга не подключена" };
-        await service.record({
-          kind: "ui", level: reach.ok ? "info" : "warn",
-          text: `прокси ${check.url}: ${reach.ok ? "книга отвечает" : reach.why}`,
-        });
-        return send(response, 200, {
-          ok: true,
-          proxy: currentProxy(),
-          bridge: reach,
-          // Честно про границу: без флага `--use-env-proxy` применённый на
-          // ходу прокси подействует только после перезапуска — и это
-          // единственное место, где перезапуск действительно нужен.
-          why: reach.ok
-            ? `прокси ${check.url} работает: книга отвечает. Запомнил для следующего запуска`
-            : `прокси ${check.url} записан, но книга всё ещё не отвечает: ${reach.why}`,
-          // Прокси, введённый в уже запущенную службу, — единственная
-          // настройка, которой нужен перезапуск: Node читает переменные
-          // окружения только с флагом `--use-env-proxy`, а флаг задаётся при
-          // старте. Обещать «применилось» без этого — обманывать.
-          needsRestart: !process.execArgv.includes("--use-env-proxy") && !/--use-env-proxy/.test(process.env.NODE_OPTIONS || ""),
         });
       }
 

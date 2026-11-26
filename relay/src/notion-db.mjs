@@ -10,6 +10,7 @@
 import { setDefaultResultOrder } from "node:dns";
 import { lookup } from "node:dns/promises";
 import { connect } from "node:net";
+import { connect as tlsConnect } from "node:tls";
 
 const API = "https://api.notion.com/v1";
 const VERSION = "2022-06-28";
@@ -135,6 +136,59 @@ export function currentProxy(env = process.env) {
 }
 
 /**
+ * Запрос по конкретному адресу, но с именем в TLS (SNI) и с Host Notion.
+ *
+ * Нужен, чтобы отличить две разные блокировки:
+ *   • режут по имени — соединение к IP проходит, а запрос с `Host:
+ *     api.notion.com` умирает или подменяется;
+ *   • режут по адресу — не проходит даже TCP.
+ *
+ * Обычный `fetch` этого не покажет: он всегда идёт «по имени». Здесь мы
+ * соединяемся с найденным адресом, а имя передаём в TLS — как это делает
+ * браузер, когда имя и адрес уже известны.
+ */
+async function fetchToAddress({ address, host = NOTION_HOST, path = "/v1/users/me", timeoutMs = 8000 } = {}) {
+  const started = Date.now();
+  return new Promise((resolve) => {
+    const socket = connect({ host: address, port: 443, timeout: timeoutMs });
+    let settled = false;
+    const done = (result) => {
+      if (settled) return;
+      settled = true;
+      socket.destroy();
+      resolve({ ...result, address, ms: Date.now() - started });
+    };
+    socket.once("timeout", () => done({ ok: false, code: "TIMEOUT" }));
+    socket.once("error", (error) => done({ ok: false, code: error.code || "ERROR" }));
+    socket.once("connect", () => {
+      const tls = tlsConnect({ socket, servername: host, timeout: timeoutMs });
+      // `close` наступает раньше `error`, и без явной проверки «молчаливое
+      // закрытие» выдавало себя за пустой ответ вместо причины.
+      tls.once("timeout", () => done({ ok: false, code: "TLS-TIMEOUT" }));
+      tls.once("close", (hadError) => done({ ok: false, code: hadError ? "СБРОС TLS" : "ЗАКРЫТО" }));
+      tls.once("error", (error) => done({ ok: false, code: error.code || "TLS-ERROR" }));
+      tls.once("secureConnect", () => {
+        // Минимальный HTTP/1.1: нужен только код ответа.
+        tls.write(
+          `GET ${path} HTTP/1.1\r\nHost: ${host}\r\nNotion-Version: ${VERSION}\r\n` +
+          "Connection: close\r\nUser-Agent: relay-wotr\r\n\r\n",
+        );
+      });
+      let text = "";
+      tls.on("data", (chunk) => {
+        text += chunk.toString("latin1");
+        const line = text.split("\r\n")[0];
+        if (/^HTTP\/1\.[01] \d{3}/.test(line)) {
+          done({ ok: true, code: line.split(" ")[1] || "", status: Number(line.split(" ")[1]) || 0 });
+        }
+      });
+      // Ошибка TLS (сертификат, сброс рукопожатия) ловится обработчиком выше:
+      // второй на то же событие давал гонку и «ПУСТО» успевало раньше кода.
+    });
+  });
+}
+
+/**
  * Диагностика «до Notion не дошли»: проверяем каждое звено отдельно.
  *
  * Зачем так подробно. Владелец видел `UND_ERR_CONNECT_TIMEOUT` при живом
@@ -214,6 +268,14 @@ export async function pingNotion({ fetchImpl = globalThis.fetch, timeoutMs = 150
   // Код ниже объясняет отказ. Он не должен противоречить собственному зонду:
   // IPv6 может не работать, пока итоговый запрос проходит по IPv4 — тогда
   // ищем настоящую причину, а не валим всё на семейство адресов.
+  // Проба «по адресу, но с именем Notion»: 401 — это успех, сервер ответил.
+  // Отличает блокировку по имени от мёртвого маршрута.
+  const byAddress = [];
+  for (const item of probes.filter((probe) => probe.ok).slice(0, 4)) {
+    byAddress.push(await fetchToAddress({ address: item.address, timeoutMs: Math.min(probeMs * 2, 10000) }));
+  }
+  const answered = byAddress.filter((item) => item.ok);
+
   const reachable = probes.filter((item) => item.ok);
   const started = Date.now();
   try {
@@ -230,6 +292,7 @@ export async function pingNotion({ fetchImpl = globalThis.fetch, timeoutMs = 150
       status: response.status,
       addresses,
       probes,
+      byAddress,
       proxy: currentProxy(),
       why: `Notion отвечает за ${ms} мс (HTTP ${response.status} без токена — так и должно быть). ` +
         "Сеть в порядке, дело не в ней",
@@ -264,9 +327,25 @@ export async function pingNotion({ fetchImpl = globalThis.fetch, timeoutMs = 150
         code: code || "сеть",
         addresses,
         probes,
+        byAddress,
         proxy: currentProxy(),
         why: `до ${NOTION_HOST} не дозвонились вообще (${codes}): это сеть, VPN или фильтр, ` +
           "а не токен. В браузере тот же адрес может работать: у Firefox свой прокси и своё переключение IPv4/IPv6",
+      };
+    }
+    // Соединение есть, а запрос по имени — нет. Если при этом по адресу Notion
+    // отвечает, значит режут имя: VPN, антивирус или фильтр по домену.
+    if (answered.length) {
+      return {
+        ok: false,
+        code: code || "FILTER",
+        addresses,
+        probes,
+        byAddress,
+        proxy: currentProxy(),
+        why: `имя ${NOTION_HOST} режется, а сам сервер доступен: по адресу ` +
+          `${answered[0].address} Notion ответил (HTTP ${answered[0].status}). ` +
+          "Это фильтр по домену — VPN, антивирус или «умный» DNS. Токен тут не при чём",
       };
     }
     return {
@@ -274,9 +353,12 @@ export async function pingNotion({ fetchImpl = globalThis.fetch, timeoutMs = 150
       code: code || "сеть",
       addresses,
       probes,
+      byAddress,
       proxy: currentProxy(),
       why: `соединение с ${NOTION_HOST} есть (${probes.filter((item) => item.ok).map((item) => `IPv${item.family} ${item.ms} мс`).join(", ")}), ` +
-        `но запрос не прошёл${code ? ` (${code})` : ""}: ${networkReason(error) || "обрыв на стороне сети"}. Токен тут не при чём`,
+        `но запрос не прошёл${code ? ` (${code})` : ""}. ` +
+        "Всё остальное наружу уходит (книга отвечает), значит режут именно Notion: " +
+        "правило в VPN-клиенте, антивирус или фильтр по домену. Токен и ключи тут не при чём",
     };
   }
 }

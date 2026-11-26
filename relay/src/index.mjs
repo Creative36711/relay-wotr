@@ -39,12 +39,10 @@ const tokenCmd = process.env.RELAY_TOKEN_CMD || "";
 // тех, кто запускает службу скриптом.
 const bridgeFile = process.env.RELAY_BRIDGE_FILE || defaultBridgePath();
 
-// Прокси: раньше всего остального. Если он нужен, а не задан, дальше не
-// заработает ничего — ни книга, ни Notion, — и человек увидит «не отвечает»
-// про всё сразу, не понимая, что причина одна.
-//
-// Node 22 читает HTTPS_PROXY только с флагом `--use-env-proxy`; батник его
-// ставит, а `proxy.txt` нужен для тех, кто запускает службу скриптом.
+// Прокси: если он задан в системе, второй раз его спрашивать не у кого.
+// `proxy.txt` рядом с `bridge.txt` — только для тех, кто запускает службу
+// скриптом и не держит переменную окружения: файл читается молча, никаких
+// полей и вопросов в окне запуска нет.
 const proxyFile = process.env.RELAY_PROXY_FILE || defaultProxyPath(bridgeFile);
 const proxyFromFile = readProxyConfig(proxyFile).url;
 if (proxyFromFile && !process.env.HTTPS_PROXY && !process.env.https_proxy) {
@@ -106,7 +104,6 @@ const { server, service } = createTransportServer({
   bridgeUrl,
   bridgeKey,
   bridgeFile,
-  proxyFile,
   version: VERSION,
   // Владелец ввёл адрес в браузере — служба уже не в демо, но процесс об этом
   // узнаёт только здесь. Сбрасываем флаг и не перезапускаем службу.
