@@ -105,9 +105,13 @@ function renderEvents(shot) {
 
 function renderHeader(shot) {
   $("health-dot").className = "dot ok";
+  // Демо-режим называется в шапке, а не угадывается по пустому журналу.
+  // Служба без книги выглядит живой: слоты есть, счётчики есть, и «почему
+  // здесь не мои данные» человек ищет в книге, а не в строке запуска.
   $("mode-line").textContent =
     `${shot.mode === "auto" ? "автоцикл" : "ручной шаг"} · предел ${shot.maxParallel}` +
-    (shot.paused ? " · на паузе" : "");
+    (shot.paused ? " · на паузе" : "") +
+    (shot.demo ? " · ДЕМО (книга не подключена)" : "");
   $("btn-mode").textContent = shot.mode === "auto" ? "Ручной шаг" : "Автоцикл";
   $("btn-pause").textContent = shot.paused ? "Продолжить" : "Пауза";
   if (shot.paused) banner(`Пауза: ${shot.pauseReason || "по решению человека"}`);
@@ -125,6 +129,7 @@ async function refresh() {
     if (!response.ok || shot.ok === false) throw new Error(shot.why || `HTTP ${response.status}`);
     snapshot = shot;
     renderHeader(shot);
+    renderSetupHint(shot);
     renderSlots(shot);
     renderQueue(shot);
     renderEvents(shot);
@@ -149,6 +154,20 @@ async function step() {
     $("btn-step").disabled = false;
     await refresh();
   }
+}
+
+/**
+ * Текст над мастером. В демо он не повторяет «ключи подставляются сами»:
+ * подставлять некуда, и совет читается как «ещё немного, и найдётся».
+ */
+function renderSetupHint(shot) {
+  const hint = $("setup-hint");
+  if (!hint) return;
+  hint.textContent = shot.demo
+    ? "Служба запущена в демо-режиме: книга не подключена, поэтому базы Notion искать негде. " +
+      "Остановите транспорт, положите рядом ключ sa.json и запустите Запустить транспорт.bat заново."
+    : "Ключи и ID подставляются сами: мастер находит базы в Notion и папку логов в Drive. " +
+      "Расширенные настройки трогать не нужно — без них цикл работает.";
 }
 
 async function discover() {
