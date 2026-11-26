@@ -109,6 +109,16 @@
         for (const name of ["Repository", "Репозиторий"]) {
           if (source.properties[name] && source.properties[name].type !== "rich_text") errors.push(`${name}: нужен rich_text`);
         }
+        // D-004: поля аккаунтов аддитивны, как Repository. База без них работает
+        // по-старому (лимит аккаунта не отслеживается), но если поле есть, оно
+        // должно быть select: иначе транспорт не прочитает адрес и промолчит.
+        // Имена — литералами, а не константами модуля аккаунтов: эту функцию
+        // пробы вырезают из бандла и исполняют отдельно, внешних `const` там нет.
+        if (label === "Роли") {
+          for (const name of ["Аккаунт", "Доступность"]) {
+            if (source.properties[name] && source.properties[name].type !== "select") errors.push(`${name}: нужен select`);
+          }
+        }
         for (const [name, required] of Object.entries(options)) {
           const actual = source.properties[name]?.select?.options;
           if (!Array.isArray(actual)) errors.push(`${name}: нет списка select`);
@@ -120,6 +130,18 @@
         // молчала: `Тип` был в живой базе, но не здесь, и код писал его в пустоту.
         const extra = Object.keys(source.properties || {}).filter((name) => !(name in fields) && !["Repository", "Репозиторий"].includes(name));
         if (extra.length) warnings.push(`«${label}»: лишние поля — ${extra.join(", ")} (схема их не знает; правьте схему в Notion только сами).`);
+        // D-004: поля аккаунтов аддитивны — база без них работает по-старому.
+        // Но «работает по-старому» значит «лимит аккаунта не отслеживается», и
+        // человек, вписывающий «Аккаунт» в пустоту, должен узнать об этом здесь,
+        // а не по тому, что роль не перестаёт выдаваться.
+        if (label === "Роли") {
+          const absent = ["Аккаунт", "Доступность"].filter((name) => !source.properties[name]);
+          if (absent.length)
+            warnings.push(
+              `«${label}»: нет полей ${absent.join(", ")} — квоты по аккаунтам не отслеживаются. ` +
+                "Добавьте их сами в Notion (select) или возьмите схему из шаблона; транспорт схему не правит.",
+            );
+        }
         if (errors.length) throw new Error(`«${label}»: ${errors.join(", ")}.`);
         schemas[label] = source.properties;
         await new Promise((resolve) => setTimeout(resolve, 350));
@@ -177,6 +199,12 @@
       }
       const branch = await request("GET", `https://api.github.com/repos/${C.repo}/branches/${encodeURIComponent(C.branch)}`, githubHeaders(settings.github));
       if (!branch || branch.name !== C.branch) throw new Error(`GitHub не подтвердил ветку ${C.branch}.`);
+      // D-004: раскладка ролей по аккаунтам задаётся человеком, но проверяется
+      // здесь: иначе лимит исполнителей отрезал бы Координатора и приёмку, а
+      // причина была бы видна только по журналу одного контейнера.
+      if (typeof accountLayoutProblems === "function") {
+        for (const problem of accountLayoutProblems(mapped)) warnings.push(`«Роли»: ${problem.text}.`);
+      }
       const base = "Основные поля, варианты select, роли и базовая ветка читаются. Права записи и содержимое старых карточек не проверялись.";
       return { ok: true, text: warnings.length ? `${base} ${warnings.join(" ")}` : base };
     } catch (e) {

@@ -1,4 +1,8 @@
   // ───────────────────────────── подключения ─────────────────────────────
+  // D-005: адреса аккаунтов вводить не нужно — почта живёт в поле «Аккаунт»
+  // базы «Роли» (Notion) и читается оттуда. Окно лишь сообщает, откуда брать
+  // адреса; локальной связки «метка → почта» больше нет (D-004 п.1 отменён).
+
   /** Старые ключи остаются источником истины: обновление не сбрасывает доступ. */
   function connectionSettings() {
     return {
@@ -186,6 +190,10 @@
             <input id="cfn-connection-github" type="password" autocomplete="off" spellcheck="false" style="${field}">
             <label style="display:block;margin-top:7px;${quiet}"><input id="cfn-connection-github-remove" type="checkbox"> Удалить сохранённый токен при сохранении</label>
             <button id="cfn-connection-github-open" type="button" style="${action};margin-top:7px">Открыть настройки токенов GitHub ↗</button>
+          </section>
+          <section style="${card}" aria-labelledby="cfn-connection-accounts-title">
+            <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap"><strong id="cfn-connection-accounts-title" style="font-size:15px;color:#fff">Аккаунты Arena</strong><span style="${quiet}">почта — из Notion</span></div>
+            <div style="${quiet};margin:4px 0 8px">Почта каждого аккаунта читается из поля «Аккаунт» базы «Роли»: здесь вводить нечего. Адрес поменяли в Notion — транспорт возьмёт его при следующем чтении «Ролей», в браузере править нечего. Скрипт входит только за вас и аккаунты не переключает — по адресу он проверяет, что вкладка открыта в нужном контейнере.</div>
           </section>
           <details style="${card}"><summary style="cursor:pointer;font-weight:600">Восстановление и уведомления</summary>
             <div style="${quiet};margin:8px 0">Восстановление использует сохранённые настройки и может изменить карточку Notion и журнал Drive. Применяйте на остановленном цикле.</div>

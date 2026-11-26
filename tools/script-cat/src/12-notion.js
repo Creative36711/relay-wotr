@@ -52,6 +52,12 @@
       agentJobId: rt(p.properties["Agent Job ID"]),
       agentCreatedAt: p.properties["Agent Created At"]?.date?.start || "",
       previousAgentUrl: p.properties["Previous Agent URL"]?.url || "",
+      // D-005: почта аккаунта Arena — значение поля «Аккаунт» (Notion,
+      // единственный источник; D-004 держал метку здесь, а адрес — локально).
+      // Пустое значение — «аккаунт не размечен»: роль работает как раньше, но
+      // лимит её аккаунта не отслеживается. «Доступность» пишет только транспорт.
+      account: sel(p.properties["Аккаунт"]),
+      available: sel(p.properties["Доступность"]),
     };
   };
 

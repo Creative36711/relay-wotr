@@ -262,14 +262,16 @@ function makeHarness(values = initial, activeProfile = undefined) {
   const code = src.slice(from, to);
   let open = true, flushes = 0, setups = 0, statusUpdates = 0, openDuringHeal = false;
   const document = { getElementById: (id) => id === 'cfn-connections' && open ? {} : null };
+  // D-004: проверку лимита на входе тика делает `accountsTick`; она сама
+  // возвращает false, когда индикатора нет, и цикл идёт дальше как прежде.
   const h = new Function('document', 'flushPollJournal', 'selfHealClaim', 'autoOn', 'GM_getValue', 'K',
-    'isPaused', 'captchaDialog', 'monitorDailyLimit', 'handleToolCallLimit', 'monitorVisibleErrors', 'setup', 'setStatus', 'log',
+    'isPaused', 'captchaDialog', 'accountsTick', 'handleToolCallLimit', 'monitorVisibleErrors', 'setup', 'setStatus', 'log', 'networkish',
     `let busy = false, busyAt = 0, stepRestarts = 0;\n${code}\nreturn { tick, busy: () => busy };`,
   )(
     document, async () => { flushes += 1; }, async () => { if (openDuringHeal) open = true; },
     () => true, (_key, fallback) => fallback, { pending: 'pending', expect: 'expect' },
-    () => false, () => false, () => false, async () => false, () => false, async () => { setups += 1; open = true; },
-    () => { statusUpdates += 1; }, () => {},
+    () => false, () => false, async () => false, async () => false, () => false, async () => { setups += 1; open = true; },
+    () => { statusUpdates += 1; }, () => {}, () => false,
   );
   await h.tick(false);
   assert.equal(flushes, 0, 'при открытом окне новый тик и повтор журналов не начинаются');

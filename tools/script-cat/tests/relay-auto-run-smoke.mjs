@@ -33,7 +33,7 @@ assert.doesNotMatch(
 );
 
 // ── 2. На главной автоцикл сам открывает нужную страницу ──────────────────
-assert.match(tickBody, /if \(!fromToggle && !autoOn\(\)\) return;/, 'в автоцикле переход разрешён без нажатия');
+assert.match(tickBody, /if \(!fromToggle && !autoOn\(\) && !woken\) return;/, 'в автоцикле переход разрешён без нажатия (и в разбуженной вкладке)');
 assert.match(tickBody, /return navigateTo\(target, why\);/, 'страница выбирается и открывается самим циклом');
 assert.match(
   tickBody,
@@ -45,14 +45,14 @@ assert.match(
 const pendingAt = tickBody.indexOf('const pendingNow = GM_getValue(K.pending, null);');
 assert.ok(pendingAt > 0, 'тик видит очередь');
 const pendingBlock = tickBody.slice(pendingAt, tickBody.indexOf('const meId = roleFromPath();', pendingAt));
-assert.match(pendingBlock, /if \(pendingNow && \(fromToggle \|\| autoOn\(\)\)\)/, 'страница адресата открывается и в автоцикле');
+assert.match(pendingBlock, /if \(pendingNow && \(fromToggle \|\| autoOn\(\) \|\| woken\)\)/, 'страница адресата открывается в автоцикле и в разбуженной вкладке');
 assert.match(pendingBlock, /return navigateTo\(target, "там ждёт отправки задание"\)/, 'переход к адресату очереди');
 assert.ok(
   pendingBlock.indexOf('navigateTo') < pendingBlock.length,
   'переход происходит до любых решений о новом ходе',
 );
 assert.ok(
-  tickBody.indexOf('pendingNow && (fromToggle || autoOn())') < tickBody.indexOf('const meId = roleFromPath();'),
+  tickBody.indexOf('pendingNow && (fromToggle || autoOn() || woken)') < tickBody.indexOf('const meId = roleFromPath();'),
   'очередь проверяется раньше, чем страница начнёт новый ход',
 );
 
@@ -106,7 +106,8 @@ const makeNav = ({ store, path = '/', now = Date.now() }) => {
   const fn = new Function(
     'GM_getValue', 'GM_setValue', 'norm', 'pause', 'log', 'location', 'Date',
     // D-045: переход ждёт подтверждения записей; проверяем и порядок.
-    'flushBeforeNavigate', 'handoffKeys',
+    // D-008: переход спрашивает, чья страница; здесь аккаунт не размечен.
+    'flushBeforeNavigate', 'handoffKeys', 'roleFromPath', 'accountPageCheck', 'wakeOnce',
     `${navSrc}; return navigateTo;`,
   );
   const navigateTo = fn(
@@ -119,6 +120,10 @@ const makeNav = ({ store, path = '/', now = Date.now() }) => {
     clock,
     async (keys) => { flushes.push({ keys: [...keys], assigned: assigned.length, nav: store.get('cfn-nav') }); return true; },
     () => ['cfn-expect', 'cfn-pending', 'cfn-nav'],
+    // D-008: роль страницы не читается, аккаунт не размечен — проверка молчит.
+    () => '',
+    async () => ({ verdict: 'no-label' }),
+    () => null,
   );
   return { navigateTo, pauses, logs, assigned, flushes };
 };

@@ -262,11 +262,14 @@ function makeConsumer(expect, pending, owners = [warden]) {
     // проверяет отдельная проба D-045 на настоящем блоке квитанций.
     isUuid: (x) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(x || '')),
     rt, taskTitle: (p) => rt(p?.properties?.['Запрос']), restoreMissingSendMark: () => null,
+    // D-007: аккаунт в этой сюите не сверяется.
+    pendingRoleRow: () => null, accountPageCheck: async () => ({ verdict: 'no-label' }),
   };
   const make = new Function('env', `
     const {K, norm, C, GM_getValue, GM_setValue, roleFromPath, roleRows, pause, appReady, pendingSay, autoOn,
       dropGhostHandoff, notion, patch, taskState, nowIso, log, sendKey, flat, composerHolds, userSaysSince,
       lastUserSays, captchaDialog, busySettled, busyLabel, ensureFreshBranch, ensureComposer, composerText,
+      pendingRoleRow, accountPageCheck,
       clearComposer, sleep, writePrompt, lastMessageId, messages, nodeId, deliver, isDispatchAssignment,
       dispatchDeliveryNtfy, dbg, setTimeout, tick,
       isUuid, rt, taskTitle, restoreMissingSendMark} = env;

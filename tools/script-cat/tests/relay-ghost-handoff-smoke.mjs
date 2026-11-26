@@ -143,7 +143,7 @@ const tickStart = src.indexOf('  async function tick(fromToggle = false) {');
 assert.ok(tickStart > 0, 'tick на месте');
 const tick = src.slice(tickStart);
 const ghostAt = tick.indexOf('const ghost = await dropGhostHandoff(');
-const manualAt = tick.indexOf('if (!auto && !fromToggle) return;');
+const manualAt = tick.indexOf('if (!auto && !fromToggle && !woken) return;');
 assert.ok(ghostAt > 0, 'шаг убирает след');
 assert.ok(manualAt > ghostAt, 'уборка идёт до выхода из ручного режима: иначе карточка ждала бы нажатия');
 

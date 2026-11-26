@@ -201,7 +201,7 @@ queueOf({ id: 'm1' }).then((queue) => {
   assert.match(plan, /const directory = await roleRows\(\)/, 'и сверяется со всей базой «Роли», а не только с активными');
   assert.match(
     plan,
-    /coordinatorPrompt\(\s*mission,\s*role,\s*summary,\s*turnId,\s*note,\s*answerLine,\s*drafts,\s*readyLine\(queue\.ready, directory\),\s*reworkLine\(queue\.rework, directory\),\s*briefing\.openLine,\s*briefing\.answersLine,?\s*\)/s,
+    /coordinatorPrompt\(\s*mission,\s*role,\s*summary,\s*turnId,\s*planNote,\s*answerLine,\s*drafts,\s*readyLine\(queue\.ready, directory\),\s*reworkLine\(queue\.rework, directory\),\s*briefing\.openLine,\s*briefing\.answersLine,?\s*\)/s,
     'и уходит в промпт (D-075 п. 2: списки получают базу «Роли», чтобы дефект адресата был виден)',
   );
   assert.match(plan, /\$\{\(queue\.draft \|\| \[\]\)\.length\} Draft/, 'запасной счётчик тоже знает про Draft');

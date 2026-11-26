@@ -54,7 +54,7 @@ const consumeFrom = src.indexOf('async function consumePending(');
 const consumeTo = src.indexOf('\n  }\n', src.indexOf('const expect = GM_getValue(K.expect, null);', consumeFrom));
 const consume = src.slice(consumeFrom, consumeTo);
 const freshCall = consume.indexOf('await ensureFreshBranch(');
-const composerCall = consume.indexOf('await ensureComposer()');
+const composerCall = consume.indexOf('await ensureComposer(20000, { role: pendingRoleRow(pending) })');
 assert.ok(freshCall > 0, 'consumePending проверяет Continue');
 assert.ok(composerCall > freshCall, 'Continue нажимается до вставки текста и до закрытия плашки');
 

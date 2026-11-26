@@ -1,0 +1,13 @@
+{
+  "name": "relay-wotr-transport",
+  "version": "1.19.0",
+  "private": true,
+  "type": "module",
+  "description": "Транспорт Relay · WOTR: служба состояния, диспетчер и пульт",
+  "license": "GPL-3.0-or-later",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "start": "node src/index.mjs",
+    "test": "node --test tests/*.mjs"
+  }
+}

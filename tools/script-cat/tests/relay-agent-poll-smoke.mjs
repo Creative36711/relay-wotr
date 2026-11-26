@@ -282,7 +282,7 @@ assert.match(
   /waitedPoll > C\.replyWaitMs/,
   'если агент не продолжил — сторож тишины, а не вечное ожидание',
 );
-assert.match(tickBlock.slice(0, pollAt), /if \(!auto && !fromToggle\) return;/, 'порядок: ручной режим — только по «Шагу»');
+assert.match(tickBlock.slice(0, pollAt), /if \(!auto && !fromToggle && !woken\) return;/, 'порядок: ручной режим — только по «Шагу» или после будильника');
 
 // ── 5. Промпт: зона не спорит с Scope, вопрос полем маркера ────────────────
 const { PromptCompiler, dispatchRequest, planRequest } = await import('./helpers/prompt-env.mjs');

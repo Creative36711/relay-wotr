@@ -35,10 +35,15 @@ assert.match(visibleErrors, /querySelectorAll\("button\[aria-label\]"\)/,
 
 // ── 2. Тик: лимит раньше продолжения хода и общей ошибки ───────────────────
 const cycle = src('28-cycle.js');
-const atLimit = cycle.indexOf('monitorDailyLimit()');
+// D-004: проверку лимита делает `accountsTick` — лимит принадлежит аккаунту
+// страницы, а индикатор без метки аккаунта уходит в прежнюю паузу
+// `monitorDailyLimit` из того же места.
+const accounts = src('44-accounts.js');
+const atLimit = cycle.indexOf('accountsTick()');
 const atToolLimit = cycle.indexOf('handleToolCallLimit()');
 const atVisible = cycle.indexOf('monitorVisibleErrors()');
-assert.ok(atLimit > 0, 'тик вызывает monitorDailyLimit');
+assert.ok(atLimit > 0, 'тик вызывает accountsTick');
+assert.match(accounts, /monitorDailyLimit\(\)/, 'accountsTick сохраняет прежнюю паузу daily-limit для страницы без метки аккаунта');
 assert.ok(atLimit < atToolLimit,
   'дневной лимит проверяется раньше продолжения хода: в заблокированную отправку не уходим');
 assert.ok(atLimit < atVisible,

@@ -590,6 +590,10 @@
     const row = seen.get(norm(name));
     if (!row) return `${name} — нет в «Ролях»`;
     if ((row.status || "") !== "Активна") return `${name} — Статус «${row.status || "пуст"}»`;
+    // D-004: квота аккаунта — не дефект строки, но причина невыдачи ровно та же,
+    // и молчать о ней значит гонять Координатора по кругу «роль активна, выдавай».
+    if (typeof accountLimitBlocks === "function" && accountLimitBlocks({ account: row.account }))
+      return `${name} — ${accountLimitText(row.account)}`;
     if (!row.url) return `${name} — нет Agent URL`;
     if (row.fn && !["Coordinator", "Executor", "Auditor", "Reviewer", "Maintainer"].includes(row.fn))
       return `${name} — Функция «${row.fn}» не годится`;
@@ -1480,6 +1484,14 @@
     // статуса, Agent URL или самой роли.
     const directory = await roleRows().catch(() => []);
     const drafts = draftLine(queue.draft || [], directory);
+    // D-004: недоступность по квоте и «работать нечем» идут в тот же план, что и
+    // очередь: иначе Координатор называет в next роль лимитированного аккаунта и
+    // получает отказ за отказом, хотя дело не в постановке.
+    const accountLines = typeof accountPlanNote === "function" ? accountPlanNote() : "";
+    const idleLine = typeof accountIdleNote === "function"
+      ? accountIdleNote(queue.ready || [], { missionId: mission.id })
+      : "";
+    const planNote = [note, accountLines, idleLine].filter(Boolean).join(" ");
     // Вопросы к Мастеру и его ответы: ответы доставляются ровно один раз —
     // отметка ставится после того, как промпт действительно ушёл.
     const briefing = await questionBriefing(mission);
@@ -1505,7 +1517,7 @@
     const recoveryEnvelope = PromptCompiler.compile({
       kind: "plan", role: promptRole(role), mission: { id: mission.id, name: rt(mission.properties["Миссия"]) },
       turnId,
-      note,
+      note: planNote,
       queue: { summary, ready: readyLine(queue.ready, directory), rework: reworkLine(queue.rework, directory), draft: drafts, answerLine, openLine: briefing.openLine, answersLine: briefing.answersLine },
       delivery: { tier: "recovery" },
     });
@@ -1517,7 +1529,7 @@
         role,
         summary,
         turnId,
-        note,
+        planNote,
         answerLine,
         drafts,
         readyLine(queue.ready, directory),
@@ -1533,6 +1545,7 @@
         title: "план Координатора",
         fallbackText,
         planContext: summary,
+        accountNote: accountLines || "",
         // Снимок «с замечаниями или без»: по нему снятие устаревшего
         // ожидания не переспрашивает план, ответ на который уже пришёл.
         planBeforeReturn,
@@ -1542,5 +1555,9 @@
       },
     );
     if (sent) await markDelivered(briefing.fresh);
+    // D-004: «работать нечем» считается заданным только теперь — когда план
+    // действительно ушёл. Отмечать при сборке текста значило бы потерять вопрос
+    // вместе с неотправленным планом (капча, пауза, ожидание).
+    if (sent && idleLine && typeof accountIdleAskedMark === "function") accountIdleAskedMark(mission.id);
     return true;
   }

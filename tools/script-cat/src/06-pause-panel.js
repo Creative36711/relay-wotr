@@ -577,8 +577,19 @@
     // поломку — транспорт. Красный цвет — только тому, что правда ждёт человека.
     const who = String(GM_getValue(K.pause, null)?.with || "");
     const label = { master: "ждёт Мастера", warden: "решает приёмка", transport: "решает транспорт", self: "повтор", install: "ждёт установки сборки" }[who] || "";
+    // D-004: метка аккаунта рядом с ролью. Без неё на четырёх контейнерах
+    // невозможно понять, какая это вкладка, и «почему не идёт» ищут не там.
+    const account = (() => {
+      try {
+        const role = typeof accountRoleForPath === "function" ? accountRoleForPath() : null;
+        const labelValue = String(role?.account || "");
+        if (!labelValue) return "";
+        return typeof accountLimit === "function" && accountLimit(labelValue) ? `${labelValue}: лимит` : labelValue;
+      } catch { return ""; }
+    })();
     const text = extra || (paused ? `Пауза${label ? ` (${label})` : ""}: ${short}` : auto ? "Работает" : "Выключен");
-    el.textContent = me ? `${text} · ${me}` : text;
+    const tail = [account, me].filter(Boolean).join(" · ");
+    el.textContent = tail ? `${text} · ${tail}` : text;
     el.title = paused || text;
     // Красным — только пауза, которая действительно ждёт человека.
     el.style.color = paused ? (who && who !== "master" ? "#e8d08a" : "#ff9a9a") : auto ? "#8ee28e" : "inherit";
@@ -619,7 +630,7 @@
     panel.style.width = collapsed ? "208px" : "360px";
     const log = document.getElementById(ui.log);
     if (log) log.style.display = collapsed ? "none" : "";
-    for (const id of [ui.step, ui.questions, ui.debug, ui.reset, ui.clear, ui.setup]) {
+    for (const id of [ui.step, ui.wake, ui.questions, ui.debug, ui.reset, ui.clear, ui.setup]) {
       const el = document.getElementById(id);
       if (el) el.style.display = collapsed ? "none" : "";
     }
@@ -660,6 +671,7 @@
         <span id="${ui.count}" style="opacity:.45;font-size:10px">0/${C.maxLog}</span>
         <span style="flex:1"></span>
         <button id="${ui.step}" title="Один шаг цикла" style="${btnStyle()}">Шаг</button>
+        <button id="${ui.wake}" title="D-006: разбудить вкладки других аккаунтов — работу продолжит та, чей это аккаунт" style="${btnStyle()}">📣 Все вкладки</button>
         <button id="${ui.toggle}" style="${btnStyle()}">▶ Включить</button>
         <button id="${ui.questions}" aria-label="Открыть обратную связь в Notion" title="Обратная связь — вопросы и предложения в Notion" style="${btnStyle()}">💬 Обратная связь<span id="${ui.qBadge}" style="display:none;margin-left:3px;padding:0 4px;border-radius:7px;background:#b23b3b;color:#fff;font-size:10px;line-height:14px;vertical-align:middle">0</span></button>
         <button id="${ui.agents}" title="Provisioning Arena-агентов: создание и замена ролей" style="${btnStyle()}">🤖 Агенты</button>
@@ -722,6 +734,37 @@
       }
       log("Шаг нажат: смотрю страницу, очередь и задание.");
       tick(true);
+    };
+    // D-006: одна кнопка вместо угадывания вкладки. Ничего не отправляет и не
+    // переключает: ставит общую отметку «работа есть, просыпайтесь». Остальные
+    // вкладки на ближайшем тике увидят её и продолжат ту, для которой работа
+    // действительно есть. Где бы Мастер ни нажал — эффект один.
+    document.getElementById(ui.wake).onclick = () => {
+      if (typeof wakeAll !== "function") return;
+      // Будильник не снимает паузу и удержание: это по-прежнему решение
+      // Мастера, и молчать об этом нельзя — иначе кнопка «не работает».
+      if (typeof projectApproved === "function" && !projectApproved()) {
+        log(typeof projectBlockedText === "function" ? projectBlockedText()
+          : "Проект ещё не разрешён к работе: проверьте его в управлении проектами.", true);
+        return;
+      }
+      if (typeof projectHeld === "function" && projectHeld()) {
+        log("Вкладки разбудить нельзя: проект ждёт ручного запуска после переключения — нажмите «Шаг».", true);
+        return;
+      }
+      if (GM_getValue(K.paused, "")) {
+        log("Вкладки разбудить нельзя: работа стоит на паузе — снимите её кнопкой «Шаг» или «Продолжить».", true);
+        return;
+      }
+      const state = wakeAll("кнопка «Все вкладки»");
+      const work = typeof wakeWorkHere === "function" ? wakeWorkHere() : "";
+      log(
+        work
+          ? `Разбудил вкладки. У этой роли тоже есть работа (${work === "pending" ? "в очереди" : "ждём ответа"}) — начну здесь.`
+          : `Разбудил вкладки других аккаунтов до ${new Date(Number(state.until)).toLocaleTimeString()}: работу продолжит та, чей аккаунт адресат. Эта вкладка ждёт своей работы.`,
+      );
+      if (work) tick(true);
+      else if (autoOn()) tick(false);
     };
     document.getElementById(ui.toggle).onclick = () => {
       const work = toggleAuto();

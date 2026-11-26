@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Relay · WOTR — пульт транспорта</title>
+<link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+<header class="bar">
+  <div class="brand">
+    <span class="dot" id="health-dot" title="связь со службой"></span>
+    <strong>Relay · WOTR</strong>
+    <span class="muted" id="mode-line">загрузка…</span>
+  </div>
+  <div class="actions">
+    <button id="btn-step" class="primary">Шаг</button>
+    <button id="btn-pause">Пауза</button>
+    <button id="btn-mode">Автоцикл</button>
+    <button id="btn-refresh" title="обновить сейчас">↻</button>
+  </div>
+</header>
+
+<div id="banner" class="banner hidden"></div>
+
+<main>
+  <section class="panel" id="setup-panel">
+    <h2>Настройка</h2>
+    <p class="muted">Ключи и ID подставляются сами: мастер находит базы в Notion и папку логов в Drive.
+      Расширенные настройки трогать не нужно — без них цикл работает.</p>
+    <div id="setup-steps" class="steps"></div>
+    <div class="row">
+      <button id="btn-discover">Найти и применить</button>
+      <span class="muted" id="setup-note"></span>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2>Слоты <span class="counter" id="counts"></span></h2>
+    <div id="slots" class="slots"></div>
+  </section>
+
+  <section class="panel">
+    <h2>Очередь</h2>
+    <div class="row wrap">
+      <input id="queue-card" placeholder="ID карточки Notion" />
+      <input id="queue-title" placeholder="Заголовок (для человека)" />
+      <input id="queue-role" placeholder="Роль" />
+      <select id="queue-slot"><option value="">слот подберётся</option></select>
+      <button id="btn-enqueue">В очередь</button>
+    </div>
+    <div id="queue" class="list"></div>
+  </section>
+
+  <section class="panel">
+    <h2>Журнал <span class="muted">— все вкладки, включая действия человека</span></h2>
+    <div class="row wrap">
+      <select id="event-filter">
+        <option value="">все виды</option>
+        <option value="ui">действия человека</option>
+        <option value="dispatch">выдачи</option>
+        <option value="reply">ответы агентов</option>
+        <option value="net">сеть</option>
+        <option value="guard">сторож</option>
+        <option value="accounts">аккаунты</option>
+        <option value="incident">инциденты</option>
+      </select>
+      <span class="muted" id="event-note"></span>
+    </div>
+    <ol id="events" class="events"></ol>
+  </section>
+</main>
+
+<dialog id="incident-dialog">
+  <header class="row space">
+    <h2>Пакет инцидента</h2>
+    <button id="btn-close-incident" class="ghost">закрыть</button>
+  </header>
+  <pre id="incident-text"></pre>
+</dialog>
+
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<script src="/app.js"></script>
+</body>
+</html>
