@@ -1,6 +1,6 @@
 {
   "name": "relay-wotr-transport",
-  "version": "1.25.1",
+  "version": "1.25.2",
   "private": true,
   "type": "module",
   "description": "Транспорт Relay · WOTR: служба состояния, диспетчер и пульт",

@@ -191,6 +191,10 @@ test("страница установки: говорит, куда вставл
   assert.match(html, /Gateway/);
   assert.match(html, /Не сюда/);
   assert.match(html, /Расширения/);
+  // Шаг авторизации в порядке установки: без него действие notion отказывает
+  // «нет разрешения на вызов UrlFetchApp.fetch», и владелец ищет не там.
+  assert.match(html, /authorize/, "порядок шагов содержит авторизацию внешнего HTTP");
+  assert.match(html, /script\.external_request/, "право названо на странице");
   // Кода две копии быть не должно: страница читает тот же файл, что и README.
   assert.ok(bridgeCode().includes("doPost"), "код моста читается из файла");
   assert.ok(html.includes(bridgeCode().split("\n")[0]), "текст кода вставлен в страницу");
@@ -254,6 +258,12 @@ test("код для книги: те же действия, ключ обяза�
   const getBlock = code.slice(code.indexOf("function doGet()"));
   assert.doesNotMatch(getBlock, /readValues_|getDataRange/, "GET не отдаёт содержимое книги");
   assert.match(code, /SpreadsheetApp\.getActiveSpreadsheet/, "скрипт живёт внутри книги, а не ищет её по ID");
+  // Без authorize() действие notion отказывает: веб-приложение не показывает
+  // окно согласия, и право script.external_request выдаётся только из редактора.
+  assert.match(code, /function authorize\(\)/, "функция авторизации на месте");
+  assert.match(code, /UrlFetchApp\.fetch\('https:\/\/api\.notion\.com\/v1\/users\/me'/,
+    "authorize вызывает внешний HTTP — это и есть повод для согласия");
+  assert.match(code, /script\.external_request/, "название права названо в коде");
 });
 
 test("действие «notion»: путь ограничен /v1/, токен обязателен, хост зашит в скрипт", () => {

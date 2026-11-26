@@ -189,3 +189,20 @@ function doPost(e) {
 function doGet() {
   return sendJson_({ ok: true, service: 'relay-bridge', hint: 'мост жив; транспорт ходит сюда POST-запросами с ключом' });
 }
+
+/**
+ * Одноразовая авторизация внешнего HTTP — запускается из редактора, а не из
+ * веб-приложения. Веб-приложение не умеет само показывать окно «Нужны права»:
+ * пока владелец не запустит эту функцию в редакторе и не нажмёт «Допустить»,
+ * каждый вызов UrlFetchApp.fetch отвечает «У вас нет разрешения на вызов
+ * функции». Книга (SpreadsheetApp) при этом работает — на неё права выданы
+ * при первом развёртывании; внешний HTTP появился с действием «notion».
+ *
+ * После запуска: Развернуть → Управление версиями → Новая версия.
+ */
+function authorize() {
+  var response = UrlFetchApp.fetch('https://api.notion.com/v1/users/me', { muteHttpExceptions: true });
+  var line = 'script.external_request выдан: HTTP ' + response.getResponseCode() + ' — опубликуйте новую версию веб-приложения';
+  Logger.log(line);
+  return line;
+}
