@@ -44,6 +44,13 @@ export function createMemoryState() {
     pauseReason: "",
     slotsCache: null,
     slotsAt: 0,
+    // Настройки кешируются на время шага: их читает и справочник ролей, и
+    // пределы, и пульт. Без кеша `loadRoles` видел пустой объект — и
+    // справочник не читался никогда, даже когда токен и ID были на месте.
+    settingsCache: null,
+    settingsAt: 0,
+    // Токен Notion, введённый в пульте. Пусто — берётся из окружения.
+    notionToken: "",
   };
 }
 
@@ -51,6 +58,15 @@ const SLOT_CACHE_MS = 30000;
 
 /** Кеш справочника ролей: настройка, а не данные миссии. */
 const ROLES_CACHE_MS = 60000;
+
+/**
+ * Кеш настроек.
+ *
+ * Короткий, потому что мастер настройки пишет в тот же лист: если держать
+ * минуту, только что найденный ID роли не подхватился бы, и «применил, а всё
+ * равно ✕» выглядело бы как поломка.
+ */
+const SETTINGS_CACHE_MS = 3000;
 
 /**
  * Сколько служба помнит, что задание на агента уже забрано.
@@ -73,6 +89,9 @@ export function createService({
   notion = null,
   notionSearch = null,
   notionToken = "",
+  // Сеть для проверки токена из пульта. Параметром, а не глобальным fetch:
+  // тест «токен принят» не должен ходить в настоящий Notion.
+  notionFetch = globalThis.fetch,
   now = () => Date.now(),
   memory = createMemoryState(),
   slotsCacheMs = SLOT_CACHE_MS,
@@ -88,9 +107,15 @@ export function createService({
     return memory.slotsCache;
   }
 
-  async function loadSettings() {
+  async function loadSettings(force = false) {
+    if (!force && memory.settingsCache && now() - (memory.settingsAt || 0) < SETTINGS_CACHE_MS) {
+      return memory.settingsCache;
+    }
     const { rows } = await store.read("settings");
-    return parseSettings(rows);
+    const values = parseSettings(rows);
+    memory.settingsCache = values;
+    memory.settingsAt = now();
+    return values;
   }
 
   /**
@@ -114,13 +139,13 @@ export function createService({
    * лучше, чем отказ.
    */
   async function loadRoles() {
-    const settings = memory.settingsCache || {};
+    const settings = await loadSettings();
     const dataSourceId = settings["notion.rolesDb"] || "";
-    const token = notionToken || notionTokenFrom(process.env);
+    const token = notionTokenNow();
     if (!dataSourceId || !token) return memory.rolesCache || [];
     if (memory.rolesCache && now() - (memory.rolesAt || 0) < ROLES_CACHE_MS) return memory.rolesCache;
     try {
-      const rows = await fetchRoles({ token, dataSourceId });
+      const rows = await fetchRoles({ token, dataSourceId, fetchImpl: notionFetch });
       memory.rolesCache = rows;
       memory.rolesAt = now();
       return rows;
@@ -129,6 +154,15 @@ export function createService({
       return memory.rolesCache || [];
     }
   }
+
+  /**
+   * Действующий токен Notion.
+   *
+   * Порядок: введённый в пульте → переданный при сборке службы → окружение.
+   * Пульта нет в этом списке случайно: владелец получает токен в Notion и не
+   * должен ради него перезапускать транспорт с переменной в командной строке.
+   */
+  const notionTokenNow = () => memory.notionToken || notionToken || notionTokenFrom(process.env);
 
   async function loadInstances() {
     try {
@@ -835,6 +869,9 @@ export function createService({
       // памяти, и снаружи это отличимо только так: слоты, журнал и мастер при
       // этом выглядят настоящими.
       demo: Boolean(store.demo),
+      // Подключён ли Notion — для пульта: поле «Токен» показывается только
+      // пока справочник не читается, иначе оно приглашает сломать рабочее.
+      notion: { ready: Boolean(notionTokenNow()) },
       mode: data.settings["cycle.mode"],
       paused: memory.paused,
       pauseReason: memory.pauseReason,
@@ -871,7 +908,9 @@ export function createService({
    * это попадёт в книгу. Если ключ уже был, он не затирается пустотой.
    */
   async function setup({ projectName = "" } = {}) {
-    const current = await loadSettings();
+    // Настройки читаем заново: мастер мог прийти сразу после записи токена, а
+    // кеш трёхсекундной давности — не повод искать базы без ключа.
+    const current = await loadSettings(true);
     let databases = [];
     let searchError = "";
     if (notionSearch) {
@@ -886,6 +925,9 @@ export function createService({
       settings: current,
       databases,
       demo: Boolean(store.demo),
+      // «Токена нет» и «токен есть, но баз не видно» — разные новости. Второе
+      // значит, что интеграции не дали доступ к странице, и искать надо там.
+      searchable: Boolean(notionTokenNow()),
     });
     const applied = plan.ok ? await applySetup({ store, plan, now }) : { ok: false, why: plan.why };
     const events = plan.steps.map((step) => `${step.ok ? "✓" : "✕"} ${step.key}: ${step.why}`);
@@ -898,8 +940,53 @@ export function createService({
       ok: applied.ok,
       why: applied.ok ? plan.why : (searchError ? `${plan.why}; поиск в Notion: ${searchError}` : plan.why),
       steps: plan.steps,
+      notes: plan.notes || [],
       written: applied.written || [],
       advancedLeftToDefaults: plan.advancedLeftToDefaults,
+      hasNotionToken: Boolean(notionTokenNow()),
+    };
+  }
+
+  /**
+   * Токен Notion, введённый в пульте.
+   *
+   * Зачем вход, а не переменная окружения: токен владелец получает в Notion
+   * за десять секунд, а «остановите транспорт, задайте NOTION_TOKEN, запустите
+   * заново» — это шаг, который откладывают. Живёт он только в памяти службы:
+   * книга доступна по мосту, и класть туда чужой токен незачем.
+   *
+   * Проверяем сразу поиском: «сохранено» без проверки — это обещание, которое
+   * человек обнаружит ложным на кнопке «Найти и применить».
+   */
+  async function notionTokenSet({ token = "" } = {}) {
+    const value = String(token || "").trim();
+    if (!value) return { ok: false, why: "токен пуст" };
+    if (!/^(secret_|ntn_)/.test(value)) {
+      return {
+        ok: false,
+        why: "токен Notion начинается с ntn_ (новый) или secret_ (старый): похоже, вставилась не та строка",
+      };
+    }
+    let found = [];
+    try {
+      found = await searchDatabases({ token: value, fetchImpl: notionFetch });
+    } catch (error) {
+      return { ok: false, why: `Notion не принял токен: ${error.message}` };
+    }
+    memory.notionToken = value;
+    // Справочник ролей теперь читается другим токеном — старый кеш не годится.
+    memory.rolesCache = null;
+    memory.rolesAt = 0;
+    await record({
+      kind: "ui", level: "info",
+      text: `токен Notion принят: видно баз — ${found.length}`,
+      data: { databases: found.map((item) => item.title) },
+    });
+    return {
+      ok: true,
+      why: `токен принят. Видно баз: ${found.length}${found.length ? ` (${found.map((item) => item.title).join(", ")})` : ""}. ` +
+        "Нажмите «Найти и применить». При перезапуске службы токен нужно будет ввести снова.",
+      databases: found.map((item) => item.title),
     };
   }
 
@@ -986,7 +1073,7 @@ export function createService({
 
   return {
     handle, hello, pull, beat, report, event, step, pause, resume, setMode, agentReady,
-    enqueue, cancel, setup, snapshot, incidentPackage, loadAll, record, memory, sheetTitles,
+    enqueue, cancel, setup, notionTokenSet, snapshot, incidentPackage, loadAll, record, memory, sheetTitles,
     // Только для тестов: эти функции не входят в протокол и не должны
     // вызываться из вкладки. Отдельным объектом, чтобы «наружу» случайно не
     // уехал лишний вход.

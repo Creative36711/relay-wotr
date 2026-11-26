@@ -62,6 +62,12 @@ export async function searchDatabases({ token, fetchImpl = globalThis.fetch, que
     return normalizeSearchResults(data);
   } catch (error) {
     if (error.name === "AbortError") throw new Error(`Notion не ответил за ${timeoutMs} мс`);
+    // `fetch failed` — это не «токен плохой», а «до Notion не дошли»: сеть,
+    // прокси, VPN. Одинаковый текст на два разных случая отправляет человека
+    // перевыпускать рабочий токен.
+    if (/fetch failed|network|ENOTFOUND|EAI_AGAIN/i.test(String(error.message))) {
+      throw new Error("до Notion не дозвонились — проверьте интернет или VPN, токен тут не при чём");
+    }
     throw error;
   } finally {
     clearTimeout(timer);

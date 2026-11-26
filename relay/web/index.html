@@ -28,6 +28,12 @@
     <h2>Настройка</h2>
     <p class="muted" id="setup-hint">Ключи и ID подставляются сами: мастер находит базы в Notion и папку логов в Drive.
       Расширенные настройки трогать не нужно — без них цикл работает.</p>
+    <div class="row wrap" id="notion-row">
+      <input id="notion-token" type="password" spellcheck="false" autocomplete="off"
+             placeholder="Токен Notion (ntn_… или secret_…) — вставьте и нажмите «Проверить»" />
+      <button id="btn-notion" class="ghost">Проверить токен</button>
+      <span class="muted" id="notion-note"></span>
+    </div>
     <div id="setup-steps" class="steps"></div>
     <div class="row">
       <button id="btn-discover">Найти и применить</button>

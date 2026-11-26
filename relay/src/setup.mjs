@@ -21,7 +21,7 @@ const norm = (value) => String(value ?? "").trim().toLowerCase();
  * первой: иначе транспорт начнёт писать в чужую копию, и это выяснится через
  * неделю.
  */
-export function pickDatabase(results, title, { demo = false } = {}) {
+export function pickDatabase(results, title, { demo = false, searchable = true } = {}) {
   const wanted = norm(title);
   const hits = (results || []).filter((item) => norm(item?.title) === wanted);
   if (!hits.length) {
@@ -36,12 +36,18 @@ export function pickDatabase(results, title, { demo = false } = {}) {
       };
     }
     if (!results || !results.length) {
-      // Пустой поиск — это не «базы нет». Он означает, что транспорт не знает
-      // токен Notion, и назвать причиной доступ к странице значит отправить
-      // человека чинить не то.
+      // Пустой поиск — это не всегда «базы нет». Если искать было нечем, так и
+      // говорим: назвать причиной доступ к странице значит отправить человека
+      // чинить не то.
+      if (searchable) {
+        return {
+          ok: false,
+          why: `база «${title}» не видна: токен есть, но интеграция её не видит — дайте интеграции доступ к странице проекта`,
+        };
+      }
       return {
         ok: false,
-        why: "Notion не подключён: транспорт не знает токен, искать базы нечем — задайте NOTION_TOKEN при запуске",
+        why: "Notion не подключён: транспорт не знает токен, искать базы нечем — вставьте токен в поле «Токен Notion» на пульте",
       };
     }
     return {
@@ -67,45 +73,67 @@ export function pickDatabase(results, title, { demo = false } = {}) {
  * Побочных эффектов нет — план можно показать человеку до записи. Это и есть
  * «мастер»: один экран, где видно всё, и одна кнопка «применить».
  */
-export function planSetup({ projectName = "", settings = {}, databases = [], gateway = null, demo = false } = {}) {
+export function planSetup({ projectName = "", settings = {}, databases = [], gateway = null, demo = false, searchable = true } = {}) {
   const steps = [];
   const discovered = {};
 
-  const roles = pickDatabase(databases, "Роли", { demo });
+  // Демо — это не «не нашлось», это «искать негде». Показывать три ✕ по
+  // ключам, которые нельзя заполнить, значит предлагать человеку чинить то,
+  // что он не ломал. В демо шагов нет вовсе: есть одна причина.
+  if (demo) {
+    return {
+      ok: false,
+      steps: [],
+      discovered: {},
+      requiredMissing: [],
+      advancedLeftToDefaults: Object.keys(SETTINGS).filter((key) => SETTINGS[key].group === "advanced").length,
+      why: "служба в демо-режиме: книга не подключена, искать в Notion нечего — сначала вставьте адрес и ключ моста",
+      demo: true,
+    };
+  }
+
+  const roles = pickDatabase(databases, "Роли", { demo, searchable });
   steps.push({
     key: "notion.rolesDb",
     ok: roles.ok,
-    why: roles.ok ? `найдена база «Роли»` : roles.why,
+    // Справочник ролей улучшает раскладку (адреса, административность), но
+    // цикл работает и без него: функция и имя роли есть в самой строке
+    // очереди. Значит это замечание, а не блокировка.
+    required: false,
+    recommended: true,
+    why: roles.ok
+      ? "найдена база «Роли»"
+      : `${roles.why}. Без справочника цикл работает: роль и функция берутся из строки очереди`,
     value: roles.ok ? roles.id : "",
-    required: true,
   });
   if (roles.ok) discovered["notion.rolesDb"] = roles.id;
 
-  // Слоты живут в книге (лист «Слоты»), а не в Notion: служба читает их из
-  // хранилища и ни строчки кода не читает `notion.slotsDb`. Пока ключ был
-  // обязательным, мастер не пропускал дальше без базы, которой транспорт
-  // никогда не пользуется, — то есть требовал работу без результата.
+  // «Слоты» и «Запросы» транспорт не читает: слоты — лист книги, запросы
+  // приходят строкой очереди. Шаг показываем только когда база реально
+  // нашлась — иначе это ✕ про то, что и не требовалось.
   const slots = pickDatabase(databases, "Слоты", { demo });
-  steps.push({
-    key: "notion.slotsDb",
-    ok: slots.ok,
-    why: slots.ok ? "найдена база «Слоты» (необязательно: слоты читаются из книги)"
-      : "база «Слоты» в Notion не нужна: слоты — лист книги, транспорт их уже читает",
-    value: slots.ok ? slots.id : "",
-    required: false,
-    hint: "",
-  });
-  if (slots.ok) discovered["notion.slotsDb"] = slots.id;
+  if (slots.ok) {
+    steps.push({
+      key: "notion.slotsDb",
+      ok: true,
+      required: false,
+      why: "найдена база «Слоты» (необязательно: слоты читаются из книги)",
+      value: slots.id,
+    });
+    discovered["notion.slotsDb"] = slots.id;
+  }
 
   const requests = pickDatabase(databases, "Запросы", { demo });
-  steps.push({
-    key: "notion.requestsDb",
-    ok: requests.ok,
-    why: requests.ok ? "найдена база «Запросы»" : requests.why,
-    value: requests.ok ? requests.id : "",
-    required: false,
-  });
-  if (requests.ok) discovered["notion.requestsDb"] = requests.id;
+  if (requests.ok) {
+    steps.push({
+      key: "notion.requestsDb",
+      ok: true,
+      required: false,
+      why: "найдена база «Запросы» (необязательно: карточки приходят строкой очереди)",
+      value: requests.id,
+    });
+    discovered["notion.requestsDb"] = requests.id;
+  }
 
   if (gateway) {
     steps.push({
@@ -127,18 +155,21 @@ export function planSetup({ projectName = "", settings = {}, databases = [], gat
   });
 
   const requiredMissing = steps.filter((step) => step.required && !step.ok);
+  const notes = steps.filter((step) => !step.required && !step.ok);
   return {
     ok: requiredMissing.length === 0,
     steps,
     discovered,
     requiredMissing: requiredMissing.map((step) => step.key),
-    // Все расширенные настройки остаются по умолчанию: «туда можно не заходить».
+    // Замечания — то, что не мешает циклу. Пульт показывает их спокойно, а не
+    // ✕: иначе «работает» и «сломано» выглядят одинаково.
+    notes: notes.map((step) => `${step.key}: ${step.why}`),
     advancedLeftToDefaults: Object.keys(SETTINGS).filter((key) => SETTINGS[key].group === "advanced").length,
-    // Причина называется дословно: «баз с названием две» и «базы нет» требуют
-    // разных действий человека, и склеивать их в «не хватает» бесполезно.
     why: requiredMissing.length
       ? requiredMissing.map((step) => `${step.key}: ${step.why}`).join("; ")
-      : "всё, что нужно циклу, найдено; ключи и ID вводить не нужно",
+      : notes.length
+        ? `цикл можно запускать; ключи и ID вводить не нужно. Замечание: ${notes.map((step) => `${step.key} — ${step.why}`).join("; ")}`
+        : "всё, что нужно циклу, найдено; ключи и ID вводить не нужно",
   };
 }
 
@@ -154,9 +185,15 @@ export function planSetup({ projectName = "", settings = {}, databases = [], gat
  * Отсутствие `sheets` (старый вызов, демо) проверку не включает: молчаливое
  * «всё хорошо» здесь честнее ложной тревоги.
  */
-export function readiness({ settings = {}, slots = [], sheets = null } = {}) {
+export function readiness({ settings = {}, slots = [], sheets = null, notes: extraNotes = [] } = {}) {
   const problems = [];
-  if (!settings["notion.rolesDb"]) problems.push("не найдена база «Роли» — запустите мастер настройки");
+  const notes = [...extraNotes];
+  // Справочник ролей — улучшение, а не условие: без него административность
+  // берётся из строки очереди, а адрес агента — из «Экземпляров». Пока это
+  // считалось отказом, пульт объявлял неготовым исправный цикл.
+  if (!settings["notion.rolesDb"]) {
+    notes.push("справочник ролей в Notion не подключён: роль и функция берутся из строки очереди — цикл работает");
+  }
   // «Слоты» в Notion не нужны с тех пор, как слоты переехали в книгу: ключ
   // остаётся в реестре для старых книг, но готовность от него не зависит.
 
@@ -166,14 +203,21 @@ export function readiness({ settings = {}, slots = [], sheets = null } = {}) {
   if (!active.some((slot) => !slot.admin)) problems.push("нет рабочего слота: исполнительские роли некуда выдавать");
   if (Array.isArray(sheets) && sheets.length) {
     const have = new Set(sheets.map((name) => norm(name)));
-    const missing = Object.values(SHEETS).map((sheet) => sheet.name).filter((name) => !have.has(norm(name)));
+    // «Состояние» в списке нет намеренно: служба его не читает и не пишет —
+    // единственная строка состояния живёт в «Настройках». Требовать лист,
+    // которого никто не касается, значит слать владельца делать работу без
+    // результата (и ровно этим пугала строка запуска).
+    const missing = Object.entries(SHEETS)
+      .filter(([key]) => key !== "state")
+      .map(([, sheet]) => sheet.name)
+      .filter((name) => !have.has(norm(name)));
     if (missing.length) {
       problems.push(`в книге нет листов: ${missing.join(", ")} — служба создаст их при первом чтении, но проверьте доступ`);
     }
   }
   const audit = auditSettings();
   problems.push(...audit);
-  return { ok: problems.length === 0, problems };
+  return { ok: problems.length === 0, problems, notes };
 }
 
 /**
