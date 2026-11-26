@@ -30,7 +30,6 @@ const mentions = (text, field) => text.includes(`"${field}"`) || text.includes(`
 const LIVE_ROLE_FIELDS = [
   "Роль", "Функция", "Статус", "Agent URL", "Зона записи", "Гейт", "Репозиторий",
   "Agent Admin", "Agent State", "Previous Agent URL", "Аккаунт", "Доступность",
-  "Agent Job ID", "Agent Created At",
 ];
 
 /** Поля не для кода, а для людей: код их не читает, и это нормально. */
@@ -39,8 +38,21 @@ const HUMAN_ROLE_FIELDS = ["Устав"];
 /**
  * Поля, которые пишет provisioning. Проверять их «на заполняемость руками»
  * бессмысленно: значение ставится само, а ручная правка будет перезаписана.
+ *
+ * «Agent Job ID» и «Agent Created At» здесь больше нет: по D-011 задание и дата
+ * создания живут в листе «Экземпляры», потому что у роли несколько агентов, а
+ * поле в строке роли одно. Из базы они удалены, и запись в них теперь
+ * отклоняется Notion целиком (validation_error на весь запрос).
  */
-const PROVISIONED_ROLE_FIELDS = ["Agent Job ID", "Agent Created At", "Agent State"];
+const PROVISIONED_ROLE_FIELDS = ["Agent State"];
+
+/**
+ * Поля, которых в базе больше нет. Проверяется не «упоминание», а чтение:
+ * `12-notion.js` спрашивает их через `p.properties[...]`, и если свойство
+ * исчезло, проверка перед чтением обязана быть — иначе `rt(undefined)` бросает
+ * TypeError в шаге цикла.
+ */
+const REMOVED_ROLE_FIELDS = ["Agent Job ID", "Agent Created At"];
 
 test("живые поля «Ролей» действительно читаются кодом вкладки", () => {
   for (const field of LIVE_ROLE_FIELDS) {
@@ -63,6 +75,22 @@ test("поля provisioning действительно пишутся, а не �
     const written = new RegExp(`["']${field}["']\\s*:`).test(TAB);
     assert.ok(written, `«${field}» перестало записываться — тогда оно мёртвое, а не живое`);
   }
+});
+
+// Удалённое поле опаснее мёртвого: Notion отвергает запрос целиком, и
+// provisioning встаёт на каждой роли. Здесь проверяется, что запись в такое
+// поле осталась только под проверкой наличия — и что проверка настоящая,
+// то есть спрашивает живую схему, а не нормализованную строку.
+test("удалённые поля пишутся только при наличии проверки схемы", () => {
+  const flow = readFileSync(join(ROOT, "tools/script-cat/src/33-provision-flow.js"), "utf8");
+  for (const field of REMOVED_ROLE_FIELDS) {
+    const writes = flow.split("\n").filter((line) => line.includes(`"${field}"`) && line.includes(":"));
+    assert.ok(writes.length > 0, `«${field}» больше нигде не пишется — тогда удалите проверку`);
+    for (const line of writes) {
+      assert.match(line, /canWrite\("/, `запись «${field}» без проверки: Notion отклонит весь запрос`);
+    }
+  }
+  assert.match(flow, /notion\("GET", `pages\/\$\{pageId\}`\)/, "проверка обязана спрашивать живую страницу");
 });
 
 test("«Проверка» в «Запросах» не используется ни одним слоем", () => {

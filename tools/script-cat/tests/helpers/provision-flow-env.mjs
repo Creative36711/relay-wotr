@@ -87,7 +87,27 @@ export function makeWorld({ cfg = {}, mode = 'auto', replace = false } = {}) {
       if (method === 'GET' && path.startsWith('pages/')) {
         const page = pages.get(path.slice(6));
         if (!page) throw new Error('404 object_not_found');
-        return page;
+        // Живой Notion отдаёт страницу со схемой свойств, и provisioning
+        // проверяет по ней, что писать можно. Стенд обязан отвечать так же,
+        // иначе проверка «поля есть в базе» в тестах всегда ложна.
+        //
+        // Схема нарочно без «Agent Job ID» и «Agent Created At»: этих полей в
+        // базе больше нет (живут в листе «Экземпляры»), и тест должен ловить
+        // попытку записи в них как отказ, а не как успех.
+        return {
+          ...page,
+          archived: false,
+          properties: {
+            'Роль': { type: 'title' },
+            'Функция': { type: 'select' },
+            'Статус': { type: 'select' },
+            'Agent URL': { type: 'url' },
+            'Agent State': { type: 'select' },
+            'Agent Admin': { type: 'checkbox' },
+            'Previous Agent URL': { type: 'url' },
+            ...(page.properties || {}),
+          },
+        };
       }
       if (method === 'GET' && path.startsWith('data_sources/')) return { properties: { 'Кому': { type: 'select', select: { options: world.options.map((name) => ({ name })) } } } };
       if (method === 'PATCH' && path.startsWith('data_sources/')) {

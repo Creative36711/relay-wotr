@@ -118,6 +118,12 @@
           for (const name of ["Аккаунт", "Доступность"]) {
             if (source.properties[name] && source.properties[name].type !== "select") errors.push(`${name}: нужен select`);
           }
+          // Поля provisioning: обязательны по смыслу (без «Agent State» роли
+          // никогда не создаются), но проверяются только если присутствуют —
+          // база без них работает по-старому, как «Аккаунт» по D-004.
+          for (const [name, type] of Object.entries({ "Agent State": "select", "Agent Admin": "checkbox" })) {
+            if (source.properties[name] && source.properties[name].type !== type) errors.push(`${name}: нужен ${type}`);
+          }
         }
         for (const [name, required] of Object.entries(options)) {
           const actual = source.properties[name]?.select?.options;
@@ -128,7 +134,18 @@
         // только он; транспорт сообщает, что видит поле, которого нет в этой
         // таблице, чтобы поле не выглядело рабочим. Разница «живое || схема»
         // молчала: `Тип` был в живой базе, но не здесь, и код писал его в пустоту.
-        const extra = Object.keys(source.properties || {}).filter((name) => !(name in fields) && !["Repository", "Репозиторий"].includes(name));
+        // Поля, которые транспорт читает или пишет, но которые не нужны для
+        // работы базы (аддитивные по D-004/D-005, как «Аккаунт»). Раньше
+        // «Agent State» и «Agent Admin» попадали в «лишние» и человеку
+        // советовали их удалить — а без них provisioning не работает вовсе.
+        // Проверка типов для них есть выше: «лишнее» здесь значит «не
+        // обязательное», а не «ненужное».
+        // Поля для людей («Устав») сюда НЕ входят: их никто не читает, и
+        // человек должен об этом узнать, а не считать поле рабочим.
+        const additive = label === "Роли"
+          ? ["Repository", "Репозиторий", "Аккаунт", "Доступность", "Agent State", "Agent Admin", "Agent Job ID", "Agent Created At", "Previous Agent URL"]
+          : ["Repository", "Репозиторий"];
+        const extra = Object.keys(source.properties || {}).filter((name) => !(name in fields) && !additive.includes(name));
         if (extra.length) warnings.push(`«${label}»: лишние поля — ${extra.join(", ")} (схема их не знает; правьте схему в Notion только сами).`);
         // D-004: поля аккаунтов аддитивны — база без них работает по-старому.
         // Но «работает по-старому» значит «лимит аккаунта не отслеживается», и
