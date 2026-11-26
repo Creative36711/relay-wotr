@@ -363,6 +363,53 @@ export async function pingNotion({ fetchImpl = globalThis.fetch, timeoutMs = 150
   }
 }
 
+/**
+ * Разобрать ответ, который Notion не писал.
+ *
+ * История, из-за которой это появилось. Владелец вставил рабочий токен и
+ * получил «Unexpected token '<'»: вместо данных пришла HTML-страница. Токен
+ * тут не при чём — но по такому сообщению это не видно, и человек идёт
+ * перевыпускать ключ. Теперь мы называем, кто ответил:
+ *
+ *   • заголовок `server` (например, `cloudflare`, `nginx`) — подменяет
+ *     посредник между вами и Notion;
+ *   • `x-served-by`/`via` — явно прокси или VPN-клиент;
+ *   • страница входа или капча — фильтр с авторизацией;
+ *   • адрес в ответе после редиректа — куда именно вас увели.
+ *
+ * Возвращает `null`, если ответ похож на настоящий JSON.
+ */
+export function describeNonJson({ status = 0, url = "", headers = {}, text = "" } = {}) {
+  const body = String(text || "");
+  // Настоящий JSON начинается с `{` или `[`; всё остальное — чужая страница.
+  if (/^\s*[{[]/.test(body)) return null;
+  const head = body.slice(0, 400).toLowerCase();
+  const server = String(headers?.server || "").trim();
+  const via = String(headers?.["x-served-by"] || headers?.via || "").trim();
+  const kind = /captcha|cf-challenge|checking your browser|access denied|forbidden|заблокирован/i.test(head)
+    ? "страница фильтра или капча"
+    : /sign in|log in|login|войти|войдите/i.test(head)
+      ? "страница входа"
+      : "не JSON: страницу подставил посредник";
+  const who = [
+    server ? `сервер: ${server}` : "",
+    via ? `через: ${via}` : "",
+    url ? `адрес ответа: ${url}` : "",
+  ].filter(Boolean).join(", ");
+  return {
+    kind,
+    server,
+    via,
+    status,
+    url,
+    // HTML в тексте ошибки не нужен: он занимает экран и не помогает.
+    snippet: body.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim().slice(0, 160),
+    why: `${kind}${who ? ` (${who})` : ""}` +
+      ". Запрос дошёл, но ответил не Notion: так делает VPN-клиент, антивирус или фильтр по домену. " +
+      "Токен тут не при чём",
+  };
+}
+
 export async function searchDatabases({ token, fetchImpl = globalThis.fetch, query = "", timeoutMs = NOTION_TIMEOUT_MS } = {}) {
   if (!token) throw new Error("нет токена Notion: мастер не может искать базы");
   const controller = new AbortController();
@@ -383,9 +430,23 @@ export async function searchDatabases({ token, fetchImpl = globalThis.fetch, que
       }),
     });
     const text = await response.text();
+    const substituted = describeNonJson({
+      status: response.status,
+      url: response.url || "",
+      headers: Object.fromEntries((response.headers?.entries?.() || [])),
+      text,
+    });
+    if (substituted) throw new Error(`Notion вернул не данные: ${substituted.why}`);
     const data = text ? JSON.parse(text) : {};
     if (!response.ok) {
       throw new Error(data?.message || `Notion ответил ${response.status}`);
+    }
+    // Редирект на чужой адрес — тоже подмена: настоящий Notion не уводит
+    // `/v1/search` на страницу входа.
+    if (response.url && !String(response.url).includes("api.notion.com")) {
+      throw new Error(
+        `Notion ответил, но запрос ушёл на ${response.url}: так делает VPN-клиент или фильтр. Токен тут не при чём`,
+      );
     }
     return normalizeSearchResults(data);
   } catch (error) {

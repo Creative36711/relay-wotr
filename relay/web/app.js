@@ -278,6 +278,11 @@ async function setNotionToken() {
   const result = await post("/api/notion-token", { token });
   note.className = result.ok ? "ok" : "bad";
   note.textContent = result.why || (result.ok ? "токен принят" : "не принят");
+  // Ответила чужая страница — это не сеть и не токен: запрос дошёл, но его
+  // перехватили. Так и говорим, иначе человек идёт менять рабочий ключ.
+  if (result.substituted) {
+    note.textContent += " Сеть работает, ответ подменён посредником — поменяйте режим VPN или отключите проверку HTTPS в антивирусе.";
+  }
   // Если дело в сети, токен не стираем: человек исправит сеть и нажмёт ещё
   // раз, а не будет искать, куда он его вставлял.
   if (result.ok) field.value = "";

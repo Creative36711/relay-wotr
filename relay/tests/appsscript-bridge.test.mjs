@@ -138,6 +138,41 @@ test("HTML вместо JSON назван своей причиной: дост�
   });
 });
 
+test("Notion вернул HTML — назван посредник, а не «Unexpected token»", async () => {
+  // Живой случай: владелец вставил рабочий токен и получил
+  // «Unexpected token '<'». Токен был ни при чём — ответила чужая страница.
+  const { describeNonJson } = await import("../src/notion-db.mjs");
+  const html = describeNonJson({
+    status: 200,
+    url: "https://api.notion.com/v1/search",
+    headers: { server: "cloudflare" },
+    text: "<!DOCTYPE html><html><head><title>Checking your browser</title></head></html>",
+  });
+  assert.equal(html.server, "cloudflare", "видно, кто ответил");
+  assert.match(html.why, /не Notion/);
+  assert.match(html.why, /Токен тут не при чём/);
+  assert.match(html.kind, /фильтр|капча/);
+  assert.doesNotMatch(html.why, /</, "HTML не вываливается в сообщение");
+
+  // Настоящий JSON подменой не считается: иначе обычный ответ ломался бы.
+  assert.equal(describeNonJson({ status: 200, text: '{"results":[]}' }), null);
+  assert.equal(describeNonJson({ status: 200, text: '  [1,2]' }), null);
+});
+
+test("поиск в Notion: подменённый ответ — отказ с причиной, а не падение JSON", async () => {
+  const { searchDatabases } = await import("../src/notion-db.mjs");
+  const fetchImpl = async () => ({
+    ok: true, status: 200, url: "https://api.notion.com/v1/search",
+    headers: { entries: () => [["server", "nginx"]] },
+    text: async () => "<html><body>Доступ ограничен</body></html>",
+  });
+  await assert.rejects(() => searchDatabases({ token: "ntn_x", fetchImpl }), (error) => {
+    assert.match(error.message, /вернул не данные/);
+    assert.match(error.message, /nginx/);
+    return true;
+  });
+});
+
 test("недоступный адрес называет три причины, а не «fetch failed»", async () => {
   const fetchImpl = async () => { throw new Error("fetch failed"); };
   const store = createAppsScriptStore({ url: "https://bridge/exec", key: "s3cret", fetchImpl });
