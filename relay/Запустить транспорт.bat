@@ -18,9 +18,9 @@ for %%F in ("%~dp0bridge.txt" "%~dp0..\bridge.txt") do (
   if exist "%%~fF" if not defined BRIDGE_FILE set "BRIDGE_FILE=%%~fF"
 )
 if defined BRIDGE_FILE (
-  rem Найдите «=» в первой строке файла и разделите по нему. Так работает и
-  rem «адрес=ключ» одной строкой, и два отдельных значения, и порядок любой.
-  rem substr в cmd считает с 0, findstr даёт позицию с 1 — отсюда минус единица.
+  rem Первая строка — адрес или «адрес=ключ», вторая — ключ. Разбор ниже
+  rem принимает обе формы и любой порядок, но не ищет позицию «=» через
+  rem findstr: на URL с двоеточиями это теряло адрес (см. примечание ниже).
   set "LINE="
   set "TAIL="
   for /f "usebackq delims=" %%L in ("%BRIDGE_FILE%") do (
@@ -30,24 +30,30 @@ if defined BRIDGE_FILE (
       set "TAIL=%%L"
     )
   )
-  set "POS="
-  for /f "delims=:" %%P in ('echo(!LINE!^| findstr /n /c:"="') do set "POS=%%P"
-  if defined POS (
-    set /a "CUT=POS-1"
-    call set "BRIDGE_URL=%%LINE:~0,!CUT!%%"
-    call set "BRIDGE_KEY=%%LINE:~!CUT!%%"
-    set "BRIDGE_KEY=!BRIDGE_KEY:~1!"
-    if not defined TAIL if not "!BRIDGE_URL:~0,4!"=="http" (
-      set "BRIDGE_KEY=!BRIDGE_URL!"
-      set "BRIDGE_URL="
+  rem Форма «адрес=ключ» одной строкой: делим по первому «=» через tokens=1,*.
+  rem Старый путь (findstr /n, позиция, вычитание) терял адрес на URL с
+  rem двоеточиями: findstr /n даёт номер строки, а не позицию «=», и хвост
+  rem https:// оставался последним токеном. Адрес получался пустым, и
+  rem владелец вводил ключи при каждом запуске при уже лежащем bridge.txt.
+  set "PART_A="
+  set "PART_B="
+  for /f "tokens=1,* delims==" %%A in ("!LINE!") do (
+    set "PART_A=%%A"
+    set "PART_B=%%B"
+  )
+  set "HAS_EQ="
+  if not "!LINE:=!"=="!LINE!" set "HAS_EQ=1"
+  if defined HAS_EQ if defined PART_B (
+    if not "!PART_A:~0,4!"=="http" (
+      rem Порядок перепутан: «ключ=адрес».
+      set "BRIDGE_KEY=!PART_A!"
+      set "BRIDGE_URL=!PART_B!"
+    ) else (
+      set "BRIDGE_URL=!PART_A!"
+      set "BRIDGE_KEY=!PART_B!"
     )
-    if defined TAIL (
-      if not "!BRIDGE_URL:~0,4!"=="http" (
-        set "BRIDGE_KEY=!BRIDGE_URL!"
-        set "BRIDGE_URL=!TAIL!"
-      )
-    )
-  ) else (
+  )
+  if not defined BRIDGE_URL (
     rem Разделителя нет: две строки подряд — сначала адрес, потом ключ.
     if not "!LINE:~0,4!"=="http" (
       set "BRIDGE_KEY=!LINE!"
@@ -92,6 +98,7 @@ if not defined BRIDGE_URL (
     echo Сохранил в bridge.txt — при следующем запуске спрашивать не буду.
   )
 )
+if defined BRIDGE_FILE if defined BRIDGE_URL echo Адрес и ключ взяты из bridge.txt — вводить снова не нужно.
 
 rem ─── Ключ сервисного аккаунта ────────────────────────────────────────────
 rem Ищем сам, в порядке вероятности. Путь не надо вписывать руками: файл
