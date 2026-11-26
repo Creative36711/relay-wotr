@@ -9,7 +9,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { roleLimits, liveRunsOfRole, limitNotes, isLiveRun, byAccountCost, accountUsage } from "../src/limits.mjs";
-import { planOne } from "../src/dispatch.mjs";
+import { planOne, planBatch } from "../src/dispatch.mjs";
 
 const run = (over = {}) => ({
   "Run ID": "r-1", "Карточка": "card-1", "Роль": "Integration Auditor",
@@ -172,4 +172,49 @@ test("квоты: расход считается по аккаунту, а не
 test("квоты: закрытые выдачи квоту не тратят", () => {
   const usage = accountUsage({ slots: [accountSlot("w1", "a@m")], runs: [run({ "Статус": "submitted", "Аккаунт": "a@m" })] });
   assert.equal(usage.get("a@m").live, 0);
+});
+
+// ── Пакетная выдача ────────────────────────────────────────────────────────
+//
+// Здесь был настоящий баг, и он был невидимым: `planOne` по отдельности каждую
+// карточку запрещал, а `planBatch` выдавал три карточки одной роли в три слота.
+// Причина — в «занятые» переносился только номер слота, без роли и карточки,
+// поэтому проверка пределов внутри пакета не видела ни того, ни другого.
+//
+// Цена ошибки ровно та, от которой владелец просил защитить: три агента одной
+// роли правят один файл в трёх контейнерах.
+
+test("пакет: три карточки одной роли не расходятся по трём слотам", () => {
+  const slots = [accountSlot("w1", "a@m"), accountSlot("w2", "b@m"), accountSlot("w3", "c@m")];
+  const queue = [1, 2, 3].map((i) => queueItem({
+    "ID": `q-${i}`, "Карточка": `card-${i}`, "Создано": `2026-11-23T10:0${i}:00Z`,
+    "Роль": "Integration Auditor", "Функция": "Auditor",
+  }));
+  const batch = planBatch({
+    slots, queue, runs: [], state: new Map(), maxParallel: 3, maxPerRole: 1,
+  });
+  assert.equal(batch.plans.length, 1, "выдана ровно одна карточка этой роли");
+  assert.equal(batch.plans[0].item["Роль"], "Integration Auditor");
+});
+
+test("пакет: разные роли по-прежнему едут параллельно", () => {
+  const slots = [accountSlot("w1", "a@m"), accountSlot("w2", "b@m"), accountSlot("w3", "c@m")];
+  const queue = [
+    queueItem({ "ID": "q-1", "Карточка": "card-1", "Создано": "2026-11-23T10:01:00Z", "Роль": "Godot World" }),
+    queueItem({ "ID": "q-2", "Карточка": "card-2", "Создано": "2026-11-23T10:02:00Z", "Роль": "Campaign Editor" }),
+    queueItem({ "ID": "q-3", "Карточка": "card-3", "Создано": "2026-11-23T10:03:00Z", "Роль": "Technical Artist" }),
+  ];
+  const batch = planBatch({ slots, queue, runs: [], state: new Map(), maxParallel: 3, maxPerRole: 1 });
+  assert.equal(batch.plans.length, 3, "три разные роли — три выдачи");
+  assert.equal(new Set(batch.plans.map((p) => p.slot.slotId)).size, 3, "разные аккаунты");
+});
+
+test("пакет: одна карточка не выдаётся дважды внутри пакета", () => {
+  const slots = [accountSlot("w1", "a@m"), accountSlot("w2", "b@m")];
+  const queue = [
+    queueItem({ "ID": "q-1", "Карточка": "card-7", "Создано": "2026-11-23T10:01:00Z", "Роль": "Godot World" }),
+    queueItem({ "ID": "q-2", "Карточка": "card-7", "Создано": "2026-11-23T10:02:00Z", "Роль": "Campaign Editor" }),
+  ];
+  const batch = planBatch({ slots, queue, runs: [], state: new Map(), maxParallel: 2, maxPerRole: 1 });
+  assert.equal(batch.plans.length, 1, "дубль карточки в очереди не даёт второй выдачи");
 });

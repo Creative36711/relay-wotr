@@ -6,7 +6,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createTransportServer } from "../src/server.mjs";
-import { createFakeStore, settingsRows, slotRows, queueRow } from "./fake-sheets.mjs";
+import { createFakeStore, settingsRows, slotRows, queueRow, knownAgentRows } from "./fake-sheets.mjs";
 
 const startServer = async () => {
   const store = createFakeStore({
@@ -15,6 +15,7 @@ const startServer = async () => {
     queue: [queueRow({ id: "q-1", card: "c-1", role: "Technical Artist" })],
     runs: [],
     events: [],
+    agents: knownAgentRows(),
   });
   const { server, service } = createTransportServer({
     spreadsheetId: "fake",

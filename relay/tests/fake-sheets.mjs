@@ -85,6 +85,15 @@ export const queueRow = ({ id, card = "card-1", title = "Заголовок", ro
   id, at, card, title, role, "Executor", slot, kind, status, "", "", "", "",
 ];
 
+/** Строка листа «Экземпляры»: живой агент пары (роль, слот). */
+export const agentRow = ({ role, slot, url = `https://arena.example/${slot}`, state = "создан", note = "" }) => [
+  role, slot, url, state, "2026-11-26T09:00:00Z", "", "2026-11-26T10:00:00Z", note,
+];
+
+/** Экземпляры для тех ролей, что встречаются в тестах службы. */
+export const knownAgentRows = (roles = ["Technical Artist", "Godot World Engineer", "Tactical Bridge Engineer"], slots = ["worker-1", "worker-2", "worker-3"]) =>
+  roles.flatMap((role) => slots.map((slot) => agentRow({ role, slot })));
+
 export const runRow = ({ runId, card = "card-1", slot = "worker-1", status = "issued", role = "Technical Artist", account = "", at = "2026-11-26T10:00:00Z" }) => [
   runId, card, "Заголовок", slot, account, role, "", status, at, at, "", "1", "", "",
 ];
