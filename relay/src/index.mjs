@@ -19,6 +19,9 @@ import { createTransportServer, serverReadiness } from "./server.mjs";
 import { createAppsScriptStore } from "./appsscript-bridge.mjs";
 import { serviceAccountFromEnv, createServiceAccountToken } from "./google-auth.mjs";
 
+// Версия службы в одном месте: она печатается в шапке страницы установки.
+const VERSION = "1.25.0";
+
 const PORT = Number(process.env.PORT || 8787);
 const HOST = process.env.HOST || "0.0.0.0";
 // Не const: при работе через мост книга уже известна мосту, и заглушка
@@ -77,6 +80,11 @@ const { server, service } = createTransportServer({
   storeFactory: bridgeUrl
     ? () => createAppsScriptStore({ url: bridgeUrl, key: bridgeKey })
     : undefined,
+  // Мост нужен и самому серверу: страница установки показывает, настроен ли
+  // он, а проверка связи ходит к нему тем же ключом.
+  bridgeUrl,
+  bridgeKey,
+  version: VERSION,
   log: (line) => console.log(`[${new Date().toISOString()}] ${line}`),
 });
 
