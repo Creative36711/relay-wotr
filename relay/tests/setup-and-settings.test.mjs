@@ -308,6 +308,23 @@ test("проверка сети: книга отвечает, Notion нет — 
   assert.ok(net.addresses.length > 0, "видно, какие адреса отдал DNS");
 });
 
+test("токен: подменённый ответ не выдаётся за неверный ключ", async () => {
+  // Ровно сценарий владельца: рабочий токен, ответ — HTML-страница.
+  const service = createService({
+    store: createFakeStore({ slots: slotRows(), settings: settingsRows() }),
+    notionFetch: async () => ({
+      ok: true, status: 200, url: "https://api.notion.com/v1/search",
+      headers: { entries: () => [["server", "cloudflare"]] },
+      text: async () => "<!DOCTYPE html><html>Checking your browser</html>",
+    }),
+  });
+  const result = await service.notionTokenSet({ token: "ntn_1234567890abcdef" });
+  assert.equal(result.ok, false);
+  assert.equal(result.substituted, true, "помечено как подмена, а не как неверный токен");
+  assert.match(result.why, /cloudflare/);
+  assert.doesNotMatch(result.why, /не принял токен|Unexpected token/);
+});
+
 test("проверка сети: сертификат подменён антивирусом — так и названо", async () => {
   const service = createService({
     store: createFakeStore({ slots: slotRows(), settings: settingsRows() }),

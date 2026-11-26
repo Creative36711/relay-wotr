@@ -18,7 +18,7 @@ import { parseEvents, makeEvent, incidentWindow } from "./events.mjs";
 import { buildIncidentPackage } from "./incident.mjs";
 import { parseSettings } from "./settings.mjs";
 import { planSetup, applySetup } from "./setup.mjs";
-import { searchDatabases, fetchRoles, notionTokenFrom, pingNotion } from "./notion-db.mjs";
+import { searchDatabases, fetchRoles, notionTokenFrom, pingNotion, describeNonJson } from "./notion-db.mjs";
 import { ACTIONS, CONTROL, PROTOCOL_VERSION, validateRequest, idle, work } from "./protocol.mjs";
 import { SHEETS } from "./schema.mjs";
 import { isoNow, norm, clip } from "./util.mjs";
@@ -987,8 +987,13 @@ export function createService({
       // «Не принял токен» и «до Notion не дошли» — разные новости, и лечатся
       // они в разных местах. Первое — в Notion, второе — в сети, и склеивать
       // их в одну строку значит отправлять человека не туда.
+      // «Не дошли», «ответил не Notion» и «не принял токен» — три разные
+      // новости. Склеивать их в одну строку значит отправлять человека
+      // перевыпускать рабочий ключ.
       const network = /дозвонились|не ответил|не доходит/i.test(error.message);
-      return { ok: false, network, why: network ? error.message : `Notion не принял токен: ${error.message}` };
+      const substituted = /вернул не данные|уходил на|ушёл на/i.test(error.message);
+      if (network || substituted) return { ok: false, network: true, substituted, why: error.message };
+      return { ok: false, why: `Notion не принял токен: ${error.message}` };
     }
     memory.notionToken = value;
     // Справочник ролей теперь читается другим токеном — старый кеш не годится.
