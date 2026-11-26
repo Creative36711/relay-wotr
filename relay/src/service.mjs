@@ -18,7 +18,7 @@ import { parseEvents, makeEvent, incidentWindow } from "./events.mjs";
 import { buildIncidentPackage } from "./incident.mjs";
 import { parseSettings } from "./settings.mjs";
 import { planSetup, applySetup } from "./setup.mjs";
-import { searchDatabases, fetchRoles, notionTokenFrom } from "./notion-db.mjs";
+import { searchDatabases, fetchRoles, notionTokenFrom, pingNotion } from "./notion-db.mjs";
 import { ACTIONS, CONTROL, PROTOCOL_VERSION, validateRequest, idle, work } from "./protocol.mjs";
 import { SHEETS } from "./schema.mjs";
 import { isoNow, norm, clip } from "./util.mjs";
@@ -948,6 +948,19 @@ export function createService({
   }
 
   /**
+   * Проверка сети до Notion — отдельно от токена.
+   *
+   * Владелец сидит за VPN, прокси или антивирусом, и запрос умирает до всякой
+   * аутентификации. Пока «нет ответа» и «токен не принят» — один текст, он
+   * будет перевыпускать рабочий ключ. Эта проверка говорит, где искать.
+   */
+  async function notionNet() {
+    const result = await pingNotion({ fetchImpl: notionFetch });
+    await record({ kind: "ui", level: result.ok ? "info" : "warn", text: `сеть до Notion: ${result.why}` });
+    return result;
+  }
+
+  /**
    * Токен Notion, введённый в пульте.
    *
    * Зачем вход, а не переменная окружения: токен владелец получает в Notion
@@ -971,7 +984,11 @@ export function createService({
     try {
       found = await searchDatabases({ token: value, fetchImpl: notionFetch });
     } catch (error) {
-      return { ok: false, why: `Notion не принял токен: ${error.message}` };
+      // «Не принял токен» и «до Notion не дошли» — разные новости, и лечатся
+      // они в разных местах. Первое — в Notion, второе — в сети, и склеивать
+      // их в одну строку значит отправлять человека не туда.
+      const network = /дозвонились|не ответил|не доходит/i.test(error.message);
+      return { ok: false, network, why: network ? error.message : `Notion не принял токен: ${error.message}` };
     }
     memory.notionToken = value;
     // Справочник ролей теперь читается другим токеном — старый кеш не годится.
@@ -1073,7 +1090,7 @@ export function createService({
 
   return {
     handle, hello, pull, beat, report, event, step, pause, resume, setMode, agentReady,
-    enqueue, cancel, setup, notionTokenSet, snapshot, incidentPackage, loadAll, record, memory, sheetTitles,
+    enqueue, cancel, setup, notionTokenSet, notionNet, snapshot, incidentPackage, loadAll, record, memory, sheetTitles,
     // Только для тестов: эти функции не входят в протокол и не должны
     // вызываться из вкладки. Отдельным объектом, чтобы «наружу» случайно не
     // уехал лишний вход.

@@ -11,6 +11,15 @@ const API = "https://api.notion.com/v1";
 const VERSION = "2022-06-28";
 
 /**
+ * Сколько ждать Notion.
+ *
+ * 10 секунд было мало: первый TLS-запрос после сна, медленный DNS или VPN
+ * укладываются в 12–15, и человек видел «не ответил за 10000 мс» при полностью
+ * исправном токене. Минута — верхняя граница, после которой ждать бессмысленно.
+ */
+export const NOTION_TIMEOUT_MS = 30000;
+
+/**
  * Результаты поиска приводятся к одному виду: `{ title, id, dataSourceId }`.
  *
  * В новых версиях Notion база — контейнер, а свойства живут в источнике данных
@@ -35,7 +44,89 @@ export function normalizeSearchResults(payload) {
     .filter((item) => item.title);
 }
 
-export async function searchDatabases({ token, fetchImpl = globalThis.fetch, query = "", timeoutMs = 10000 } = {}) {
+/**
+ * Проверка: доходит ли запрос до Notion вообще.
+ *
+ * Зачем отдельно от поиска. «Токен не принят» и «до Notion не дошли» — разные
+ * поломки, и лечатся они в разных местах: первое в Notion, второе в сети.
+ * Когда человек сидит за VPN, прокси или фильтром, любого уровня, запрос
+ * умирает до всякой аутентификации, и по ответу поиска это не отличить.
+ *
+ * Здесь мы просто стучимся в сервер `api.notion.com` без токена и без своего
+ * таймаута (свой таймаут у поиска — 30 с). Ответ 4xx — это уже успех: значит
+ * соединение есть, и дело в токене или в доступе интеграции.
+ */
+/**
+ * Человеческая причина сетевого отказа.
+ *
+ * `fetch failed` — это не диагноз, а обёртка: настоящая причина лежит в
+ * `error.cause` (`ECONNRESET`, `ENOTFOUND`, `UNABLE_TO_VERIFY_LEAF_SIGNATURE`).
+ * Без неё человек идёт перевыпускать токен вместо того, чтобы выключить VPN,
+ * и мы с ним вдвоём ищем то, чего нет.
+ */
+export function networkReason(error) {
+  const code = error?.cause?.code || error?.code || "";
+  const message = String(error?.message || "");
+  const raw = String(error?.cause?.message || error?.message || "");
+  if (/UNABLE_TO_VERIFY_LEAF_SIGNATURE|SELF_SIGNED_CERT|CERT_|ERR_TLS/i.test(`${code} ${message} ${raw}`)) {
+    return "сертификат подменён — так делает антивирус, корпоративный прокси или VPN";
+  }
+  if (/ECONNRESET|ECONNREFUSED|EPIPE/i.test(`${code} ${message}`)) {
+    return "соединение оборвалось — обычно это прокси или фильтр и отбрасывает запрос";
+  }
+  if (/ENOTFOUND|EAI_AGAIN/i.test(`${code} ${message}`)) {
+    return "имя api.notion.com не разрешилось — смотрите DNS или VPN";
+  }
+  if (/ETIMEDOUT|TIMEOUT|aborted/i.test(`${code} ${message}`)) {
+    return "запрос ушёл и не вернулся — сеть слишком медленная или режется";
+  }
+  return "";
+}
+
+export async function pingNotion({ fetchImpl = globalThis.fetch, timeoutMs = 15000 } = {}) {
+  const started = Date.now();
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetchImpl(`${API}/users/me`, {
+      method: "GET",
+      signal: controller.signal,
+      headers: { "Notion-Version": VERSION },
+    });
+    const ms = Date.now() - started;
+    // 401 без токена — это ровно то, что нужно: сервер ответил.
+    return {
+      ok: true,
+      ms,
+      status: response.status,
+      why: `Notion отвечает за ${ms} мс (HTTP ${response.status} без токена — так и должно быть). ` +
+        "Сеть в порядке, дело не в ней",
+    };
+  } catch (error) {
+    const ms = Date.now() - started;
+    if (error.name === "AbortError") {
+      return {
+        ok: false,
+        ms,
+        why: `Notion не ответил за ${Math.round(timeoutMs / 1000)} с: запрос не доходит. ` +
+          "Это VPN, прокси или фильтрация — токен тут не при чём",
+      };
+    }
+    const reason = networkReason(error);
+    const code = error?.cause?.code || error?.code || "";
+    return {
+      ok: false,
+      ms,
+      code,
+      why: `до api.notion.com не дозвонились${code ? ` (${code})` : ""}: ` +
+        `${reason || "это сеть, VPN или прокси"}. Токен тут не при чём — исправьте сеть и нажмите ещё раз`,
+    };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+export async function searchDatabases({ token, fetchImpl = globalThis.fetch, query = "", timeoutMs = NOTION_TIMEOUT_MS } = {}) {
   if (!token) throw new Error("нет токена Notion: мастер не может искать базы");
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -61,12 +152,24 @@ export async function searchDatabases({ token, fetchImpl = globalThis.fetch, que
     }
     return normalizeSearchResults(data);
   } catch (error) {
-    if (error.name === "AbortError") throw new Error(`Notion не ответил за ${timeoutMs} мс`);
-    // `fetch failed` — это не «токен плохой», а «до Notion не дошли»: сеть,
-    // прокси, VPN. Одинаковый текст на два разных случая отправляет человека
-    // перевыпускать рабочий токен.
-    if (/fetch failed|network|ENOTFOUND|EAI_AGAIN/i.test(String(error.message))) {
-      throw new Error("до Notion не дозвонились — проверьте интернет или VPN, токен тут не при чём");
+    if (error.name === "AbortError") {
+      // Долгое ожидание — это почти всегда сеть: VPN, прокси, «Notion
+      // заблокирован», а не токен. Об этом и говорим, иначе человек идёт
+      // перевыпускать ключ, который рабочий.
+      throw new Error(
+        `Notion не ответил за ${Math.round(timeoutMs / 1000)} с: запрос не доходит. ` +
+        "Это VPN, прокси или фильтрация — токен тут не при чём. Нажмите «Проверить сеть»",
+      );
+    }
+    // `fetch failed` — это тоже не «токен плохой», а «до Notion не дошли».
+    if (/fetch failed|network|ENOTFOUND|EAI_AGAIN|ECONNRESET|certificate/i.test(
+      `${error.message} ${error?.cause?.code || ""} ${error?.cause?.message || ""}`,
+    )) {
+      const code = error?.cause?.code || "";
+      const reason = networkReason(error);
+      throw new Error(
+        `до Notion не дозвонились${code ? ` (${code})` : ""}: ${reason || "проверьте интернет или VPN"}. Токен тут не при чём`,
+      );
     }
     throw error;
   } finally {
@@ -114,7 +217,7 @@ export function normalizeRoleRow(page) {
 }
 
 export async function fetchRoles({
-  token, dataSourceId, fetchImpl = globalThis.fetch, timeoutMs = 10000, pageSize = 100,
+  token, dataSourceId, fetchImpl = globalThis.fetch, timeoutMs = NOTION_TIMEOUT_MS, pageSize = 100,
 } = {}) {
   if (!token) throw new Error("нет токена Notion: справочник ролей не прочитать");
   if (!dataSourceId) throw new Error("не задан источник ролей (notion.rolesDb)");

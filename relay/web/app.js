@@ -226,6 +226,28 @@ async function discover() {
  * транспорт, вспомнить синтаксис set в cmd, запустить заново. Владелец
  * получает токен в Notion за десять секунд, а платил за это перезапуском.
  */
+/**
+ * «Проверить сеть» — без токена.
+ *
+ * Зачем отдельная кнопка. Когда запрос не доходит (VPN, прокси, антивирус с
+ * подменой сертификата), проверка токена отвечает «не принял», и владелец идёт
+ * перевыпускать рабочий ключ. Эта проверка стучится в Notion без токена и
+ * называет код отказа — по нему видно, что чинить.
+ */
+async function checkNotionNet() {
+  const note = $("notion-note");
+  note.className = "muted";
+  note.textContent = "проверяю сеть…";
+  try {
+    const result = await (await fetch("/api/notion-net", { cache: "no-store" })).json();
+    note.className = result.ok ? "ok" : "bad";
+    note.textContent = result.why;
+  } catch (error) {
+    note.className = "bad";
+    note.textContent = `служба не ответила: ${error.message}`;
+  }
+}
+
 async function setNotionToken() {
   const field = $("notion-token");
   const note = $("notion-note");
@@ -240,6 +262,8 @@ async function setNotionToken() {
   const result = await post("/api/notion-token", { token });
   note.className = result.ok ? "ok" : "bad";
   note.textContent = result.why || (result.ok ? "токен принят" : "не принят");
+  // Если дело в сети, токен не стираем: человек исправит сеть и нажмёт ещё
+  // раз, а не будет искать, куда он его вставлял.
   if (result.ok) field.value = "";
   await refresh();
 }
@@ -269,6 +293,8 @@ function bind() {
   $("btn-discover").onclick = discover;
   const notionButton = $("btn-notion");
   if (notionButton) notionButton.onclick = setNotionToken;
+  const netButton = $("btn-notion-net");
+  if (netButton) netButton.onclick = checkNotionNet;
   const mountButton = $("btn-mount");
   if (mountButton) mountButton.onclick = () => { window.open("/api/mount", "_blank", "noopener"); };
   $("event-filter").onchange = () => snapshot && renderEvents(snapshot);

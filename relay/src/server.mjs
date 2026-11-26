@@ -254,6 +254,12 @@ export function createTransportServer({
         return send(response, 200, await service.notionTokenSet({ token: body.token }));
       }
 
+      // Проверка сети до Notion. Отдельно от токена: «нет ответа» и «токен не
+      // принят» лечатся в разных местах, и путать их дорого.
+      if (url.pathname === "/api/notion-net" && request.method === "GET") {
+        return send(response, 200, await service.notionNet());
+      }
+
       // Проверка связи с мостом. Владелец должен узнать «не тот адрес» или
       // «доступ не Все» здесь, а не по пульту с кодами ошибок.
       if (url.pathname === "/api/bridge-probe") {
