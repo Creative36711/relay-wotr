@@ -18,6 +18,7 @@ import { execFileSync } from "node:child_process";
 import { createTransportServer, serverReadiness } from "./server.mjs";
 import { createAppsScriptStore } from "./appsscript-bridge.mjs";
 import { defaultBridgePath, readBridgeConfig } from "./bridge-config.mjs";
+import { defaultProxyPath, readProxyConfig } from "./proxy-config.mjs";
 import { serviceAccountFromEnv, createServiceAccountToken } from "./google-auth.mjs";
 
 // Версия службы в одном месте: она печатается в шапке страницы установки.
@@ -37,6 +38,19 @@ const tokenCmd = process.env.RELAY_TOKEN_CMD || "";
 // когда владелец вставляет два значения в браузере. Переменные остаются для
 // тех, кто запускает службу скриптом.
 const bridgeFile = process.env.RELAY_BRIDGE_FILE || defaultBridgePath();
+
+// Прокси: раньше всего остального. Если он нужен, а не задан, дальше не
+// заработает ничего — ни книга, ни Notion, — и человек увидит «не отвечает»
+// про всё сразу, не понимая, что причина одна.
+//
+// Node 22 читает HTTPS_PROXY только с флагом `--use-env-proxy`; батник его
+// ставит, а `proxy.txt` нужен для тех, кто запускает службу скриптом.
+const proxyFile = process.env.RELAY_PROXY_FILE || defaultProxyPath(bridgeFile);
+const proxyFromFile = readProxyConfig(proxyFile).url;
+if (proxyFromFile && !process.env.HTTPS_PROXY && !process.env.https_proxy) {
+  process.env.HTTPS_PROXY = proxyFromFile;
+  process.env.HTTP_PROXY = proxyFromFile;
+}
 const fromFile = readBridgeConfig(bridgeFile);
 let bridgeUrl = process.env.RELAY_BRIDGE_URL || fromFile.url || "";
 let bridgeKey = process.env.RELAY_BRIDGE_KEY || fromFile.key || "";
@@ -92,6 +106,7 @@ const { server, service } = createTransportServer({
   bridgeUrl,
   bridgeKey,
   bridgeFile,
+  proxyFile,
   version: VERSION,
   // Владелец ввёл адрес в браузере — служба уже не в демо, но процесс об этом
   // узнаёт только здесь. Сбрасываем флаг и не перезапускаем службу.

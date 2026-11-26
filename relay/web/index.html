@@ -32,8 +32,13 @@
       <input id="notion-token" type="password" spellcheck="false" autocomplete="off"
              placeholder="Токен Notion (ntn_… или secret_…) — вставьте и нажмите «Проверить»" />
       <button id="btn-notion" class="ghost">Проверить токен</button>
-      <button id="btn-notion-net" class="ghost" title="дойти ли запрос до api.notion.com — без токена">Проверить сеть</button>
+      <button id="btn-notion-net" class="ghost" title="Notion, книга и прокси — одним нажатием">Проверить сеть</button>
       <span class="muted" id="notion-note"></span>
+    </div>
+    <div class="row wrap" id="proxy-row">
+      <input id="proxy-url" spellcheck="false" autocomplete="off"
+             placeholder="Прокси службы, если он есть: 127.0.0.1:8080 (иначе оставьте пустым)" />
+      <button id="btn-proxy" class="ghost">Применить прокси</button>
     </div>
     <div id="setup-steps" class="steps"></div>
     <div class="row">

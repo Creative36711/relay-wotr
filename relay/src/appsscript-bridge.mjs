@@ -38,6 +38,49 @@ export class BridgeError extends Error {
  * откуда пришли строки. Это не удобство, а условие: иначе каждая новая
  * функция состояния писалась бы дважды и расходилась бы в поведении.
  */
+/**
+ * Дойти ли служба до адреса моста — без ключа и без запроса данных.
+ *
+ * Нужно, потому что «мост не ответил за 20000 мс» и «мост ответил отказом» —
+ * разные поломки. Отказ — это скрипт (ключ, развёртывание, доступ), а
+ * отсутствие ответа — это сеть, и тогда падает всё сразу: и книга, и Notion, и
+ * картинки. Владелец видит «служба не отвечает» про пульт, который на самом
+ * деле работает, и ищет поломку не там.
+ */
+export async function bridgeReachability({ url = "", fetchImpl = globalThis.fetch, timeoutMs = 10000 } = {}) {
+  if (!url) return { ok: false, why: "адрес моста не задан" };
+  const started = Date.now();
+  try {
+    // Apps Script на GET без параметров отвечает своей страницей (или редиректом),
+    // и любой HTTP-ответ доказывает: соединение есть.
+    const response = await fetchImpl(url, {
+      method: "GET",
+      redirect: "follow",
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+    const ms = Date.now() - started;
+    return {
+      ok: true, ms, status: response.status,
+      why: `адрес моста отвечает за ${ms} мс (HTTP ${response.status}) — сеть до Google есть`,
+    };
+  } catch (error) {
+    const ms = Date.now() - started;
+    const code = error?.cause?.code || error?.code || "";
+    if (error?.name === "TimeoutError" || error?.name === "AbortError") {
+      return {
+        ok: false, ms, code: code || "TIMEOUT",
+        why: `адрес моста не ответил за ${Math.round(timeoutMs / 1000)} с: запрос не доходит. ` +
+          "Это сеть или прокси, а не книга и не ключ",
+      };
+    }
+    return {
+      ok: false, ms, code,
+      why: `до адреса моста не дозвонились${code ? ` (${code})` : ""}: это сеть, VPN или прокси. ` +
+        "Книга и ключ тут не при чём",
+    };
+  }
+}
+
 export function createAppsScriptStore({
   url,
   key = "",
