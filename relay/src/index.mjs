@@ -17,6 +17,7 @@
 import { execFileSync } from "node:child_process";
 import { createTransportServer, serverReadiness } from "./server.mjs";
 import { createAppsScriptStore } from "./appsscript-bridge.mjs";
+import { defaultBridgePath, readBridgeConfig } from "./bridge-config.mjs";
 import { serviceAccountFromEnv, createServiceAccountToken } from "./google-auth.mjs";
 
 // Версия службы в одном месте: она печатается в шапке страницы установки.
@@ -31,8 +32,14 @@ const tokenCmd = process.env.RELAY_TOKEN_CMD || "";
 // Мост в Apps Script: адрес веб-приложения и ключ. Это второй, и теперь
 // основной, способ добраться до книги — без ключа Google и без доступа
 // «добавьте робота в редакторы».
-const bridgeUrl = process.env.RELAY_BRIDGE_URL || "";
-const bridgeKey = process.env.RELAY_BRIDGE_KEY || "";
+// Адрес и ключ моста: сначала окружение, потом файл bridge.txt рядом со
+// службой. Файл — основной способ: его заполняет сама страница настройки,
+// когда владелец вставляет два значения в браузере. Переменные остаются для
+// тех, кто запускает службу скриптом.
+const bridgeFile = process.env.RELAY_BRIDGE_FILE || defaultBridgePath();
+const fromFile = readBridgeConfig(bridgeFile);
+let bridgeUrl = process.env.RELAY_BRIDGE_URL || fromFile.url || "";
+let bridgeKey = process.env.RELAY_BRIDGE_KEY || fromFile.key || "";
 if (bridgeUrl) spreadsheetId = spreadsheetId || "bridge";
 // Демо-режим: состояние в памяти. Нужен, чтобы посмотреть пульт до настройки.
 // Мост считается достаточным входом: книга у него уже есть.
@@ -77,14 +84,20 @@ const { server, service } = createTransportServer({
   demo,
   tokenProvider,
   // Мост подменяет собой хранилище целиком: служба не знает, откуда строки.
-  storeFactory: bridgeUrl
-    ? () => createAppsScriptStore({ url: bridgeUrl, key: bridgeKey })
-    : undefined,
+  // Собирается он внутри сервера, а не здесь: адрес может появиться уже
+  // после старта — из формы в браузере, — и тогда фабрика нужна та же.
+  bridgeStoreFactory: ({ url, key }) => createAppsScriptStore({ url, key }),
   // Мост нужен и самому серверу: страница установки показывает, настроен ли
   // он, а проверка связи ходит к нему тем же ключом.
   bridgeUrl,
   bridgeKey,
+  bridgeFile,
   version: VERSION,
+  // Владелец ввёл адрес в браузере — служба уже не в демо, но процесс об этом
+  // узнаёт только здесь. Сбрасываем флаг и не перезапускаем службу.
+  onBridgeChange: () => {
+    console.log("[мост] адрес и ключ приняты из браузера; демо-режим снят");
+  },
   log: (line) => console.log(`[${new Date().toISOString()}] ${line}`),
 });
 

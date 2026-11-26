@@ -19,6 +19,7 @@ import { fileURLToPath } from "node:url";
 import { createSheetsStore } from "./store.mjs";
 import { mountPage } from "./mount-page.mjs";
 import { createAppsScriptStore } from "./appsscript-bridge.mjs";
+import { normalizeBridgeInput, writeBridgeFile } from "./bridge-config.mjs";
 import { createService } from "./service.mjs";
 import { readiness } from "./setup.mjs";
 import { searchDatabases } from "./notion-db.mjs";
@@ -98,10 +99,29 @@ export function createTransportServer({
   bridgeUrl = "",
   bridgeKey = "",
   version = "",
+  // Куда записывать адрес и ключ моста, если владелец вводит их в браузере.
+  // Пусто — запись недоступна, и страница честно скажет об этом вместо
+  // «сохранено», после которого ничего не работает.
+  bridgeFile = "",
+  // Чем читать книгу, когда настроен мост. Отдельно от storeFactory: мост
+  // может появиться на ходу (адрес ввели в браузере), а storeFactory уже
+  // выбран при старте — под Google-токен или под что-то ещё.
+  bridgeStoreFactory = ({ url, key }) => createAppsScriptStore({ url, key, fetchImpl }),
+  onBridgeChange = null,
 } = {}) {
   // Демо-режим — не игрушка, а первое знакомство: пульт показывается до того,
   // как заведена книга. Служба при этом та же, меняется только хранилище.
+  // Демо — живое состояние, а не константа старта: как только владелец ввёл
+  // адрес моста, книга появилась, и служба обязана выйти из демо сама.
+  // Демо-хранилище создаётся один раз и переиспользуется: журнал, который
+  // человек уже видел, не должен исчезнуть от ввода адреса.
   const demoStore = demo ? createDemoStore({ now }) : null;
+  let demoNow = demo;
+  // Адрес и ключ моста меняются на ходу: владелец вставляет их в браузере, и
+  // заставлять его перезапускать службу ради этого — лишний шаг, который мы и
+  // убираем. Поэтому они живут в изменяемой паре, а не в параметрах.
+  let bridge = { url: bridgeUrl, key: bridgeKey };
+  const bridgeReady = () => Boolean(bridge.url);
   if (!spreadsheetId && !demo) throw new Error("не задан spreadsheetId: службе негде хранить состояние");
 
   const tokenFor = async () => {
@@ -112,7 +132,7 @@ export function createTransportServer({
   // Токен берётся на каждый запрос: он короткоживущий, и кэшировать его на
   // всё время жизни процесса — значит умереть через час.
   const store = {
-    demo,
+    get demo() { return demoNow && !bridgeReady(); },
     read: async (key) => (await getStore()).read(key),
     write: async (...args) => (await getStore()).write(...args),
     append: async (...args) => (await getStore()).append(...args),
@@ -125,6 +145,13 @@ export function createTransportServer({
   let cachedStore = null;
   let cachedToken = "";
   const getStore = async () => {
+    // Мост первым: если он настроен, книга есть, и демо больше не при чём.
+    if (bridgeReady()) {
+      if (!cachedStore) {
+        cachedStore = bridgeStoreFactory({ url: bridge.url, key: bridge.key });
+      }
+      return cachedStore;
+    }
     if (demoStore) return demoStore;
     const current = await tokenFor();
     if (!cachedStore || current !== cachedToken) {
@@ -156,22 +183,74 @@ export function createTransportServer({
       // Отдельный путь, а не файл в web/: кода моста в статике нет, он
       // читается из apps-script/Code.gs — одна копия, не две.
       if (url.pathname === "/api/mount") {
-        return send(response, 200, mountPage({ existing: bridgeUrl, version }), {
+        return send(response, 200, mountPage({
+          existing: bridge.url,
+          version,
+          file: bridgeFile,
+          canSave: Boolean(bridgeFile),
+        }), {
           "Content-Type": "text/html; charset=utf-8",
         });
       }
 
+      // Сохранение адреса и ключа из браузера: пишем bridge.txt и сразу
+      // перечитываем. Владелец вставил два значения — и книга подключена, без
+      // перезапуска и без ручного формата файла.
+      if (url.pathname === "/api/bridge-config" && request.method === "POST") {
+        // readBody уже отдаёт разобранный объект (см. его определение): второй
+        // JSON.parse превращал его в "[object Object]" и отвечал «не valid JSON».
+        const body = (await readBody(request)) || {};
+        const check = normalizeBridgeInput({ url: body.url, key: body.key });
+        if (!check.ok) return send(response, 200, { ok: false, why: check.why });
+        if (!bridgeFile) {
+          return send(response, 200, {
+            ok: false,
+            why: `Записать файл служба не может. Допишите в bridge.txt строкой ${check.url}=ваш-ключ и перезапустите службу.`,
+          });
+        }
+        try {
+          writeBridgeFile(bridgeFile, check);
+        } catch (error) {
+          return send(response, 200, { ok: false, why: `файл не записался: ${error.message}` });
+        }
+        bridge = { url: check.url, key: check.key };
+        // Хранилище пересобирается на следующем обращении: адрес другой.
+        cachedStore = null;
+        cachedToken = "";
+        try {
+          const probe = bridgeStoreFactory({ url: bridge.url, key: bridge.key });
+          const meta = await probe.meta();
+          const titles = (meta.sheets || []).map((item) => item.properties.title).filter(Boolean);
+          if (typeof onBridgeChange === "function") await onBridgeChange({ url: bridge.url });
+          return send(response, 200, {
+            ok: true,
+            why: `Сохранено в ${bridgeFile}. Мост отвечает, в книге листов: ${titles.length}. ` +
+              "Обновите пульт — демо-режим снят.",
+            url: bridge.url,
+            titles,
+          });
+        } catch (error) {
+          // Файл уже записан: адрес мог быть верным, а развёртывание — ещё нет.
+          return send(response, 200, {
+            ok: false,
+            why: `Файл записан, но мост не ответил: ${error.message}. ` +
+              "Проверьте, что веб-приложение развёрнуто с доступом «Все».",
+            saved: true,
+          });
+        }
+      }
+
       // Проверка связи с мостом. Владелец должен узнать «не тот адрес» или
-      // «доступ не Все» здесь, а не по пустому пульту с кодами ошибок.
+      // «доступ не Все» здесь, а не по пульту с кодами ошибок.
       if (url.pathname === "/api/bridge-probe") {
-        if (!bridgeUrl) {
+        if (!bridgeReady()) {
           return send(response, 200, {
             ok: false,
             why: "Мост не настроен: служба в демо-режиме. Пройдите шаги на этой странице.",
           });
         }
         try {
-          const probe = createAppsScriptStore({ url: bridgeUrl, key: bridgeKey });
+          const probe = bridgeStoreFactory({ url: bridge.url, key: bridge.key });
           const meta = await probe.meta();
           const titles = (meta.sheets || []).map((item) => item.properties.title).filter(Boolean);
           return send(response, 200, {
@@ -187,7 +266,11 @@ export function createTransportServer({
       if (url.pathname === "/api/health") {
         return send(response, 200, {
           ok: true, at: new Date(now()).toISOString(), service: "relay-wotr",
-          demo, spreadsheet: demo ? "в памяти" : spreadsheetId,
+          // Демо — состояние сейчас, а не на старте: после ввода адреса в
+          // браузере книга уже есть, и health не должен врать ни «в памяти»,
+          // ни пустым идентификатором (при мосте его и нет).
+          demo: store.demo,
+          spreadsheet: store.demo ? "в памяти" : bridgeReady() ? "книга через мост" : spreadsheetId,
         });
       }
 

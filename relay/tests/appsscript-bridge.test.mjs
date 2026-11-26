@@ -162,6 +162,52 @@ test("страница установки: говорит, куда вставл
   assert.match(html, /Скопировать код/, "кнопка копирования: файл искать не нужно");
 });
 
+test("страница установки: два поля вместо файла и сообщение об уже настроенном мосте", async () => {
+  const { mountPage } = await import("../src/mount-page.mjs");
+  const configurable = mountPage({ version: "1.25.0", file: "/tmp/bridge.txt", canSave: true });
+  // Владелец просил вставлять адрес «при запуске приложения», а не писать
+  // файл руками: значит на странице должны быть именно поля ввода.
+  assert.match(configurable, /id="url"/, "поле адреса есть");
+  assert.match(configurable, /id="key"/, "поле ключа есть");
+  assert.match(configurable, /api\/bridge-config/, "форма отправляет адрес службе, а не в файл вручную");
+  assert.match(configurable, /\/exec/, "подсказка, что нужен адрес веб-приложения");
+  // Демо снимается без перезапуска — иначе после «Сохранено» пульт остался бы
+  // пустым. На странице за это отвечает кнопка проверки связи.
+  assert.match(configurable, /Проверить связь/);
+  assert.match(configurable, /api\/bridge-probe/);
+  // Идентификатор развёртывания службе не нужен, и это должно быть сказано.
+  assert.match(configurable, /развёртывания/);
+
+  // Файл писать некуда (например, служба запущена из чужой папки) — страница
+  // не притворяется, что сохранит.
+  const readOnly = mountPage({ version: "1.25.0", file: "", canSave: false });
+  assert.doesNotMatch(readOnly, /id="url"/, "без файла полей ввода нет");
+  assert.match(readOnly, /bridge\.txt/, "и человеку сказано, что дописать");
+
+  // Мост уже настроен: адрес показан, ставить заново не предлагается.
+  const existing = mountPage({ version: "1.25.0", existing: "https://script.google.com/macros/s/X/exec", file: "/tmp/bridge.txt", canSave: true });
+  assert.match(existing, /value="https:\/\/script\.google\.com\/macros\/s\/X\/exec"/);
+});
+
+test("страница установки: скрипт разбирается — иначе кнопки молча не работают", async () => {
+  // Обратные слэши в шаблонной строке съедаются при подстановке, и регулярка
+  // вида /^https:\/\// превращается в синтаксическую ошибку, из-за которой не
+  // работают ни «Скопировать», ни «Сохранить» — без единого сообщения.
+  const { mountPage } = await import("../src/mount-page.mjs");
+  const html = mountPage({ version: "1.25.0", file: "/tmp/bridge.txt", canSave: true });
+  const script = html.slice(html.indexOf("<script>") + 8, html.lastIndexOf("</script>"));
+  assert.doesNotThrow(() => new Function(script), "скрипт страницы — валидный JS");
+
+  // Проверка адреса должна принимать /exec и отвергать идентификатор
+  // развёртывания — эту же проверку делает служба. Ищем строку в самом
+  // скрипте: если её форма изменится, тест скажет об этом, а не промолчит.
+  const line = script.split("\n").find((row) => row.includes(".test(url)"));
+  assert.ok(line, "проверка адреса на месте");
+  const regex = eval(line.trim().replace(/^if \(!?/, "").replace(/\.test\(url\)\)?\s*\{?$/, ""));
+  assert.equal(regex.test("https://script.google.com/macros/s/ABC/exec"), true);
+  assert.equal(regex.test("https://script.google.com/macros/s/ABC/deve"), false);
+});
+
 test("код для книги: те же действия, ключ обязателен, данных без ключа нет", () => {
   const code = readFileSync(new URL("../apps-script/Code.gs", import.meta.url), "utf8");
   for (const action of ["read", "write", "append", "updateRange", "meta", "ensureSheet"]) {

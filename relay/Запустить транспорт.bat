@@ -63,6 +63,36 @@ if defined BRIDGE_FILE (
 if not defined BRIDGE_URL if defined RELAY_BRIDGE_URL set "BRIDGE_URL=%RELAY_BRIDGE_URL%"
 if not defined BRIDGE_KEY if defined RELAY_BRIDGE_KEY set "BRIDGE_KEY=%RELAY_BRIDGE_KEY%"
 
+rem ─── Если моста ещё нет — спросим адрес и ключ здесь же ──────────────────
+rem Владелец просил вставлять адрес «при запуске приложения», а не писать
+rem файл руками: формат, расширение и место — лишние знания, которых быть не
+rem должно. Спрашиваем только когда моста нет; адрес и ключ из прошлого раза
+rem (bridge.txt) вопросов не вызывают.
+if not defined BRIDGE_URL (
+  echo.
+  echo Книга ещё не подключена. Можно вставить адрес и ключ прямо сейчас,
+  echo или нажать Enter и сделать это позже на странице http://localhost:%PORT%/api/mount
+  echo.
+  echo   Адрес веб-приложения — тот, что оканчивается на /exec.
+  echo   Ключ — тот, что вы заменили в Code.gs. Это два разных текста.
+  echo.
+  set /p "BRIDGE_URL=Адрес веб-приложения (Enter — пропустить): "
+  if defined BRIDGE_URL set /p "BRIDGE_KEY=Ключ моста: "
+  if defined BRIDGE_URL if not defined BRIDGE_KEY set "BRIDGE_URL="
+  if defined BRIDGE_URL (
+    echo !BRIDGE_URL!| findstr /i /c:"/exec" >nul || (
+      echo [!] Адрес должен оканчиваться на /exec — это адрес веб-приложения,
+      echo     а не идентификатор развёртывания. Пока запускаю демо-режим.
+      set "BRIDGE_URL="
+      set "BRIDGE_KEY="
+    )
+  )
+  if defined BRIDGE_URL (
+    > "%~dp0bridge.txt" echo(!BRIDGE_URL!=!BRIDGE_KEY!
+    echo Сохранил в bridge.txt — при следующем запуске спрашивать не буду.
+  )
+)
+
 rem ─── Ключ сервисного аккаунта ────────────────────────────────────────────
 rem Ищем сам, в порядке вероятности. Путь не надо вписывать руками: файл
 rem кладут рядом с папкой relay (по README это ../sa.json) или внутрь неё.
@@ -126,7 +156,7 @@ if defined BRIDGE_URL (
   echo       1. В книге: Расширения - Apps Script
   echo       2. Вставьте файл relay\apps-script\Code.gs, замените ключ
   echo       3. Развернуть - Веб-приложение - доступ "Все"
-  echo       4. Сохраните адрес и ключ в файл bridge.txt рядом с этим файлом
+  echo       4. Вставьте адрес и ключ в поля выше при следующем запуске
   echo     Иначе — положите ключ сервисного аккаунта как ..\sa.json
   echo     ^(подробно — relay\README.md^).
   echo.
