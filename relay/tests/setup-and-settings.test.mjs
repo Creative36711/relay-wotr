@@ -245,6 +245,42 @@ test("сеть недоступна — так и сказано, а не «то
   assert.doesNotMatch(result.why, /неверн|плохой|invalid/i);
 });
 
+test("проверка сети: «не дозвонились» не выдаёт себя за «токен плохой»", async () => {
+  const service = createService({
+    store: createFakeStore({ slots: slotRows(), settings: settingsRows() }),
+    notionFetch: async () => {
+      const error = new Error("fetch failed");
+      error.cause = { code: "ECONNRESET" };
+      throw error;
+    },
+  });
+  const net = await service.notionNet();
+  assert.equal(net.ok, false);
+  assert.equal(net.code, "ECONNRESET", "код виден человеку: по нему он найдёт причину");
+  assert.match(net.why, /ECONNRESET/);
+  assert.match(net.why, /прокси/i);
+  assert.match(net.why, /Токен тут не при чём/);
+
+  const token = await service.notionTokenSet({ token: "ntn_1234567890abcdef" });
+  assert.equal(token.ok, false);
+  assert.equal(token.network, true, "отказ помечен как сетевой");
+  assert.doesNotMatch(token.why, /не принял токен/, "не обвиняем ключ в сетевой поломке");
+});
+
+test("проверка сети: сертификат подменён антивирусом — так и названо", async () => {
+  const service = createService({
+    store: createFakeStore({ slots: slotRows(), settings: settingsRows() }),
+    notionFetch: async () => {
+      const error = new Error("fetch failed");
+      error.cause = { code: "UNABLE_TO_VERIFY_LEAF_SIGNATURE" };
+      throw error;
+    },
+  });
+  const net = await service.notionNet();
+  assert.match(net.why, /сертификат подменён/);
+  assert.match(net.why, /антивирус/i);
+});
+
 test("справочник ролей читается: настройки не теряются в кеше", async () => {
   // Прежняя ошибка: `loadRoles` брал настройки из памяти, а память никто не
   // заполнял. В итоге ID ролей был в книге, токен был в окружении, а

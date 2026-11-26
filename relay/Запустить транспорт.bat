@@ -183,6 +183,20 @@ echo закроете, и транспорт остановится.
 echo Браузер откроется сам: http://localhost:%PORT%
 echo.
 start "" /min cmd /c "timeout /t 2 >nul & start "" http://localhost:%PORT%"
+rem ─── Прокси ───────────────────────────────────────────────────────────────
+rem Если выход в интернет идёт через прокси (рабочая сеть, VPN-клиент со своим
+rem прокси), Node о нём не знает и запрос к Notion умирает с ECONNRESET. Ключ
+rem при этом рабочий, и человек ищет причину не там. Подсказываем один раз, а
+rem не заставляем читать переменные окружения.
+if not defined HTTPS_PROXY if defined HTTP_PROXY set "HTTPS_PROXY=%HTTP_PROXY%"
+if not defined HTTPS_PROXY (
+  set /p "PROXY_URL=Прокси для интернета (Enter — пропустить): "
+  if defined PROXY_URL set "HTTPS_PROXY=!PROXY_URL!" & set "HTTP_PROXY=!PROXY_URL!"
+)
+if defined HTTPS_PROXY (
+  echo Прокси: %HTTPS_PROXY%
+  echo   Если Notion не отвечает — виноват прокси, а не ключ.
+)
 node src\index.mjs
 
 rem ─── Если транспорт упал ─────────────────────────────────────────────────
