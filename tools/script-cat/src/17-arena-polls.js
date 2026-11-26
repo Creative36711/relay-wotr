@@ -1409,9 +1409,12 @@
     // Если адресат — текущая страница, перезагружать её незачем: чат уже
     // открыт, и задание уйдёт со следующего тика (человек видит, что кнопка
     // сработала, без мигания страницы).
+    // D-015: у неадминских ролей адреса в «Ролях» нет — он в «Экземплярах».
+    // Без этой строки задание не нашло бы страницу вовсе и не ушло никуда.
+    const deliveryUrl = await roleDeliveryUrl(role);
     let same = false;
     try {
-      same = new URL(role.url, location.href).pathname === location.pathname;
+      same = new URL(deliveryUrl, location.href).pathname === location.pathname;
     } catch {
       same = false;
     }
@@ -1447,10 +1450,18 @@
         return true;
       }
     }
+    if (!deliveryUrl) {
+      // Адреса нет ни в строке, ни в «Экземплярах»: это не «подожду», а
+      // нехватка агента. Говорим об этом прямо — иначе задание молча висело бы
+      // в очереди, а Мастер искал причину в отправке.
+      const why = await roleAddressWhy(role.name).catch(() => "");
+      log(`Задание «${role.name}» не отправлено: ${why || "нет адреса агента ни в «Ролях», ни в «Экземплярах»"}.`, true);
+      return false;
+    }
     log(`Перехожу к «${role.name}», чтобы отправить задание.`);
     // Уход со страницы — только после подтверждения записи (D-045).
     await flushBeforeNavigate(handoffKeys());
-    location.assign(role.url);
+    location.assign(deliveryUrl);
     return true;
   }
 

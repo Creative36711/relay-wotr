@@ -350,7 +350,10 @@
       return "";
     };
     const named = asked ? directory.find((r) => norm(r.name) === norm(asked)) : null;
-    const addresseeReady = Boolean(named && named.status === "Активна" && named.url);
+    // D-015: адрес адресата — в «Экземплярах», если в строке «Ролей» его нет.
+    const namedUrl = named ? (String(named.url || "").trim() ||
+      (await roleInstanceUrl(named.name).catch(() => ""))) : "";
+    const addresseeReady = Boolean(named && named.status === "Активна" && namedUrl);
     if (asked && !addresseeReady) {
       const why = named ? "не активна или пуст «Agent URL»" : "нет в «Ролях»";
       // 1.24.0: заголовок «не готова» говорит по делу — адрес роли больше не
@@ -383,7 +386,7 @@
         { ntfy: "quiet", title: "Relay: адресат обратной связи не готов" },
       );
     }
-    let role = (addresseeReady ? named : null) || (await reviewerRole());
+    let role = (addresseeReady ? { ...named, url: namedUrl } : null) || (await reviewerRole());
     // Вопрос Warden'а без `need` не должен отправляться Warden'у самому.
     // Явный `need` к себе — ошибка адресации; не подменяем его молча.
     if (role && norm(role.name) === norm(item.role || "")) {
@@ -391,8 +394,16 @@
         logThrottled(`answer-self:${item.id}`, `Вопрос «${oneLine(item.text, 90)}» адресован автору «${role.name}» самому: назовите другую роль в need.`, true);
         return false;
       }
-      role = directory.find((r) => r.fn === "Coordinator" && r.status === "Активна" && r.url &&
-        norm(r.name) !== norm(item.role || "")) || null;
+      // Coordinator — админская роль, его адрес живёт в строке; но если его там
+      // нет, экземпляр пары тоже годится: отказ здесь означал бы «отвечать
+      // некому» при живом Coordinator'е.
+      let coord = null;
+      for (const row of directory.filter((r) => r.fn === "Coordinator" && r.status === "Активна" &&
+        norm(r.name) !== norm(item.role || ""))) {
+        const url = String(row.url || "").trim() || (await roleInstanceUrl(row.name).catch(() => ""));
+        if (url) { coord = { ...row, url }; break; }
+      }
+      role = coord;
     }
     if (!role) {
       logThrottled(

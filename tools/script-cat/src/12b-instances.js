@@ -178,6 +178,24 @@
     return "";
   }
 
+  /**
+   * Адрес роли для отправки: свежий или из «Экземпляров».
+   *
+   * Единственная точка, через которую доставка узнаёт адрес. Прежний код брал
+   * `role.url` напрямую, и после D-015 у неадминских ролей там пусто — задание
+   * не нашло бы страницу. Строка «Ролей» проверяется первой (у админских ролей
+   * адрес там по закону), экземпляры — вторыми, то есть ровно наоборот тому,
+   * как выбирается адрес ПАРЫ: здесь слот отправителя не важен, важно, что
+   * роль существует и её агент открыт хоть где-то.
+   */
+  async function roleDeliveryUrl(role) {
+    const direct = String(role?.url || "").trim();
+    if (direct) return direct;
+    const name = String(role?.name || "").trim();
+    if (!name) return "";
+    return (await roleInstanceUrl(name).catch(() => "")) || "";
+  }
+
   /** Почему адреса нет — человеческим языком, для журнала и пауз. */
   async function roleAddressWhy(roleName, { slotId = "" } = {}) {
     const found = await instanceFor(roleName, slotId);

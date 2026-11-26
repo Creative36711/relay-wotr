@@ -73,7 +73,9 @@ assert.match(
   /if \(\(fromToggle \|\| autoOn\(\)\) && owner\) \{/,
   'переход и по нажатию, и в автоцикле — но не в ручном фоне',
 );
-assert.match(tickBody, /samePage = new URL\(owner\.url, location\.href\)\.pathname === location\.pathname/, 'проверка на петлю: та же страница — не переходим');
+// 1.24.0: у неадминской роли адреса в «Ролях» нет — он резолвится у пары,
+// поэтому сравнение идёт по разрешённому адресу (D-015).
+assert.match(tickBody, /samePage = new URL\(owner\.url \|\| \(await roleDeliveryUrl\(owner\)\), location\.href\)\.pathname === location\.pathname/, 'проверка на петлю: та же страница — не переходим');
 
 // 2.2. У исполнителя работы нет: «Шаг» ведёт к Координатору, а не в тупик.
 assert.match(

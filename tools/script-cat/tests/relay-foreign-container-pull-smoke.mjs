@@ -48,7 +48,8 @@ const cycle = src('28-cycle.js');
 {
   const sendSrc = polls.slice(polls.indexOf('async function sendToRole('));
   const sendBlock = sendSrc.slice(0, sendSrc.indexOf('async function goTo('));
-  const assignAt = sendBlock.indexOf('location.assign(role.url)');
+  // 1.24.0: переход идёт на адрес пары (`deliveryUrl`), а не на пустой `role.url`.
+  const assignAt = sendBlock.indexOf('location.assign(deliveryUrl)');
   const checkAt = sendBlock.indexOf('accountPageCheck(role)');
   assert.ok(assignAt > 0, 'переход на страницу адресата остаётся для своего контейнера');
   assert.ok(checkAt > 0, 'перед переходом спрашиваем, чья это страница');
@@ -116,7 +117,8 @@ const cycle = src('28-cycle.js');
   // …но не единственным: когда подписи нет, спрашиваем страницу.
   assert.match(navBlock, /typeof accountPageCheck === "function"/, 'переход спрашивает, чья страница');
   assert.match(navBlock, /page\.verdict === "foreign"/, 'чужой аккаунт — отдельная ветка');
-  const assignAt = navSrc.indexOf('location.assign(role.url)');
+  // 1.24.0: страница открывается по адресу пары (`deliveryUrl`), D-015.
+  const assignAt = navSrc.indexOf('location.assign(deliveryUrl)');
   const checkAt = navSrc.indexOf('await accountPageCheck(role)');
   assert.ok(checkAt > 0 && assignAt > 0 && checkAt < assignAt, 'проверка идёт до открытия страницы');
   // Отказ не забывает разбудить нужную вкладку: иначе ход ждал бы Мастера.

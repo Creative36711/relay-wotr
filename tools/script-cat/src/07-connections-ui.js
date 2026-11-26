@@ -10,11 +10,15 @@
       gwUrl: String(GM_getValue(K.gwUrl, "") || "").trim(),
       gwKey: String(GM_getValue(K.gwKey, "") || "").trim(),
       github: String(GM_getValue(K.ghToken, "") || "").trim(),
+      // D-015: адрес службы Relay — не секрет и не шлюз Drive. Без него скрипт
+      // не видит лист «Экземпляры» и не может назвать адрес пары (роль, слот).
+      relayUrl: String(GM_getValue("cfn-relay-url", "") || "").trim().replace(/\/+$/, ""),
     };
   }
 
   const sameConnections = (a, b) =>
-    a.notion === b.notion && a.gwUrl === b.gwUrl && a.gwKey === b.gwKey && a.github === b.github;
+    a.notion === b.notion && a.gwUrl === b.gwUrl && a.gwKey === b.gwKey && a.github === b.github &&
+    a.relayUrl === b.relayUrl;
 
   /** Не отправлять ключ по HTTP или на похожий на Google чужой адрес без согласия. */
   function connectionEndpoint(value) {
@@ -164,6 +168,13 @@
           <div style="${quiet}">Маскировка скрывает секреты на экране, но введённые значения доступны коду страницы и расширениям. Пользуйтесь только доверенной страницей Arena.</div>
           <button id="cfn-connection-projects" type="button" style="${action};justify-self:start">Управление проектами</button>
           <button id="cfn-connection-stop-auto" type="button" style="${action};justify-self:start">Остановить автоцикл этой вкладки</button>
+          <section style="${card}" aria-labelledby="cfn-connection-relay-title">
+            <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap"><strong id="cfn-connection-relay-title" style="font-size:15px;color:#fff">Служба Relay</strong><span style="${quiet}">лист «Экземпляры» и адреса агентов</span></div>
+            <div id="cfn-connection-relay-status" role="status" style="${quiet};margin:4px 0 8px"></div>
+            <label for="cfn-connection-relay-url" style="font-weight:600">Адрес службы</label>
+            <input id="cfn-connection-relay-url" type="url" autocomplete="off" spellcheck="false" placeholder="http://localhost:8787" style="${field}">
+            <div style="${quiet};margin-top:8px">Адрес, который печатает транспорт при запуске. По нему скрипт читает «Экземпляры»: рабочее место агента — пара (роль, слот), а не поле «Agent URL» в «Ролях». Пусто — скрипт работает по старым правилам и адрес у неадминских ролей не найдёт.</div>
+          </section>
           <section style="${card}" aria-labelledby="cfn-connection-notion-title">
             <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap"><strong id="cfn-connection-notion-title" style="font-size:15px;color:#fff">Notion</strong><span style="${quiet}">базы и очередь</span></div>
             <div id="cfn-connection-notion-status" role="status" style="${quiet};margin:4px 0 8px"></div>
@@ -216,6 +227,7 @@
     document.body.appendChild(box);
     const find = (id) => box.querySelector(`#cfn-connection-${id}`);
     const notionInput = find("notion"), urlInput = find("url"), keyInput = find("key"), githubInput = find("github");
+    const relayInput = find("relay-url");
     const notionRemove = find("notion-remove"), driveRemove = find("drive-remove"), githubRemove = find("github-remove");
     const trust = find("trust"), trustWrap = find("trust-wrap");
     const checkButton = box.querySelector("#cfn-connections-check"), saveButton = box.querySelector("#cfn-connections-save");
@@ -223,6 +235,7 @@
     find("repo").textContent = C.repo;
     find("project-name").textContent = C.projectName || "Relay";
     urlInput.value = saved.gwUrl;
+    relayInput.value = saved.relayUrl;
 
     const say = (text, error = false) => {
       note.textContent = text;
@@ -243,6 +256,7 @@
       gwUrl: driveRemove.checked ? "" : urlInput.value.trim(),
       gwKey: driveRemove.checked ? "" : keyInput.value.trim() || saved.gwKey,
       github: githubRemove.checked ? "" : githubInput.value.trim() || saved.github,
+      relayUrl: relayInput.value.trim().replace(/\/+$/, ""),
     });
     const needsTrust = (settings, endpoint = connectionEndpoint(settings.gwUrl)) =>
       endpoint.ok && Boolean(settings.gwUrl) && (!endpoint.standard ||
@@ -253,6 +267,7 @@
       const locked = checking || performing;
       trustWrap.style.display = needsTrust(settings, endpoint) ? "block" : "none";
       notionInput.disabled = locked || notionRemove.checked;
+      relayInput.disabled = locked;
       urlInput.disabled = locked || driveRemove.checked;
       keyInput.disabled = locked || driveRemove.checked;
       githubInput.disabled = locked || githubRemove.checked;
@@ -271,6 +286,8 @@
       status("drive", !endpoint.ok ? "Сохранён небезопасный или неверный URL. Замените его на HTTPS." :
         saved.gwUrl && saved.gwKey ? "Сохранён · ещё не проверен" : "Не настроен полностью", endpoint.ok ? "idle" : "error");
       status("github", saved.github ? "Сохранён · ещё не проверен" : "Без токена · доступ не проверен");
+      status("relay", !saved.relayUrl ? "Не задан · адреса пар не читаются"
+        : /^https?:\/\//.test(saved.relayUrl) ? "Задан · проверю связь при сохранении" : "Нужен полный адрес, начиная с http://");
     };
     const changed = () => !sameConnections(read(), saved);
     const close = () => {
@@ -363,6 +380,12 @@
       // к нему. Но не блокируем правку другого подключения: ранее сохранённый
       // адрес остаётся неизменным и показан как небезопасный до его замены.
       if (!endpoint.ok && driveChanged) { say(endpoint.message, true); return; }
+      // Адрес службы Relay: опечатка здесь молча оставила бы «Экземпляры»
+      // невидимыми, поэтому проверяем форму до сохранения.
+      if (next.relayUrl && !/^https?:\/\/[^\s]+$/.test(next.relayUrl)) {
+        say("Адрес службы Relay должен быть полным: http://localhost:8787 или https://…", true);
+        return;
+      }
       if (driveChanged && needsTrust(next, endpoint) && !trust.checked) {
         say("Подтвердите доверие к указанному шлюзу: при работе ему будет отправлен ключ.", true);
         return;
@@ -376,6 +399,7 @@
       const updates = [
         [K.notion, saved.notion, next.notion], [K.gwUrl, saved.gwUrl, next.gwUrl],
         [K.gwKey, saved.gwKey, next.gwKey], [K.ghToken, saved.github, next.github],
+        ["cfn-relay-url", saved.relayUrl, next.relayUrl],
       ].filter(([, before, after]) => before !== after);
       if (!updates.length) { say("Изменений для сохранения нет."); return; }
       // Допуск привязан к проверенным данным. Меняем доступ — сначала снимаем
