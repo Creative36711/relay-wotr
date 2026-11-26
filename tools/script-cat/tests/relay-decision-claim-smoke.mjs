@@ -89,7 +89,7 @@ assert.match(src, /kind: "answer-decisions"/, 'пауза названа сво�
 assert.match(src, /"answer-decisions": "transport",/, 'пауза остаётся транспорту');
 
 // ── 6. Версия и решение ─────────────────────────────────────────────────────
-assert.match(src, /@version\s+1\.(?:14\.(?:1[89]|2[0-9]|3[0-9])|1[5-9]\.\d+)/, 'сборка не старее 1.14.18');
+assert.match(src, /@version\s+1\.(?:14\.(?:1[89]|2[0-9]|3[0-9])|1[5-9]\.\d+|2\d\.\d+)/, 'сборка не старее 1.14.18');
 const decisions = readFileSync(new URL('../upstream-fixtures/docs/DECISIONS.md', import.meta.url), 'utf8');
 assert.match(decisions, /## D-089/, "решение D-089 записано");
 

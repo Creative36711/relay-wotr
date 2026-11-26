@@ -11,7 +11,7 @@
 // говорит вкладке «твоя работа: вот она» и ждёт отчёта.
 
 import { parseSlots, slotById, slotByAccount } from "./slots.mjs";
-import { parseQueue, parseRuns, makeRun, queueToRow, RUN, isLiveRun } from "./queue.mjs";
+import { parseQueue, parseRuns, makeRun, queueToRow, RUN, isLiveRun, leaseItem, PROVISION_KIND } from "./queue.mjs";
 import { planOne, planBatch, releaseAndRequeue } from "./dispatch.mjs";
 import { accountState, slotGate, limitMark } from "./accounts.mjs";
 import { parseEvents, makeEvent, incidentWindow } from "./events.mjs";
@@ -22,6 +22,10 @@ import { searchDatabases } from "./notion-db.mjs";
 import { ACTIONS, CONTROL, PROTOCOL_VERSION, validateRequest, idle, work } from "./protocol.mjs";
 import { isoNow, norm, clip } from "./util.mjs";
 import { makeQueueItem, QUEUE } from "./queue.mjs";
+import {
+  parseInstances, instanceFor, instanceToRow, agentDecision,
+  instancesOfSlot, AGENT_STATE,
+} from "./agents.mjs";
 
 /**
  * Состояние, которого нет в таблице.
@@ -74,13 +78,36 @@ export function createService({
     return parseSettings(rows);
   }
 
+  /**
+   * Лист «Экземпляры».
+   *
+   * Его может не быть: книга создана на прошлой версии, а лист появился в
+   * 1.20.0. Отсутствие листа — не ошибка и не повод остановить цикл: старые
+   * базы держат адрес в строке роли, и мы это поддерживаем. Поэтому ошибка
+   * чтения здесь превращается в пустой список, а не в отказ.
+   *
+   * Молчать при этом нельзя: в журнале должно быть видно, что листа нет,
+   * иначе «почему у меня не создаются агенты» будет выясняться наугад.
+   */
+  async function loadInstances() {
+    try {
+      const { rows } = await store.read("agents");
+      return { rows, instances: parseInstances(rows) };
+    } catch (error) {
+      memory.instancesMissing = error.message;
+      return { rows: [], instances: [] };
+    }
+  }
+
+
   async function loadAll() {
-    const [slots, queueSheet, runsSheet, eventsSheet, settings] = await Promise.all([
+    const [slots, queueSheet, runsSheet, eventsSheet, settings, agentsSheet] = await Promise.all([
       loadSlots(),
       store.read("queue"),
       store.read("runs"),
       store.read("events"),
       loadSettings(),
+      loadInstances(),
     ]);
     return {
       slots,
@@ -88,6 +115,8 @@ export function createService({
       runs: parseRuns(runsSheet.rows),
       events: parseEvents(eventsSheet.rows),
       settings,
+      instances: agentsSheet.instances,
+      agentsRows: agentsSheet.rows,
     };
   }
 
@@ -118,6 +147,90 @@ export function createService({
 
   function release(owner) {
     if (memory.lock && memory.lock.owner === owner) memory.lock = null;
+  }
+
+  /**
+   * Задание на создание агента: пара (роль, слот) → строка очереди `provision`.
+   *
+   * Почему отдельная строка очереди, а не сразу выдача карточки. Служба не
+   * умеет открывать вкладку — создаёт агента та вкладка, которая живёт в этом
+   * контейнере. Значит нужен объект, который вкладка заберёт своим `pull`.
+   * Строка очереди для этого уже есть: у неё тот же захват, тот же журнал и та
+   * же защита от двойной выдачи. Отдельная таблица заданий завела бы вторую
+   * реализацию «кто взял», и они бы разошлись.
+   *
+   * Задание попадает только в тот слот, для которого агента нет. Второй раз
+   * не просим, пока первый не закончился: `создаётся` — это уже обязательство.
+   */
+  async function requestAgent({ role, slot, data, reason = "" }) {
+    const instance = instanceFor(data.instances, role, slot.slotId);
+    if (instance && norm(instance.state) === AGENT_STATE.CREATING) {
+      return { ok: false, why: `агент ${role} в ${slot.slotId} уже создаётся`, instance };
+    }
+    // Уже есть ожидающее задание на эту пару — второе не нужно.
+    const pending = data.queue.find((item) =>
+      norm(item["Вид"]) === PROVISION_KIND &&
+      norm(item["Роль"]) === norm(role) &&
+      norm(item["Слот"]) === norm(slot.slotId) &&
+      norm(item["Статус"]) === QUEUE.WAITING);
+    if (pending) return { ok: false, why: `задание на агента ${role} в ${slot.slotId} уже в очереди`, pending };
+
+    const item = makeQueueItem({
+      card: "", title: `Создать агента: ${role}`, role, fn: "",
+      slot: slot.slotId, kind: "provision",
+      note: reason || `агента ${role} в ${slot.slotId} ещё нет`,
+    });
+    await store.append("queue", [queueToRow(item)]);
+    await record({
+      slot: slot.slotId, account: slot.account, kind: "provision", level: "info",
+      text: `нужен агент ${role} в ${slot.slotId}: ${reason || "пары нет в «Экземплярах»"}`,
+      data: { role, slot: slot.slotId, queueId: item["ID"] },
+    });
+    return { ok: true, item };
+  }
+
+  /** Предел выдач на одну роль: настройка, по умолчанию одна. */
+  const maxPerRole = (settings) => {
+    const value = Number(settings?.["cycle.maxPerRole"]);
+    return Number.isFinite(value) && value >= 1 ? Math.floor(value) : 1;
+  };
+
+  /**
+   * Забрать задание на агента, если этому слоту оно адресовано.
+   *
+   * Захват тот же, что у обычной выдачи: строка помечается `leased` и получает
+   * «Взял слот». Без этого две вкладки одного слота (после перезагрузки)
+   * создали бы двух агентов на одну пару — и один из них остался бы сиротой,
+   * потому что в «Экземплярах» хранится один адрес.
+   */
+  async function takeProvision(slot, data, tab) {
+    const item = data.queue.find((row) =>
+      norm(row["Вид"]) === PROVISION_KIND &&
+      norm(row["Статус"]) === QUEUE.WAITING &&
+      norm(row["Слот"]) === norm(slot.slotId));
+    if (!item) return null;
+
+    const leased = leaseItem(item, { slotId: slot.slotId });
+    if (!leased.ok) return null;
+    const rowIndex = data.queue.findIndex((row) => norm(row["ID"]) === norm(item["ID"]));
+    if (rowIndex >= 0) {
+      await store.updateRange("queue", rowIndex + 2, [queueToRow({ ...leased.item, "Статус": QUEUE.LEASED })]);
+    }
+    await record({
+      slot: slot.slotId, account: slot.account, tab, kind: "provision",
+      text: `вкладка ${tab || "?"} взяла задание: создать агента ${item["Роль"]} в ${slot.slotId}`,
+      data: { queueId: item["ID"], role: item["Роль"] },
+    });
+    // Ответ того же вида, что и обычная работа: `ok: true`, `work: null`.
+    // `kind` отличает задание от выдачи карточки, чтобы вкладка знала, что
+    // делать: создать агента, а не выполнять работу по миссии.
+    return {
+      ...idle(`создай агента роли «${item["Роль"]}» в контейнере ${slot.container || slot.slotId} и сообщи адрес`),
+      kind: "provision",
+      queueId: item["ID"],
+      role: item["Роль"],
+      slot: slot.slotId,
+    };
   }
 
   /**
@@ -234,7 +347,15 @@ export function createService({
     const plan = planOne({
       slots: data.slots, queue: data.queue, runs: data.runs, roles: [],
       state: accountState(data.slots.map((item) => item.account), { now: now() }),
+      maxPerRole: maxPerRole(data.settings),
     });
+
+    // Задание на создание агента в этом слоте отдаётся раньше плана: пока
+    // агента нет, карточке некуда ехать, и вкладка должна получить именно
+    // задание, а не «свободных слотов нет».
+    const provision = await takeProvision(slot, data, tab);
+    if (provision) return provision;
+
     if (!plan.ok) return idle(plan.why);
 
     // Захват строки обязан попасть в таблицу, иначе следующая вкладка увидит
@@ -592,6 +713,10 @@ export function createService({
   return {
     handle, hello, pull, beat, report, event, step, pause, resume, setMode,
     enqueue, cancel, setup, snapshot, incidentPackage, loadAll, record, memory,
+    // Только для тестов: эти функции не входят в протокол и не должны
+    // вызываться из вкладки. Отдельным объектом, чтобы «наружу» случайно не
+    // уехал лишний вход.
+    __test: { requestAgent, takeProvision, loadInstances, maxPerRole },
   };
 }
 

@@ -30,6 +30,11 @@ export const SETTINGS = {
 
   "cycle.mode": { group: "basic", type: "enum", values: ["manual", "auto"], default: "manual" },
   "cycle.maxParallel": { group: "advanced", type: "number", default: 2, min: 1, max: 8 },
+  // Предел одновременных выдач одной роли. По умолчанию 1: агенты одной роли
+  // делят файлы и оракул, и «параллельно быстрее» здесь означает «дороже».
+  // Поднимать имеет смысл только для роли, которая точно не пересекается по
+  // файлам с другой работой той же роли.
+  "cycle.maxPerRole": { group: "advanced", type: "number", default: 1, min: 1, max: 8 },
   "cycle.slotIdleMs": { group: "advanced", type: "number", default: 180000, min: 60000 },
   "cycle.tickMs": { group: "advanced", type: "number", default: 5000, min: 1000 },
 
@@ -44,7 +49,7 @@ export const SETTINGS = {
   "incident.windowMs": { group: "advanced", type: "number", default: 600000, min: 60000 },
   "incident.maxEvents": { group: "advanced", type: "number", default: 400, min: 50 },
 
-  "transport.version": { group: "basic", type: "text", default: "1.19.0" },
+  "transport.version": { group: "basic", type: "text", default: "1.20.0" },
 };
 
 /** Ключи, без которых цикл не работает: они обязаны быть в basic. */

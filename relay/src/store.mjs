@@ -103,12 +103,40 @@ export function createSheetsStore({ spreadsheetId, token, fetchImpl = globalThis
     });
   }
 
+  /**
+   * Создать лист, если его нет, и записать шапку.
+   *
+   * Зачем это в хранилище, а не «человек добавит руками». Схема растёт (в
+   * 1.20.0 появились «Экземпляры»), а книга живёт у владельца с прошлой
+   * версии. Требование «добавьте лист сами, иначе не заработает» — это ровно
+   * тот ручной шаг, от которого мы уходим. Пропущенный лист при этом молчит:
+   * `read` на несуществующем листе вернёт ошибку, а не пустоту, и служба
+   * упадёт на первом же `pull`.
+   *
+   * Идемпотентно: существующий лист не трогается, шапка не перезаписывается.
+   */
+  async function ensureSheet(sheetKey) {
+    const sheet = SHEETS[sheetKey];
+    if (!sheet) throw new SheetsError(`листа ${sheetKey} нет в схеме`, 500);
+    const info = await meta();
+    const titles = (info?.sheets || []).map((item) => item?.properties?.title);
+    if (titles.includes(sheet.name)) return { created: false, name: sheet.name };
+    await call(":batchUpdate", {
+      method: "POST",
+      body: JSON.stringify({
+        requests: [{ addSheet: { properties: { title: sheet.name } } }],
+      }),
+    });
+    await write(sheetKey, [sheet.columns], { range: "A1" });
+    return { created: true, name: sheet.name };
+  }
+
   /** Метаданные книги: нужны, чтобы понять номера строк и наличие листов. */
   async function meta() {
     return call("?fields=sheets.properties(title,sheetId,index),properties(title)");
   }
 
-  return { read, write, append, updateRange, meta, call, spreadsheetId };
+  return { read, write, append, updateRange, meta, ensureSheet, call, spreadsheetId };
 }
 
 /** A→A, B→B, …, Z→Z, AA→AA. Нужен для диапазонов записи. */
