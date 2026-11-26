@@ -7,13 +7,16 @@
 //
 // Переменные окружения:
 //   RELAY_SPREADSHEET_ID  — книга состояния (обязательна)
-//   RELAY_TOKEN           — токен Google с доступом к Sheets
+//   RELAY_GOOGLE_SA_FILE  — путь к JSON-ключу сервисного аккаунта (рекомендуется)
+//   RELAY_GOOGLE_SA_JSON  — тот же ключ строкой, если файл неудобен
+//   RELAY_TOKEN           — готовый токен Google с доступом к Sheets
 //   RELAY_TOKEN_CMD       — команда, печатающая токен (для обновляемых токенов)
 //   PORT                  — порт, по умолчанию 8787
 //   HOST                  — адрес, по умолчанию 0.0.0.0 (нужно для предпросмотра)
 
 import { execFileSync } from "node:child_process";
 import { createTransportServer, serverReadiness } from "./server.mjs";
+import { serviceAccountFromEnv, createServiceAccountToken } from "./google-auth.mjs";
 
 const PORT = Number(process.env.PORT || 8787);
 const HOST = process.env.HOST || "0.0.0.0";
@@ -27,14 +30,32 @@ if (!spreadsheetId && !demo) {
   process.exit(1);
 }
 
-if (!demo && !process.env.RELAY_TOKEN && !tokenCmd) {
-  console.error("Нет токена: задайте RELAY_TOKEN или RELAY_TOKEN_CMD. Без доступа к книге служба работать не может.");
+// Ключ сервисного аккаунта — путь по умолчанию: без него владельцу пришлось
+// бы каждый час добывать новый токен вручную.
+let serviceAccount = null;
+if (!demo) {
+  try {
+    serviceAccount = serviceAccountFromEnv(process.env);
+  } catch (error) {
+    console.error(error.message);
+    process.exit(1);
+  }
+}
+
+if (!demo && !serviceAccount && !process.env.RELAY_TOKEN && !tokenCmd) {
+  console.error(
+    "Нет доступа к книге. Проще всего — ключ сервисного аккаунта:\n" +
+    "  RELAY_GOOGLE_SA_FILE=путь/к/ключу.json node src/index.mjs\n" +
+    "Иначе задайте RELAY_TOKEN или RELAY_TOKEN_CMD.",
+  );
   process.exit(1);
 }
 
-const tokenProvider = tokenCmd
-  ? () => execFileSync(tokenCmd, { shell: true, encoding: "utf8" }).trim()
-  : () => process.env.RELAY_TOKEN;
+const tokenProvider = serviceAccount
+  ? createServiceAccountToken({ credentials: serviceAccount, log: (line) => console.log(line) })
+  : tokenCmd
+    ? () => execFileSync(tokenCmd, { shell: true, encoding: "utf8" }).trim()
+    : () => process.env.RELAY_TOKEN;
 
 const { server, service } = createTransportServer({
   spreadsheetId,
@@ -46,7 +67,7 @@ const { server, service } = createTransportServer({
 server.listen(PORT, HOST, async () => {
   console.log(`Транспорт слушает http://${HOST}:${PORT}`);
   if (demo) {
-    console.log("Режим: демонстрация (состояние в памяти). Для работы задайте RELAY_SPREADSHEET_ID и RELAY_TOKEN.");
+    console.log("Режим: демонстрация (состояние в памяти). Для работы задайте RELAY_SPREADSHEET_ID и ключ сервисного аккаунта.");
     return;
   }
   const state = await serverReadiness({ service });
