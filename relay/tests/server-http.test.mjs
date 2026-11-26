@@ -136,6 +136,12 @@ test("пульт: поле токена Notion и честная подпись 
     const js = await (await fetch(`${ctx.base}/app.js`)).text();
     // Токен уходит на свой маршрут и без перезапуска службы.
     assert.match(js, /\/api\/notion-token/);
+    // После принятия токена прячется только поле с кнопкой проверки: строка
+    // целиком остаётся, иначе «Роли в книгу» и «Диагностика» недоступны
+    // ровно в момент успеха.
+    assert.match(js, /shot\.notion\?\.ready \? "none"/, "поле токена скрывается при готовом Notion");
+    assert.doesNotMatch(js, /shot\.demo \|\| shot\.notion\?\.ready \? "none"/,
+      "строка целиком при готовом Notion не прячется");
     assert.match(js, /\/api\/net-deep/, "диагностика по звеньям");
     assert.match(js, /\/api\/roles-to-book/, "роли переезжают в книгу — Notion перестаёт быть обязательным");
     assert.match(js, /\/api\/book-speed/, "замер книги: цифры вместо «медленно»");
