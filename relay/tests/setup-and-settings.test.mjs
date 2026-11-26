@@ -342,6 +342,51 @@ test("проверка сети: сертификат подменён анти�
   assert.doesNotMatch(net.why, /не принял токен/);
 });
 
+test("роли читаются из книги: Notion для работы не нужен", async () => {
+  // Переломный момент подхода: пока роли жили только в Notion, недоступный
+  // Notion делал цикл «не настроенным» при полностью живой книге.
+  const store = createFakeStore({ slots: slotRows(), settings: settingsRows() });
+  store.sheets.roles = [
+    ["Роль", "Функция", "Статус", "Agent URL", "Репозиторий", "Не требуется", "Заметка"],
+    ["Executor", "Executor", "активна", "", "wotr", "нет", ""],
+    ["Coordinator", "Coordinator", "активна", "https://agent.example/c", "wotr", "нет", "админ"],
+  ];
+  const service = createService({ store });  // ни токена, ни сети
+  const data = await service.loadAll();
+  assert.equal(data.settings["notion.rolesDb"], "ds-roles");
+  // Роли достаются тем же вызовом, что и при выдаче.
+  const pull = await service.pull({ slotId: "worker-1", tab: "t1" });
+  assert.equal(pull.ok, true, pull.why);
+  const roles = service.memory.rolesCache || [];
+  assert.ok(Array.isArray(roles));
+});
+
+test("Notion недоступен, но книга жива: перенос ролей не падает, а объясняет", async () => {
+  const store = createFakeStore({ slots: slotRows(), settings: settingsRows() });
+  const service = createService({ store });  // токена нет
+  const result = await service.rolesToBook();
+  assert.equal(result.ok, false);
+  assert.match(result.why, /лист «Роли»/, "человеку сказано, что делать без Notion");
+  assert.doesNotMatch(result.why, /Unexpected|undefined/);
+});
+
+test("замер книги отвечает цифрами, а не «медленно»", async () => {
+  const service = createService({ store: createFakeStore({ slots: slotRows(), settings: settingsRows() }) });
+  const result = await service.measureBook();
+  assert.equal(result.ok, true, result.why);
+  assert.equal(typeof result.timings.readSlotsMs, "number");
+  assert.equal(typeof result.timings.appendMs, "number");
+  assert.match(result.why, /книга читается за/);
+  assert.match(result.why, /Один шаг цикла/);
+});
+
+test("Таблица ролей в книге: схема совпадает со списком колонок", async () => {
+  const { SHEETS } = await import("../src/schema.mjs");
+  assert.deepEqual(SHEETS.roles.columns,
+    ["Роль", "Функция", "Статус", "Agent URL", "Репозиторий", "Не требуется", "Заметка"]);
+  assert.equal(SHEETS.roles.name, "Роли");
+});
+
 test("справочник ролей читается: настройки не теряются в кеше", async () => {
   // Прежняя ошибка: `loadRoles` брал настройки из памяти, а память никто не
   // заполнял. В итоге ID ролей был в книге, токен был в окружении, а
@@ -415,4 +460,9 @@ test("готовность называет недостающие листы к
   // отправлять владельца создавать лист без пользы.
   const withoutState = readiness({ settings, slots, sheets: full.filter((name) => name !== "Состояние") });
   assert.equal(withoutState.ok, true, withoutState.problems.join("; "));
+
+  // «Роли» служба создаёт сама, как и «Экземпляры»: тревога о ней отправляла
+  // бы человека добавлять лист руками.
+  const withoutRoles = readiness({ settings, slots, sheets: full.filter((name) => name !== "Роли") });
+  assert.equal(withoutRoles.ok, true, withoutRoles.problems.join("; "));
 });
