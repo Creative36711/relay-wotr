@@ -102,9 +102,15 @@ export function planSetup({
   }
 
   const roles = pickDatabase(databases, "Роли", { demo, searchable });
+  // Вписанное вручную значение не переспрашиваем: applySetup его не затирает
+  // (пишется только найденное), но и показывать ту же ошибку про несколько
+  // баз нельзя — иначе человек, сделавший всё как сказано, видит «!» и думает,
+  // что не сработало. Автоматически найденное при этом важнее ручного.
+  const rolesValue = String(settings["notion.rolesDb"] ?? "").trim();
+  const rolesOk = roles.ok || Boolean(rolesValue);
   steps.push({
     key: "notion.rolesDb",
-    ok: roles.ok,
+    ok: rolesOk,
     // Справочник ролей улучшает раскладку (адреса, административность), но
     // цикл работает и без него: функция и имя роли есть в самой строке
     // очереди. Значит это замечание, а не блокировка.
@@ -112,8 +118,10 @@ export function planSetup({
     recommended: true,
     why: roles.ok
       ? "найдена база «Роли»"
-      : `${roles.why}. Без справочника цикл работает: роль и функция берутся из строки очереди`,
-    value: roles.ok ? roles.id : "",
+      : rolesValue
+        ? `задано вручную в листе «Настройки»: ${rolesValue} — мастер не переспрашивает`
+        : `${roles.why}. Без справочника цикл работает: роль и функция берутся из строки очереди`,
+    value: roles.ok ? roles.id : rolesValue,
   });
   if (roles.ok) discovered["notion.rolesDb"] = roles.id;
 

@@ -59,9 +59,11 @@ test("мастер настройки ищет токеном из пульта,
   // Токен, введённый в пульте, живёт в памяти службы, а не в окружении
   // процесса. Замыкание без параметра искало по env, молча возвращало
   // пустоту — и человек при принятом токене читал «интеграция не видит».
+  // Роли заданы пустым значением: вручную вписанное (D-024) этот шаг
+  // гасит, а здесь важен сам отказ про несколько баз.
   const seen = [];
   const service = createService({
-    store: createFakeStore({ slots: slotRows(), settings: settingsRows() }),
+    store: createFakeStore({ slots: slotRows(), settings: settingsRows({ "notion.rolesDb": "" }) }),
     notionFetch: async () => ({
       ok: true, status: 200,
       text: async () => JSON.stringify({ results: [{ id: "db-check", object: "database", title: [{ plain_text: "Роли" }] }] }),
@@ -88,6 +90,37 @@ test("мастер настройки ищет токеном из пульта,
   assert.match(step.why, /WOTR Remaster/, "описание первой базы названо");
   assert.match(step.why, /Vault/, "описание второй базы названо");
   assert.match(step.why, /notion\.rolesDb/, "запасной путь — вписать id вручную");
+});
+
+test("вписанное вручную notion.rolesDb мастер не переспрашивает", () => {
+  // Живой случай: три базы «Роли» — мастер просит оставить одну; владелец
+  // вписал id главной в лист «Настройки». Повторный «Найти и применить»
+  // не должен показывать ту же ошибку: сделанное не должно выглядеть
+  // как несделанное, а ручное значение — затираться пустым.
+  const ambiguous = [
+    { id: "db-1", title: "Роли", dataSourceId: "", description: "Состав команды WOTR Remaster" },
+    { id: "db-2", title: "Роли", dataSourceId: "", description: "Активные роли цикла Vault" },
+    { id: "db-3", title: "Роли", dataSourceId: "", description: "Активные роли цикла Synapse" },
+  ];
+  const plan = planSetup({
+    projectName: "WOTR",
+    settings: { "notion.rolesDb": "41e6f0cf-5705-81cf-9ea9-f7564f42f77c" },
+    databases: ambiguous,
+  });
+  const step = plan.steps.find((item) => item.key === "notion.rolesDb");
+  assert.equal(step.ok, true, step.why);
+  assert.match(step.why, /задано вручную в листе «Настройки»/);
+  assert.equal(step.value, "41e6f0cf-5705-81cf-9ea9-f7564f42f77c");
+  assert.equal(plan.discovered["notion.rolesDb"], undefined, "вручную заданное не попадает в запись — не затрётся");
+  assert.ok(!plan.notes.some((line) => line.includes("notion.rolesDb")), "и в замечаниях его нет");
+  assert.equal(plan.ok, true, plan.why);
+
+  // Без ручного значения отказ остаётся прежним — путаницы «всё зелёное»
+  // там, где настроек нет, быть не должно.
+  const empty = planSetup({ projectName: "WOTR", settings: {}, databases: ambiguous });
+  const emptyStep = empty.steps.find((item) => item.key === "notion.rolesDb");
+  assert.equal(emptyStep.ok, false);
+  assert.match(emptyStep.why, /несколько \(3\)/);
 });
 
 test("базы, которые транспорт не читает, не показываются как нехватка", () => {
