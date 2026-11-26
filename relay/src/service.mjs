@@ -20,7 +20,7 @@ import { parseSettings } from "./settings.mjs";
 import { planSetup, applySetup } from "./setup.mjs";
 import { searchDatabases, fetchRoles, notionTokenFrom, pingNotion, describeNonJson } from "./notion-db.mjs";
 import { ACTIONS, CONTROL, PROTOCOL_VERSION, validateRequest, idle, work } from "./protocol.mjs";
-import { SHEETS } from "./schema.mjs";
+import { SHEETS, rowToObject } from "./schema.mjs";
 import { isoNow, norm, clip } from "./util.mjs";
 import { makeQueueItem, QUEUE } from "./queue.mjs";
 import {
@@ -139,6 +139,14 @@ export function createService({
    * лучше, чем отказ.
    */
   async function loadRoles() {
+    // Книга — источник по умолчанию: она читается всегда, а Notion может быть
+    // недоступен (фильтр, VPN, нет токена). Раньше отсутствие Notion делало
+    // роли пустыми, и цикл выглядел сломанным при живой книге.
+    const fromBook = await rolesFromBook();
+    if (fromBook.length) return fromBook;
+
+    // Notion — обогащение: он знает репозиторий и готовность роли. Падение
+    // Notion здесь не отказ: берём то, что уже прочитали.
     const settings = await loadSettings();
     const dataSourceId = settings["notion.rolesDb"] || "";
     const token = notionTokenNow();
@@ -150,9 +158,47 @@ export function createService({
       memory.rolesAt = now();
       return rows;
     } catch (error) {
-      log(`справочник ролей не прочитан: ${error.message}`);
+      // Тихая деградация опасна: без записи в журнал «почему роль без
+      // репозитория» выясняется наугад.
+      log(`справочник ролей из Notion не прочитан: ${error.message}`);
+      memory.rolesNotionError = error.message;
       return memory.rolesCache || [];
     }
+  }
+
+  /** Роли из листа «Роли». Пустой лист — это «нет ролей», а не ошибка. */
+  async function rolesFromBook() {
+    let rows = [];
+    try {
+      rows = (await store.read("roles")).rows;
+    } catch (error) {
+      // Листа может не быть в книге прошлой версии: создаём сами, как и
+      // «Экземпляры». Если не вышло — не падаем, идём в Notion.
+      try {
+        await store.ensureSheet("roles");
+        rows = (await store.read("roles")).rows;
+      } catch {
+        return [];
+      }
+    }
+    const out = [];
+    for (const raw of rows) {
+      const row = rowToObject("roles", raw);
+      const name = String(row["Роль"] || "").trim();
+      if (!name) continue;
+      out.push({
+        pageId: "",
+        name,
+        fn: String(row["Функция"] || "").trim(),
+        status: String(row["Статус"] || "").trim(),
+        url: String(row["Agent URL"] || "").trim(),
+        repo: String(row["Репозиторий"] || "").trim(),
+        agentAdmin: false,
+        agentState: "не требуется",
+        source: "book",
+      });
+    }
+    return out;
   }
 
   /**
@@ -920,10 +966,17 @@ export function createService({
         searchError = error.message;
       }
     }
+    let rolesInBook = false;
+    try {
+      rolesInBook = (await store.read("roles")).rows.length > 0;
+    } catch {
+      rolesInBook = false;
+    }
     const plan = planSetup({
       projectName: projectName || current["project.name"],
       settings: current,
       databases,
+      rolesInBook,
       demo: Boolean(store.demo),
       // «Токена нет» и «токен есть, но баз не видно» — разные новости. Второе
       // значит, что интеграции не дали доступ к странице, и искать надо там.
@@ -944,6 +997,103 @@ export function createService({
       written: applied.written || [],
       advancedLeftToDefaults: plan.advancedLeftToDefaults,
       hasNotionToken: Boolean(notionTokenNow()),
+    };
+  }
+
+  /**
+   * Перенести роли из Notion в лист «Роли».
+   *
+   * Зачем перенос, а не чтение каждый раз. У владельца сеть до Notion режется
+   * фильтром; пока роли жили только там, цикл был «не настроен» при живой
+   * книге. После переноса книга самодостаточна, а Notion остаётся источником
+   * обновлений: перенести можно повторно, лист перезапишется.
+   *
+   * Пишем пачками по 200 строк: у правки листа есть пределы, а строк ролей
+   * бывает много.
+   */
+  async function rolesToBook() {
+    const settings = await loadSettings(true);
+    const dataSourceId = settings["notion.rolesDb"] || "";
+    const token = notionTokenNow();
+    if (!dataSourceId || !token) {
+      return { ok: false, why: "роли неоткуда взять: нет ни токена Notion, ни ID базы «Роли». Заполните лист «Роли» в книге руками — цикл работает и так" };
+    }
+    let rows = [];
+    try {
+      rows = await fetchRoles({ token, dataSourceId, fetchImpl: notionFetch });
+    } catch (error) {
+      return { ok: false, why: `Notion не ответил: ${error.message}` };
+    }
+    if (!rows.length) return { ok: false, why: "в базе «Роли» нет строк: переносить нечего" };
+
+    const values = rows.map((role) => [
+      role.name, role.fn, role.status, role.url, role.repo,
+      role.agentState === "не требуется" ? "нет" : "да", "",
+    ]);
+    try {
+      await store.ensureSheet("roles").catch(() => {});
+      // Шапка остаётся, строки перезаписываются начиная со второй.
+      await store.updateRange("roles", 2, values);
+    } catch (error) {
+      return { ok: false, why: `лист «Роли» не записался: ${error.message}` };
+    }
+    memory.rolesCache = rows;
+    memory.rolesAt = now();
+    await record({ kind: "ui", text: `роли перенесены в книгу: ${rows.length}` });
+    return { ok: true, why: `перенесено ролей: ${rows.length}. Notion для работы больше не нужен`, count: rows.length };
+  }
+
+  /**
+   * Замер записи в книгу.
+   *
+   * Нужен, чтобы «медленно» перестало быть догадкой. Мост к Apps Script ходит
+   * по одному запросу за операцию, и на каждый шаг уходит несколько чтений и
+   * записей — при 700 мс на запрос шаг занимает секунды. Числа показываем
+   * человеку, вместо того чтобы просить его верить.
+   */
+  async function measureBook() {
+    const started = now();
+    const timings = {};
+    let readMs = 0;
+    try {
+      const t0 = now();
+      await store.read("slots");
+      readMs = now() - t0;
+      timings.readSlotsMs = readMs;
+    } catch (error) {
+      return { ok: false, why: `книга не читается: ${error.message}` };
+    }
+    const t1 = now();
+    try {
+      await store.meta();
+      timings.metaMs = now() - t1;
+    } catch {
+      timings.metaMs = null;
+    }
+    // Одна настоящая запись: строка журнала. Чтение и запись стоят по-разному,
+    // и обе нужны, чтобы оценить шаг.
+    const t2 = now();
+    try {
+      // Строка собирается так же, как в `record`: хранилище ждёт массив ячеек,
+      // а не объект. Ошибка здесь превращала бы замер в «книга не пишется».
+      const sample = makeEvent({ kind: "ui", text: "замер: проверка скорости книги" });
+      await store.append("events", [[
+        sample["Время"], sample["Слот"], sample["Аккаунт"], sample["Вкладка"], sample["Вид"],
+        sample["Уровень"], sample["Текст"], sample["Карточка"], sample["Run ID"],
+        sample["Длительность мс"], sample["Данные"],
+      ]]);
+      timings.appendMs = now() - t2;
+    } catch (error) {
+      return { ok: false, why: `книга не пишется: ${error.message}`, timings };
+    }
+    const stepMs = (timings.readSlotsMs || 0) * 4 + (timings.appendMs || 0) * 2;
+    return {
+      ok: true,
+      timings,
+      totalMs: now() - started,
+      stepEstimateMs: stepMs,
+      why: `книга читается за ${(readMs / 1000).toFixed(1)} с, пишется за ${(timings.appendMs / 1000).toFixed(1)} с. ` +
+        `Один шаг цикла — около ${(stepMs / 1000).toFixed(1)} с: мост ходит по одному запросу за операцию`,
     };
   }
 
@@ -1095,7 +1245,7 @@ export function createService({
 
   return {
     handle, hello, pull, beat, report, event, step, pause, resume, setMode, agentReady,
-    enqueue, cancel, setup, notionTokenSet, notionNet, snapshot, incidentPackage, loadAll, record, memory, sheetTitles,
+    enqueue, cancel, setup, notionTokenSet, notionNet, rolesToBook, measureBook, snapshot, incidentPackage, loadAll, record, memory, sheetTitles,
     // Только для тестов: эти функции не входят в протокол и не должны
     // вызываться из вкладки. Отдельным объектом, чтобы «наружу» случайно не
     // уехал лишний вход.

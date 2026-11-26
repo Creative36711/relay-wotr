@@ -180,3 +180,18 @@ dialog pre {
   font-size: 12px;
   margin: 10px 0 0;
 }
+
+/* Диагностика по звеньям: одна строка на шаг, отметка слева.
+   Таблица читается быстрее прозы — а прозы владелец уже наслушался. */
+.diagnose { margin: 10px 0; padding: 10px 12px; background: #16191f; border: 1px solid var(--line); border-radius: 8px; }
+.diagnose.hidden { display: none; }
+.diag-title { font-weight: 600; margin-bottom: 6px; }
+.diag-row { display: flex; gap: 8px; align-items: baseline; font-size: 13px; }
+.diag-row .mark { width: 12px; }
+.diag-row.ok .mark { color: var(--ok); }
+.diag-row.bad .mark { color: var(--bad); }
+.diag-name { min-width: 110px; color: var(--muted); font-family: var(--mono); font-size: 12px; }
+.diag-detail { flex: 1; word-break: break-word; }
+.diag-verdict { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--line); }
+.diagnose pre { max-height: 180px; overflow: auto; background: #0e1116; padding: 8px; border-radius: 6px; font-size: 12px; }
+.diagnose summary { cursor: pointer; color: var(--muted); font-size: 12px; }

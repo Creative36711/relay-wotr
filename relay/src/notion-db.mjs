@@ -364,6 +364,155 @@ export async function pingNotion({ fetchImpl = globalThis.fetch, timeoutMs = 150
 }
 
 /**
+ * Подробный отчёт: что именно произошло на каждом шаге.
+ *
+ * Зачем, когда уже есть `pingNotion`. Пять разных поломок давали похожий
+ * текст, и каждый разговор заканчивался «сеть или токен?». Здесь всё, что
+ * можно измерить, измеряется и печатается: DNS, TCP, TLS (с отпечатком
+ * сертификата), реальный ответ Notion и тот же запрос через `fetch`. Если
+ * сертификат подменён — видно, кем: у настоящего Notion отпечаток один и тот
+ * же у всех, у подмены — свой.
+ *
+ * Картинка из ASCII не украшение: она показывает, на каком шаге обрыв — на
+ * пунктире, который обрывается. Это быстрее любого текста.
+ */
+export async function deepDiagnose({ token = "", fetchImpl = globalThis.fetch, timeoutMs = 15000, book = null } = {}) {
+  const steps = [];
+  const add = (name, ok, detail) => steps.push({ name, ok, detail });
+  const started = Date.now();
+
+  // 1. DNS
+  let addresses = [];
+  try {
+    const found = await lookup(NOTION_HOST, { all: true });
+    addresses = found.map((item) => ({ address: item.address, family: item.family }));
+    add("DNS", addresses.length > 0,
+      addresses.length ? `${addresses.length} адресов: ${addresses.slice(0, 4).map((a) => a.address).join(", ")}` : "адресов нет");
+  } catch (error) {
+    add("DNS", false, `не разрешилось: ${error.code || error.message}`);
+  }
+
+  // 2. TCP до каждого семейства
+  for (const family of [4, 6]) {
+    const target = addresses.find((item) => item.family === family);
+    if (!target) { add(`TCP IPv${family}`, false, "адреса нет"); continue; }
+    const probe = await new Promise((resolve) => {
+      const socket = connect({ host: target.address, port: 443, timeout: 5000 });
+      const at = Date.now();
+      socket.once("connect", () => { socket.destroy(); resolve({ ok: true, ms: Date.now() - at }); });
+      socket.once("timeout", () => { socket.destroy(); resolve({ ok: false, why: "таймаут 5 с" }); });
+      socket.once("error", (error) => resolve({ ok: false, why: error.code || "ошибка" }));
+    });
+    add(`TCP IPv${family}`, probe.ok, probe.ok ? `${target.address} за ${probe.ms} мс` : `${target.address}: ${probe.why}`);
+  }
+
+  // 3. TLS: с кем именно установлено соединение.
+  const target4 = addresses.find((item) => item.family === 4) || addresses[0];
+  if (target4) {
+    const tlsResult = await new Promise((resolve) => {
+      const socket = tlsConnect({ host: target4.address, port: 443, servername: NOTION_HOST, timeout: 8000 });
+      socket.once("secureConnect", () => {
+        const certificate = socket.getPeerCertificate() || {};
+        resolve({
+          ok: true,
+          subject: String(certificate.subject?.CN || ""),
+          issuer: String(certificate.issuer?.O || certificate.issuer?.CN || ""),
+          fingerprint: String(certificate.fingerprint256 || certificate.fingerprint || "").slice(0, 47),
+          protocol: socket.getProtocol() || "",
+        });
+        socket.destroy();
+      });
+      socket.once("error", (error) => resolve({ ok: false, why: error.code || error.message }));
+      socket.once("timeout", () => { socket.destroy(); resolve({ ok: false, why: "таймаут 8 с" }); });
+    });
+    add("TLS", tlsResult.ok,
+      tlsResult.ok
+        ? `сертификат «${tlsResult.subject}», выдал «${tlsResult.issuer}», ${tlsResult.protocol}, отпечаток ${tlsResult.fingerprint}`
+        : `рукопожатие не прошло: ${tlsResult.why}`);
+    if (tlsResult.ok && !/notion/i.test(`${tlsResult.subject} ${tlsResult.issuer}`)) {
+      add("Подмена сертификата", false,
+        `сертификат выдан не Notion, а «${tlsResult.issuer}». Так делает антивирус или прокси с проверкой HTTPS`);
+    } else if (tlsResult.ok) {
+      add("Подмена сертификата", true, "сертификат принадлежит Notion");
+    }
+  }
+
+  // 4. Настоящий запрос, с телом ответа.
+  let http = { ok: false, why: "не выполнялся" };
+  try {
+    const response = await fetchImpl(`${API}/users/me`, {
+      method: "GET",
+      headers: { "Notion-Version": VERSION, ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+    const text = await response.text();
+    http = {
+      ok: response.ok,
+      status: response.status,
+      contentType: response.headers?.get?.("content-type") || "",
+      server: response.headers?.get?.("server") || "",
+      via: response.headers?.get?.("via") || "",
+      body: text.slice(0, 500),
+      substituted: describeNonJson({
+        status: response.status,
+        url: response.url || "",
+        headers: Object.fromEntries((response.headers?.entries?.() || [])),
+        text,
+      }),
+    };
+    add("Ответ Notion", response.ok || http.substituted === null,
+      `HTTP ${response.status}${http.server ? `, сервер «${http.server}»` : ""}${http.contentType ? `, ${http.contentType}` : ""}`);
+  } catch (error) {
+    http = { ok: false, why: `${error?.cause?.code || error?.code || error.message}` };
+    add("Ответ Notion", false, `запрос не прошёл: ${http.why}`);
+  }
+
+  // 4б. Книга: она в том же положении, что Notion, но обычно работает. Её
+  // ответ и есть доказательство, что «интернет есть».
+  if (book?.url) {
+    try {
+      const response = await fetchImpl(book.url, { method: "GET", redirect: "follow", signal: AbortSignal.timeout(timeoutMs) });
+      add("Книга", true, `адрес моста отвечает (HTTP ${response.status})`);
+    } catch (error) {
+      add("Книга", false, `адрес моста не отвечает: ${error?.cause?.code || error?.code || error.message}`);
+    }
+  }
+
+  // 5. Вывод: что делать. Один пункт, а не список вариантов.
+  const failed = steps.filter((step) => !step.ok).map((step) => step.name);
+  const verdict = failed.length === 0
+    ? "Всё звенья проходят: служба видит Notion. Если проверка токена всё равно отказывает — дело в самом токене или в доступе интеграции."
+    : failed.includes("Подмена сертификата")
+      ? "Сертификат подменён: между службой и Notion стоит антивирус или прокси. Отключите проверку HTTPS в антивирусе."
+      : http.substituted
+        ? `Ответил не Notion (${http.substituted.why}). Это фильтр по домену: правило в VPN-клиенте или провайдер.`
+        : failed.includes("TLS")
+          ? "TCP проходит, TLS рвётся: соединение до Notion не устанавливается. Это правило в VPN-клиенте (HAPP/Xray) для домена notion.com."
+          : failed.some((name) => name.startsWith("TCP"))
+            ? "TCP не проходит: сеть не пускает к api.notion.com. Проверьте режим VPN."
+            : "DNS не разрешает имя: смените DNS или выключите «защищённый DNS» в VPN.";
+
+  return {
+    ok: failed.length === 0,
+    steps,
+    http,
+    verdict,
+    picture: networkPicture(steps),
+    addresses,
+    ms: Date.now() - started,
+  };
+}
+
+/** Картинка из ASCII: где именно обрыв. */
+export function networkPicture(steps = []) {
+  const names = steps.map((step) => step.name);
+  const line = steps
+    .map((step) => (step.ok ? "●" : "✕"))
+    .join("───");
+  return `служба ── ${names.map((name, index) => `${steps[index].ok ? "●" : "✕"} ${name}`).join(" ")}`;
+}
+
+/**
  * Разобрать ответ, который Notion не писал.
  *
  * История, из-за которой это появилось. Владелец вставил рабочий токен и

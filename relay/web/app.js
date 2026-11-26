@@ -88,6 +88,25 @@ function renderQueue(shot) {
   }
 }
 
+/**
+ * Понятная запись журнала.
+ *
+ * Владелец читает журнал как хронологию поломок: «сеть до Notion», «мастер
+ * настройки: не всё найдено». Эти строки писались для нас, а не для него.
+ * Переводим в действия: что случилось и что из этого следует.
+ */
+function plainEvent(event) {
+  const text = String(event.text || "");
+  const kind = String(event.kind || event["Вид"] || "");
+  if (/сеть до Notion/.test(text)) return { tone: "warn", text: `Проверка сети: ${text.replace(/^сеть до Notion:\s*/, "")}` };
+  if (/мастер настройки: не всё найдено/.test(text)) return { tone: "warn", text: "Настройка: мастер нашёл не всё (подробности — в списке шагов)" };
+  if (/мастер настройки: готово/.test(text)) return { tone: "ok", text: "Настройка: ключи найдены и записаны" };
+  if (/роли перенесены в книгу/.test(text)) return { tone: "ok", text: text[0].toUpperCase() + text.slice(1) };
+  if (/токен Notion/.test(text)) return { tone: "ok", text: text[0].toUpperCase() + text.slice(1) };
+  if (kind === "ui" && /нажат|нажата|переключён/.test(text)) return { tone: "", text: `Вы: ${text}` };
+  return { tone: "", text };
+}
+
 function renderEvents(shot) {
   const host = $("events");
   const filter = $("event-filter").value;
@@ -96,9 +115,11 @@ function renderEvents(shot) {
   $("event-note").textContent = `${shown.length} из ${shot.events.length}`;
   for (const event of shown) {
     const row = document.createElement("li");
-    row.className = event.level === "error" ? "error" : event.level === "warn" ? "warn" : event.kind === "ui" ? "ui" : "";
+    const plain = plainEvent(event);
+    const tone = plain.tone || (event.level === "error" ? "error" : event.level === "warn" ? "warn" : event.kind === "ui" ? "ui" : "");
+    row.className = tone;
     const where = [event.slot, event.tab ? `#${event.tab}` : ""].filter(Boolean).join(" ");
-    row.textContent = `${fmtTime(event.at).slice(11)} ${where ? `[${where}] ` : ""}${event.text}`;
+    row.textContent = `${fmtTime(event.at).slice(11)} ${where ? `[${where}] ` : ""}${plain.text}`;
     host.append(row);
   }
 }
@@ -146,7 +167,7 @@ async function refresh() {
     // «Служба не отвечает» — неправда, когда служба отвечает и говорит, что
     // не дотянулась до книги: человек перезапускает процесс, а дело в сети.
     banner(error.network
-      ? `${error.message}\nСлужба работает; не проходит запрос наружу. Нажмите «Проверить сеть» в настройке.`
+      ? `${error.message}\nСлужба работает; не проходит запрос наружу. Нажмите «Диагностика» в настройке.`
       : `Служба не отвечает: ${error.message}\nПроверьте, что процесс запущен и что таблица состояния доступна.`);
   }
 }
@@ -242,24 +263,65 @@ async function discover() {
  * перевыпускать рабочий ключ. Эта проверка стучится в Notion без токена и
  * называет код отказа — по нему видно, что чинить.
  */
+/**
+ * Диагностика по звеньям.
+ *
+ * Владелец пять раз получал разные тексты про сеть и ни разу — ответа.
+ * Здесь вместо прозы таблица: DNS, порт, TLS, ответ Notion, книга — с
+ * отметкой там, где обрыв. Один экран, один вывод, без «попробуйте ещё».
+ */
 async function checkNotionNet() {
+  const host = $("diagnose");
   const note = $("notion-note");
   note.className = "muted";
-  note.textContent = "проверяю: Notion, книга, прокси…";
+  note.textContent = "иду по шагам…";
   try {
-    const result = await (await fetch("/api/net-doctor", { cache: "no-store" })).json();
-    note.className = result.ok ? "ok" : "bad";
-    // Проверяются оба выхода сразу. Когда не проходит ни один — это сеть, и
-    // искать надо там; когда один — виновник назван по имени. Плюс видно,
-    // каким прокси пользуется служба: «задан, но не применяется» объясняет
-    // половину случаев «я же всё настроил».
-    const lines = [result.why, `Notion: ${result.notion?.why || "нет ответа"}`];
-    if (result.bridge) lines.push(`Книга: ${result.bridge.why || "нет ответа"}`);
-
-    lines.push("Проверка идёт из службы (Node), а не из браузера: у Firefox свои прокси, DNS и порядок адресов.");
-    note.textContent = lines.join(" · ");
+    const data = await (await fetch("/api/net-deep", { cache: "no-store" })).json();
+    const rows = (data.steps || []).map((step) => `
+      <div class="diag-row ${step.ok ? "ok" : "bad"}">
+        <span class="mark">${step.ok ? "●" : "✕"}</span>
+        <span class="diag-name">${escapeHtml(step.name)}</span>
+        <span class="diag-detail">${escapeHtml(step.detail)}</span>
+      </div>`).join("");
+    const raw = data.http?.body
+      ? `<details><summary>что ответил Notion дословно</summary><pre>${escapeHtml(data.http.body)}</pre></details>`
+      : "";
+    host.innerHTML = `<div class="diag-title">${data.ok ? "всё проходит" : "обрыв найден"}</div>${rows}
+      <div class="diag-verdict">${escapeHtml(data.verdict || "")}</div>${raw}`;
+    host.classList.remove("hidden");
+    note.className = data.ok ? "ok" : "bad";
+    note.textContent = data.ok ? "Notion доступен" : "смотрите таблицу ниже";
   } catch (error) {
     note.className = "bad";
+    note.textContent = `служба не ответила: ${error.message}`;
+  }
+}
+
+/**
+ * «Роли в книгу».
+ *
+ * Один шаг, который снимает зависимость от Notion: роли переезжают в лист
+ * «Роли», и цикл работает на одной книге. Пока это не сделано, недоступный
+ * Notion выглядит как «ничего не настроено».
+ */
+async function rolesToBook() {
+  const note = $("notion-note");
+  note.className = "muted";
+  note.textContent = "переношу роли…";
+  const result = await post("/api/roles-to-book", {});
+  note.className = result.ok ? "ok" : "bad";
+  note.textContent = result.why || (result.ok ? "готово" : "не получилось");
+  await refresh();
+}
+
+/** Замер книги: цифры вместо слова «медленно». */
+async function measureBook() {
+  const note = $("setup-note");
+  note.textContent = "замеряю книгу…";
+  try {
+    const result = await (await fetch("/api/book-speed", { cache: "no-store" })).json();
+    note.textContent = result.ok ? result.why : `не удалось: ${result.why}`;
+  } catch (error) {
     note.textContent = `служба не ответила: ${error.message}`;
   }
 }

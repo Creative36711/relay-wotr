@@ -32,12 +32,15 @@
       <input id="notion-token" type="password" spellcheck="false" autocomplete="off"
              placeholder="Токен Notion (ntn_… или secret_…) — вставьте и нажмите «Проверить»" />
       <button id="btn-notion" class="ghost">Проверить токен</button>
-      <button id="btn-notion-net" class="ghost" title="Notion, книга и прокси — одним нажатием">Проверить сеть</button>
+      <button id="btn-notion-net" class="ghost" title="DNS, порт, TLS, ответ Notion и книга — по шагам">Диагностика</button>
+      <button id="btn-roles-book" class="ghost" title="перенести роли из Notion в лист «Роли» — после этого Notion не нужен">Роли в книгу</button>
       <span class="muted" id="notion-note"></span>
     </div>
+    <div id="diagnose" class="diagnose hidden"></div>
     <div id="setup-steps" class="steps"></div>
     <div class="row">
       <button id="btn-discover">Найти и применить</button>
+      <button id="btn-speed" class="ghost" title="сколько стоят чтение и запись книги">Замерить книгу</button>
       <button id="btn-mount" class="ghost">Код для входа в книгу</button>
       <span class="muted" id="setup-note"></span>
     </div>

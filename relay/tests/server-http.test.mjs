@@ -129,7 +129,9 @@ test("пульт: поле токена Notion и честная подпись 
     const js = await (await fetch(`${ctx.base}/app.js`)).text();
     // Токен уходит на свой маршрут и без перезапуска службы.
     assert.match(js, /\/api\/notion-token/);
-    assert.match(js, /\/api\/net-doctor/);
+    assert.match(js, /\/api\/net-deep/, "диагностика по звеньям");
+    assert.match(js, /\/api\/roles-to-book/, "роли переезжают в книгу — Notion перестаёт быть обязательным");
+    assert.match(js, /\/api\/book-speed/, "замер книги: цифры вместо «медленно»");
     // Проверка одна на всё: иначе «мост молчит» и «Notion молчит» лечатся
     // по отдельности, хотя причина общая — нет исходящего HTTPS.
     // Поля прокси в пульте нет: владельцу нечего туда вводить, а лишнее

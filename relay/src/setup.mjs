@@ -73,7 +73,10 @@ export function pickDatabase(results, title, { demo = false, searchable = true }
  * Побочных эффектов нет — план можно показать человеку до записи. Это и есть
  * «мастер»: один экран, где видно всё, и одна кнопка «применить».
  */
-export function planSetup({ projectName = "", settings = {}, databases = [], gateway = null, demo = false, searchable = true } = {}) {
+export function planSetup({
+  projectName = "", settings = {}, databases = [], gateway = null,
+  demo = false, searchable = true, rolesInBook = false,
+} = {}) {
   const steps = [];
   const discovered = {};
 
@@ -146,6 +149,19 @@ export function planSetup({ projectName = "", settings = {}, databases = [], gat
     if (gateway.folderId) discovered["drive.logsFolderId"] = gateway.folderId;
   }
 
+  // Роли в книге: то, что делает Notion необязательным. Заполняется из Notion
+  // тем же мастером (кнопка ниже), и после этого цикл живёт на одной книге.
+  steps.push({
+    key: "rolesBook",
+    ok: Boolean(rolesInBook),
+    required: false,
+    why: rolesInBook
+      ? "роли лежат в книге (лист «Роли») — Notion для работы не нужен"
+      : "ролей в книге пока нет: они нужны, чтобы отличать административные роли от рабочих. " +
+        "Кнопка «Перенести роли в книгу» сделает это из Notion, либо заполните лист «Роли» руками",
+    value: "",
+  });
+
   steps.push({
     key: "project.name",
     ok: Boolean(projectName || settings["project.name"]),
@@ -207,8 +223,11 @@ export function readiness({ settings = {}, slots = [], sheets = null, notes: ext
     // единственная строка состояния живёт в «Настройках». Требовать лист,
     // которого никто не касается, значит слать владельца делать работу без
     // результата (и ровно этим пугала строка запуска).
+    // Листы, которые служба создаёт сама при первом чтении, не называем
+    // проблемой: «Роли» появляется сама, а тревога «нет листов» отправляла
+    // человека в книгу руками добавлять лист, который создастся без него.
     const missing = Object.entries(SHEETS)
-      .filter(([key]) => key !== "state")
+      .filter(([key]) => key !== "state" && key !== "roles")
       .map(([, sheet]) => sheet.name)
       .filter((name) => !have.has(norm(name)));
     if (missing.length) {

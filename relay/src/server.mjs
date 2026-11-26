@@ -20,7 +20,7 @@ import { createSheetsStore } from "./store.mjs";
 import { mountPage } from "./mount-page.mjs";
 import { createAppsScriptStore, bridgeReachability } from "./appsscript-bridge.mjs";
 import { normalizeBridgeInput, writeBridgeFile } from "./bridge-config.mjs";
-import { currentProxy } from "./notion-db.mjs";
+import { currentProxy, deepDiagnose } from "./notion-db.mjs";
 import { createService } from "./service.mjs";
 import { readiness } from "./setup.mjs";
 import { searchDatabases } from "./notion-db.mjs";
@@ -273,6 +273,29 @@ export function createTransportServer({
                 ? "интернет есть, не отвечает только книга — смотрите развёртывание моста и доступ «Все»"
                 : "интернет есть, не отвечает только Notion — смотрите его доступность",
         });
+      }
+
+      // Диагностика по звеньям: DNS → TCP → TLS → ответ → токен. Печатает
+      // отпечаток сертификата и сырой ответ, поэтому «сеть или токен» решается
+      // без догадок и без переписки.
+      if (url.pathname === "/api/net-deep" && request.method === "GET") {
+        const token = NOTION_TOKEN || process.env.NOTION_TOKEN || process.env.RELAY_NOTION_TOKEN
+          || service?.memory?.notionToken || "";
+        return send(response, 200, await deepDiagnose({
+          token,
+          fetchImpl,
+          book: bridgeReady() ? { url: bridge.url } : null,
+        }));
+      }
+
+      // Роли в книгу: после этого Notion для работы не нужен.
+      if (url.pathname === "/api/roles-to-book" && request.method === "POST") {
+        return send(response, 200, await service.rolesToBook());
+      }
+
+      // Замер книги: цифры вместо «медленно».
+      if (url.pathname === "/api/book-speed" && request.method === "GET") {
+        return send(response, 200, await service.measureBook());
       }
 
       // Токен Notion из пульта. Отдельный маршрут, а не «настройка»: ключ и
