@@ -53,7 +53,10 @@ export const CHECKS = [
 // The project uses one repository, but a transport release is still narrow: transport,
 // its process documentation and the root script manifest only. Product, retail,
 // art and upstream-integration paths require their own cards and gates.
-export const ALLOWED_PATHS = ['tools/script-cat/', 'tools/relay-watchdog.mjs', 'tools/relay-build.mjs', 'docs/', 'AGENTS.md', 'package.json'];
+// D-009: служба транспорта живёт рядом с комплектом (`relay/`) — она часть того же
+// релиза и того же решения, поэтому её пути входят в разрешённые. Каталог службы
+// не касается вкладки: бандл собирается только из `tools/script-cat/src/**`.
+export const ALLOWED_PATHS = ['tools/script-cat/', 'tools/relay-watchdog.mjs', 'tools/relay-build.mjs', 'relay/', 'docs/', 'AGENTS.md', 'package.json', '.gitignore'];
 // Сторож и узел — файлы, а не каталоги: сравниваем точно, иначе `tools/` целиком
 // считалось бы разрешённым и узел перестал бы замечать чужой код рядом с собой.
 const ALLOWED_FILES = new Set(ALLOWED_PATHS.filter((path) => !path.endsWith('/')));
