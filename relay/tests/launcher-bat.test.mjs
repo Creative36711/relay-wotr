@@ -45,13 +45,26 @@ test("батник: ключ сервисного аккаунта ищется 
   assert.match(text, /set "RELAY_GOOGLE_SA_FILE=%SA_FILE%"/, "найденный ключ передаётся службе");
 });
 
-test("батник: книга задана, демо — только при отсутствии ключа", () => {
+test("батник: книга задана, демо — только когда нет ни моста, ни ключа", () => {
   assert.match(text, /set "BOOK_ID=1_MohMfnUvl40CT689gfch_MgPtzqokSw5Bylbl89PFQ"/, "книга владельца прописана");
-  const demo = text.slice(text.indexOf('echo [!] Файл ключа'));
-  assert.match(demo, /set "RELAY_DEMO=1"/, "без ключа включается демо-режим");
+  const demo = text.slice(text.indexOf("echo [!] Вход в книгу не настроен"));
+  assert.match(demo, /set "RELAY_DEMO=1"/, "без входа включается демо-режим");
   assert.match(demo, /НЕ подключена/, "и это сказано человеку, а не только в коде");
   // Демо не должно протекать из прошлой попытки: иначе «пустая книга» выглядит как поломка.
   assert.match(text, /set "RELAY_DEMO="\r?\n/, "переменная демо-режима сбрасывается на старте");
+});
+
+test("батник: мост Apps Script — первый путь, ключ Google не обязателен", () => {
+  // Мост — самый короткий вход: адрес и ключ владелец получает в самой книге.
+  // Файл запуска обязан предпочесть его ключу и не искать sa.json зря.
+  assert.match(text, /for %%F in \("%~dp0bridge\.txt" "%~dp0\.\.\\bridge\.txt"\)/, "ищет bridge.txt рядом и на уровень выше");
+  assert.match(text, /if not defined BRIDGE_URL \(\r?\n  for %%F in \("%~dp0\.\.\\sa\.json"/, "sa.json ищется только без моста");
+  assert.match(text, /set "RELAY_BRIDGE_URL=%BRIDGE_URL%"/, "мост передаётся службе");
+  assert.match(text, /set "RELAY_BRIDGE_KEY=%BRIDGE_KEY%"/, "и ключ моста тоже");
+  assert.match(text, /ключ Google не нужен/, "человеку сказано, что ключ больше не нужен");
+  // Один файл — две формы записи: «адрес=ключ» и два значения подряд.
+  assert.match(text, /findstr \/n \/c:"="/, "разбирает форму «адрес=ключ»");
+  assert.match(text, /Разделителя нет/, "и форму двумя строками");
 });
 
 test("батник: окно не закрывается само — ошибку надо прочитать", () => {
