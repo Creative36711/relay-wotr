@@ -267,6 +267,28 @@ test("проверка сети: «не дозвонились» не выдаё
   assert.doesNotMatch(token.why, /не принял токен/, "не обвиняем ключ в сетевой поломке");
 });
 
+test("проверка сети: IPv4 доходит, IPv6 нет — назван виновник, а не «медленно»", async () => {
+  // Сценарий владельца: VPN отдаёт IPv6-адрес Notion и не пропускает трафик.
+  // В Firefox это незаметно (он переключается сам), в Node — обрыв по
+  // таймауту. Проверка обязана сказать «IPv6», а не «сеть медленная».
+  const service = createService({
+    store: createFakeStore({ slots: slotRows(), settings: settingsRows() }),
+    notionFetch: async () => {
+      const error = new Error("fetch failed");
+      error.cause = { code: "UND_ERR_CONNECT_TIMEOUT" };
+      throw error;
+    },
+  });
+  const net = await service.notionNet();
+  assert.ok(Array.isArray(net.probes), "видно, какое семейство адресов проверено");
+  assert.ok(Array.isArray(net.addresses), "и какие адреса отдал DNS");
+  // В этой сети IPv4 обязан быть живым, иначе тест ничего не проверяет.
+  const v4 = net.probes.find((item) => item.family === 4);
+  assert.ok(v4 && v4.ok, "IPv4 проверен и доступен");
+  assert.match(net.why, /IPv6|IPv4|соединение/, "причина названа по существу");
+  assert.doesNotMatch(net.why, /сертификат/, "не сваливаем на сертификат");
+});
+
 test("проверка сети: сертификат подменён антивирусом — так и названо", async () => {
   const service = createService({
     store: createFakeStore({ slots: slotRows(), settings: settingsRows() }),

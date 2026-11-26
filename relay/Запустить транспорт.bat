@@ -185,19 +185,25 @@ echo.
 start "" /min cmd /c "timeout /t 2 >nul & start "" http://localhost:%PORT%"
 rem ─── Прокси ───────────────────────────────────────────────────────────────
 rem Если выход в интернет идёт через прокси (рабочая сеть, VPN-клиент со своим
-rem прокси), Node о нём не знает и запрос к Notion умирает с ECONNRESET. Ключ
-rem при этом рабочий, и человек ищет причину не там. Подсказываем один раз, а
-rem не заставляем читать переменные окружения.
+rem прокси), Node о нём не знает и запрос к Notion умирает с ECONNRESET.
+rem
+rem Важная деталь: Node 22 читает HTTPS_PROXY только с флагом --use-env-proxy.
+rem Без него переменная лежит в окружении и ничего не делает — «настроил
+rem прокси, а всё равно не работает». Поэтому флаг передаём здесь, а не
+rem надеемся, что человек вспомнит про NODE_OPTIONS.
 if not defined HTTPS_PROXY if defined HTTP_PROXY set "HTTPS_PROXY=%HTTP_PROXY%"
 if not defined HTTPS_PROXY (
-  set /p "PROXY_URL=Прокси для интернета (Enter — пропустить): "
+  set /p "PROXY_URL=Прокси для интернета, если он есть (Enter — пропустить): "
   if defined PROXY_URL set "HTTPS_PROXY=!PROXY_URL!" & set "HTTP_PROXY=!PROXY_URL!"
 )
+set "NODE_EXTRA_FLAGS="
 if defined HTTPS_PROXY (
+  set "NODE_EXTRA_FLAGS=--use-env-proxy"
   echo Прокси: %HTTPS_PROXY%
-  echo   Если Notion не отвечает — виноват прокси, а не ключ.
+  echo   Если Notion не отвечает — виноват прокси или VPN, а не ключ.
+  echo   Эта настройка касается службы; Firefox ходит в Notion своим путём.
 )
-node src\index.mjs
+node %NODE_EXTRA_FLAGS% src\index.mjs
 
 rem ─── Если транспорт упал ─────────────────────────────────────────────────
 echo.
