@@ -24,6 +24,7 @@ const startServer = async () => {
     spreadsheetId: "fake",
     token: "fake",
     storeFactory: () => store,
+    version: "9.9.9",
     log: () => {},
   });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -42,6 +43,9 @@ test("сервер отвечает на здоровье и отдаёт сни
     assert.equal(shot.slots.length, 4);
     assert.equal(shot.mode, "manual");
     assert.equal(shot.counts.waiting, 1);
+    // Версия — из этого процесса: владелец обновляет файлы (GitHub Desktop),
+    // но службу перезапускает сам; по цифре в снимке видно, что бежит.
+    assert.equal(shot.version, "9.9.9", "снимок несёт версию бегущего процесса");
   } finally {
     await ctx.close();
   }
@@ -106,11 +110,14 @@ test("пульт открывается как страница и не зави
     const html = await page.text();
     assert.match(html, /Relay · WOTR/);
     assert.match(html, /app\.js/);
+    // Место под версию в шапке есть, даже пока снимок её не прислал.
+    assert.match(html, /id="version-line"/);
 
     const script = await fetch(`${ctx.base}/app.js`);
     assert.equal(script.status, 200);
     const js = await script.text();
     assert.match(js, /\/api\/snapshot/);
+    assert.match(js, /version-line/, "шапка печатает версию процесса");
   } finally {
     await ctx.close();
   }

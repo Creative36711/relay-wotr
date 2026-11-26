@@ -128,7 +128,7 @@ export function createTransportServer({
   // в Google. `bridge` читается на каждый запрос — адрес меняется на ходу,
   // когда владелец вставляет его в пульте. Проверка сети и диагностика
   // этим fetch не пользуются: им нужен именно прямой путь.
-  const notionDataFetch = createNotionFetch({ bridge: () => bridge, fetchImpl });
+  const notionDataFetch = createNotionFetch({ bridge: () => bridge, fetchImpl, log });
   if (!spreadsheetId && !demo) throw new Error("не задан spreadsheetId: службе негде хранить состояние");
 
   const tokenFor = async () => {
@@ -367,7 +367,11 @@ export function createTransportServer({
       }
 
       if (url.pathname === "/api/snapshot" && request.method === "GET") {
-        return send(response, 200, await service.snapshot());
+        // version — из этого процесса, а не из книги: владелец обновляет
+        // файлы (GitHub Desktop), но службу перезапускает сам, и без цифры
+        // в шапке нельзя отличить свежую сборку от бегущей старой.
+        const shot = await service.snapshot();
+        return send(response, 200, { ...shot, version });
       }
 
       if (url.pathname === "/api/incident" && request.method === "POST") {

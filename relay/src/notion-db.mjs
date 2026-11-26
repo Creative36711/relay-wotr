@@ -586,10 +586,17 @@ export function createNotionFetch({
   bridge = null,
   fetchImpl = globalThis.fetch,
   timeoutMs = 20000,
+  log = () => {},
 } = {}) {
   const conf = () => (typeof bridge === "function" ? bridge() : bridge) || {};
   return async function notionDataFetch(target, options = {}) {
-    const direct = () => fetchImpl(target, options);
+    // Каждый откат печатается в консоль службы: иначе «мост не ответил» и
+    // «Notion не ответил» на экране владельца выглядят одинаково, а причина
+    // (кто именно молчал) видна только здесь.
+    const direct = (why) => {
+      if (why) log(`Notion: мост не ответил (${why}); ${options.method || "GET"} иду напрямую`);
+      return fetchImpl(target, options);
+    };
     const { url = "", key = "" } = conf();
     const token = String(options.headers?.Authorization || "").replace(/^Bearer\s+/i, "");
     // Без адреса и без токена мосту делать нечего: токен — только рабочие
@@ -621,11 +628,11 @@ export function createNotionFetch({
         signal: options.signal,
         redirect: "follow",
       });
-      if (!response.ok) return direct();
+      if (!response.ok) return direct(`HTTP ${response.status}`);
       const text = await response.text();
       data = text ? JSON.parse(text) : null;
-    } catch {
-      return direct();
+    } catch (error) {
+      return direct(error.message || "сеть до моста");
     }
 
     // Ответ моста — всегда `{ok, status, text}`. Всё остальное (старый код
@@ -642,7 +649,7 @@ export function createNotionFetch({
       }
       // Прочие отказы моста (ключ, quota, ответ не JSON) не должны ломать
       // работу при живом прямом пути — уходим на него.
-      return direct();
+      return direct(why || "ответ не JSON");
     }
 
     const status = Number(data.status);
