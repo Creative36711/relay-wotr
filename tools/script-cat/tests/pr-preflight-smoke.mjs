@@ -143,6 +143,32 @@ test("preflight: имя файла из git status не теряет перву�
   }
 });
 
+test("preflight: кириллица в имени неотслеживаемого файла не выкидывает его из зоны", () => {
+  const dir = makeRepo();
+  try {
+    // Git закавычивает такой путь в `status --porcelain`: `?? "relay/Запустить.bat"`.
+    // Кавычки — часть вывода, а не имени. Пока их не снимали, `relay/**` его не
+    // покрывал, и проверка объявляла вне зоны файл, который в неё входит.
+    //
+    // Папка relay обязана быть уже известна git: у полностью неотслеживаемой
+    // папки `status` печатает `relay/`, и тогда проверка проходит случайно —
+    // именно поэтому баг дожил до сюда.
+    mkdirSync(join(dir, "relay"), { recursive: true });
+    writeFileSync(join(dir, "relay", "README.md"), "уже в репозитории\n");
+    gitIn(dir, ["add", "relay/README.md"]);
+    gitIn(dir, ["commit", "-q", "-m", "relay"]);
+    writeFileSync(join(dir, "relay", "Запустить транспорт.bat"), "@echo off\r\n");
+    const res = run(dir, ["--zone", "relay/**"]);
+    const out = `${res.stdout}${res.stderr}`;
+    assert.match(out, /ok\s+только своя зона/, `файл с кириллицей в зоне relay/**:\n${out}`);
+    // Код возврата здесь не проверяем: в этом временном репозитории падают
+    // другие правила (усечённый клон), и статус 1 — нормальный фон.
+    assert.doesNotMatch(out, /вне зоны: relay/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("preflight: файл вне зоны роли блокирует push", () => {
   const dir = makeRepo();
   try {
