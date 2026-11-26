@@ -1,0 +1,89 @@
+// Схема состояния. Один источник истины для листов Google Sheets и для
+// самопроверки: порядок колонок здесь = порядок в таблице.
+//
+// Почему схема в коде, а не «как получится». Состояние читают три разные
+// стороны: служба (relayd), вкладка-исполнитель и человек глазами. Если
+// колонки разъедутся, ошибка будет тихой: запишется в соседнюю колонку и
+// никто не заметит. Поэтому каждая запись проверяется на длину.
+
+export const SHEETS = {
+  state: { name: "Состояние", columns: ["Ключ", "Значение", "Обновлено", "Кем"] },
+  slots: {
+    name: "Слоты",
+    columns: ["Слот", "Контейнер", "Аккаунт", "Админский", "Статус", "Заметка"],
+  },
+  queue: {
+    name: "Очередь",
+    columns: [
+      "ID", "Создано", "Карточка", "Заголовок", "Роль", "Функция",
+      "Слот", "Вид", "Статус", "Взял слот", "Взято в", "Готово в", "Комментарий",
+    ],
+  },
+  runs: {
+    name: "Выдачи",
+    columns: [
+      "Run ID", "Карточка", "Заголовок", "Слот", "Аккаунт", "Роль", "Agent URL",
+      "Статус", "Выдан", "Последняя жизнь", "Ожидание", "Попытка", "Маркер", "Ответ",
+    ],
+  },
+  events: {
+    name: "События",
+    columns: [
+      "Время", "Слот", "Аккаунт", "Вкладка", "Вид", "Уровень",
+      "Текст", "Карточка", "Run ID", "Длительность мс", "Данные",
+    ],
+  },
+  settings: {
+    name: "Настройки",
+    columns: ["Ключ", "Значение", "Тип", "Группа", "По умолчанию", "Описание"],
+  },
+};
+
+/** Статусы очереди. `blocked` держит строку, пока не закрыта её причина. */
+export const QUEUE_STATES = ["waiting", "blocked", "leased", "done", "cancelled"];
+
+/** Статусы выдачи. `alive` — вкладка отчитывалась недавно. */
+export const RUN_STATES = ["issued", "alive", "submitted", "failed", "abandoned"];
+
+/**
+ * Административные функции. Их место — только административный слот:
+ * Координатор, Warden и Maintainer не делят квоту с исполнителями (D-004),
+ * и это правило остаётся, даже когда работа стала параллельной.
+ */
+export const ADMIN_FNS = ["Coordinator", "Warden", "Reviewer", "Maintainer", "Transport Maintainer"];
+
+/** Функции, которые никогда не уходят на рабочий слот. */
+export const ADMIN_ROLE_NAMES = ["Coordinator", "Warden", "Transport Maintainer"];
+
+export const isAdminFunction = (fn) => ADMIN_FNS.includes(String(fn || "").trim());
+export const isAdminRole = (name, fn) =>
+  ADMIN_ROLE_NAMES.includes(String(name || "").trim()) || isAdminFunction(fn);
+
+/**
+ * Приведение строки листа к объекту и обратно.
+ * Пустые ячейки остаются пустыми строками, а не `undefined`: Sheets не умеет
+ * хранить `undefined`, а `null` превращает в пустую ячейку сам.
+ */
+export function rowToObject(sheetKey, row) {
+  const { columns } = SHEETS[sheetKey];
+  const out = {};
+  for (let i = 0; i < columns.length; i += 1) out[columns[i]] = String(row?.[i] ?? "");
+  return out;
+}
+
+export function objectToRow(sheetKey, obj) {
+  const { columns } = SHEETS[sheetKey];
+  const row = columns.map((column) => {
+    const value = obj?.[column];
+    if (value === undefined || value === null) return "";
+    if (typeof value === "boolean") return value ? "да" : "нет";
+    return String(value);
+  });
+  // Лишние поля — это ошибка вызывающего, а не повод молча потерять данные.
+  const extra = Object.keys(obj || {}).filter((key) => !columns.includes(key));
+  if (extra.length) throw new Error(`в «${SHEETS[sheetKey].name}» нет колонок: ${extra.join(", ")}`);
+  return row;
+}
+
+export const truthy = (value) => /^(да|true|1|yes|y)$/i.test(String(value ?? "").trim());
+export const falsyOrEmpty = (value) => !String(value ?? "").trim();

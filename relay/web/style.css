@@ -1,0 +1,178 @@
+/* Пульт: тёмный, плотный, без украшений.
+   Принцип один — на экране должно быть видно, что происходит сейчас, без
+   прокрутки в поисках «а почему стоит». */
+:root {
+  --bg: #14161a;
+  --panel: #1b1e24;
+  --line: #2a2f38;
+  --text: #e6e8ec;
+  --muted: #8b93a1;
+  --accent: #5aa9e6;
+  --ok: #4fbf7b;
+  --warn: #e0b341;
+  --bad: #e06c6c;
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 14px/1.5 -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+.bar {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 16px;
+  background: #101216;
+  border-bottom: 1px solid var(--line);
+  flex-wrap: wrap;
+}
+
+.brand { display: flex; align-items: center; gap: 8px; }
+.actions { display: flex; gap: 8px; }
+
+button {
+  padding: 6px 12px;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  background: #232830;
+  color: var(--text);
+  cursor: pointer;
+  font-size: 13px;
+}
+button:hover { border-color: var(--accent); }
+button.primary { background: var(--accent); border-color: var(--accent); color: #0b1017; font-weight: 600; }
+button.ghost { background: transparent; }
+button:disabled { opacity: .45; cursor: default; }
+
+input, select {
+  padding: 6px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  background: #101216;
+  color: var(--text);
+  font-size: 13px;
+}
+input { min-width: 160px; }
+
+.muted { color: var(--muted); }
+.hidden { display: none !important; }
+
+.dot {
+  width: 9px; height: 9px; border-radius: 50%;
+  background: var(--muted); display: inline-block;
+}
+.dot.ok { background: var(--ok); }
+.dot.bad { background: var(--bad); }
+
+.banner {
+  margin: 12px 16px 0;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--bad);
+  background: #2a1b1d;
+  white-space: pre-wrap;
+}
+
+main {
+  display: grid;
+  gap: 14px;
+  padding: 14px 16px 40px;
+  grid-template-columns: repeat(auto-fit, minmax(420px, 1fr));
+  align-items: start;
+}
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 12px 14px;
+}
+.panel h2 { font-size: 14px; margin: 0 0 8px; font-weight: 600; }
+.panel p { margin: 0 0 10px; }
+
+.row { display: flex; align-items: center; gap: 8px; }
+.row.wrap { flex-wrap: wrap; }
+.space { justify-content: space-between; }
+
+.slots { display: grid; gap: 8px; }
+.slot {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: #171a20;
+}
+.slot.busy { border-color: var(--accent); }
+.slot.admin { border-left: 3px solid var(--warn); }
+.slot .name { font-weight: 600; }
+.slot .meta { color: var(--muted); font-size: 12px; }
+.slot .run { font-family: var(--mono); font-size: 12px; color: var(--accent); }
+
+.list { display: grid; gap: 6px; margin-top: 10px; }
+.item {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 7px 9px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: #171a20;
+  font-size: 13px;
+}
+.item .tag { font-family: var(--mono); font-size: 11px; color: var(--muted); }
+
+.events {
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+  max-height: 420px;
+  overflow: auto;
+  font-family: var(--mono);
+  font-size: 12px;
+}
+.events li {
+  padding: 3px 0;
+  border-bottom: 1px dashed #22262e;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.events li.warn { color: var(--warn); }
+.events li.error { color: var(--bad); }
+.events li.ui { color: var(--ok); }
+
+.steps { display: grid; gap: 6px; margin-bottom: 10px; }
+.step { display: flex; gap: 8px; align-items: baseline; font-size: 13px; }
+.step .mark { width: 14px; }
+.step .key { font-family: var(--mono); font-size: 12px; color: var(--muted); }
+.step.bad .mark { color: var(--bad); }
+.step.ok .mark { color: var(--ok); }
+
+.counter { font-size: 12px; color: var(--muted); font-weight: 400; }
+
+dialog {
+  max-width: 900px;
+  width: 92vw;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+  color: var(--text);
+  padding: 14px;
+}
+dialog::backdrop { background: rgba(0, 0, 0, .6); }
+dialog pre {
+  max-height: 70vh;
+  overflow: auto;
+  white-space: pre-wrap;
+  font-family: var(--mono);
+  font-size: 12px;
+  margin: 10px 0 0;
+}

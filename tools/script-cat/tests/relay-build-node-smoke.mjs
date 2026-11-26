@@ -33,6 +33,7 @@ const bundle = readFileSync(join(scDir, 'relay.user.js'), 'utf8');
   assert.equal(ALLOWED_PATHS.includes('tools/script-cat/'), true, 'зона правок названа явно');
   assert.equal(ALLOWED_PATHS.includes('docs/'), true, 'process docs входят в transport release');
   assert.equal(ALLOWED_PATHS.includes('AGENTS.md'), true, 'корневой агентный контракт входит в transport release');
+  assert.equal(ALLOWED_PATHS.includes('relay/'), true, 'служба транспорта — часть того же релиза (D-009)');
   assert.equal(ALLOWED_PATHS.includes('tools/modeling/'), false, 'product tooling не маскируется под transport release');
 }
 

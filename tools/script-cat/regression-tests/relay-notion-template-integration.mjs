@@ -27,7 +27,9 @@ assert.ok(db.missions.properties['ТЗ SHA'].rich_text);
 assert.ok(db.missions.properties['Координатор'].rich_text);
 assert.ok(db.requests.properties.Dependency.rich_text);
 assert.ok(db.requests.properties.Repository.rich_text, 'карточки нового проекта явно указывают целевой repo');
-assert.ok(db.requests.properties['Проверка'].rich_text);
+// «Проверка» удалена из шаблона: поле не читает и не пишет ни один слой
+// (ни вкладка, ни служба), а пустой столбец в живой базе вводил в заблуждение.
+assert.equal(db.requests.properties['Проверка'], undefined, 'мёртвого поля нет в шаблоне');
 for (const option of ['Ждёт', 'Отключена']) {
   assert.ok(db.roles.properties['Статус'].select.options.some(x => x.name === option));
 }

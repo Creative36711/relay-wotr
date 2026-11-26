@@ -281,3 +281,54 @@ test("preflight: кириллица в пути не ломает проверк
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+// Гейт падал на PR со службой, потому что список зоны был скопирован строкой в
+// workflow и в нём недоставало `relay/**`. Копий было две, и устаревала та,
+// которую никто не читал локально. Теперь зона объявлена один раз в самом
+// preflight: пустой `--zone` — это зона роли, а не «без зоны».
+test("preflight: без --zone проверяет зону роли, а не пропускает проверку", () => {
+  const dir = makeRepo();
+  try {
+    gitIn(dir, ["checkout", "-q", "-b", "feat"]);
+    // `relay/` входит в зону роли, `google_drive/` — нет.
+    mkdirSync(join(dir, "relay", "src"), { recursive: true });
+    writeFileSync(join(dir, "relay", "src", "service.mjs"), "export const x = 1;\n");
+    mkdirSync(join(dir, "google_drive"), { recursive: true });
+    writeFileSync(join(dir, "google_drive", "raw.bin"), "x");
+    gitIn(dir, ["add", "-A"]);
+    gitIn(dir, ["commit", "-q", "-m", "relay + чужой каталог"]);
+
+    const out = `${run(dir).stdout}${run(dir).stderr}`;
+    assert.match(out, /только своя зона \(.*relay\/\*\*/, `зона роли включает relay/**:\n${out}`);
+    assert.match(out, /вне зоны: google_drive\/raw\.bin/, "чужой каталог по-прежнему блокер");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// В CI проверяется коммит слияния, и `git diff origin/main` показывает чужие
+// файлы с обратным знаком: main успел уйти вперёд, а ветка отстала на 30 файлов.
+// Сравниваться надо с точкой ветвления, иначе зона объявляет чужим всё слитое.
+test("preflight: в PR зона считается от merge-base, а отставание от main не блокер", () => {
+  const dir = makeRepo();
+  try {
+    gitIn(dir, ["checkout", "-q", "-b", "feat"]);
+    writeFileSync(join(dir, "docs", "feat.md"), "x");
+    gitIn(dir, ["add", "-A"]);
+    gitIn(dir, ["commit", "-q", "-m", "наша правка"]);
+    // origin/main уходит вперёд в чужом каталоге — так выглядит любой PR к живому main.
+    gitIn(dir, ["checkout", "-q", "main"]);
+    mkdirSync(join(dir, "relay", "src"), { recursive: true });
+    writeFileSync(join(dir, "relay", "src", "later.mjs"), "x");
+    gitIn(dir, ["add", "-A"]);
+    gitIn(dir, ["commit", "-q", "-m", "чужой коммит в main"]);
+    gitIn(dir, ["update-ref", "refs/remotes/origin/main", "HEAD"]);
+    gitIn(dir, ["checkout", "-q", "feat"]);
+
+    const out = `${run(dir, [], { GITHUB_BASE_REF: "main" }).stdout}`;
+    assert.match(out, /ok\s+только своя зона/, `чужой файл main не считается нашим:\n${out}`);
+    assert.match(out, /ok\s+ветка не отстала/, "в PR отставание от main не блокер");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
