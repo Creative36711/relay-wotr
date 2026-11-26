@@ -968,7 +968,10 @@ export function createService({
     let searchError = "";
     if (notionSearch) {
       try {
-        databases = await notionSearch();
+        // Токен — тем, что сейчас в памяти: мастер мог прийти сразу после
+        // ввода токена в пульте, и искать по пустому окружению значило бы
+        // вернуть «база не видна» при принятом токене.
+        databases = await notionSearch({ token: notionTokenNow() });
       } catch (error) {
         searchError = error.message;
       }

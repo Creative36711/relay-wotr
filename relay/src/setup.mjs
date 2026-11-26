@@ -58,9 +58,15 @@ export function pickDatabase(results, title, { demo = false, searchable = true }
     };
   }
   if (hits.length > 1) {
+    // Одноимённые базы — обычное дело (главная, старая копия, чужой цикл).
+    // Без имён человек не понимает, какую удалить, а молчаливый выбор первой
+    // — это неделя работы в чужой копии. Показываем описание каждой и
+    // запасной путь: вписать id вручную в лист «Настройки».
+    const variants = hits.map((item) => (item.description ? `«${item.title}» (${item.description})` : `«${item.title}» (${item.id})`));
     return {
       ok: false,
-      why: `баз с названием «${title}» несколько (${hits.length}): оставьте одну, иначе транспорт не поймёт, куда писать`,
+      why: `баз с названием «${title}» несколько (${hits.length}): ${variants.join(" | ")}. ` +
+        "Переименуйте или архивируйте лишние, либо впишите id нужной в лист «Настройки» ключом notion.rolesDb",
       hits,
     };
   }

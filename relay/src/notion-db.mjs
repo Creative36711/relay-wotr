@@ -57,6 +57,12 @@ export function normalizeSearchResults(payload) {
       const title = Array.isArray(item?.title)
         ? item.title.map((part) => part?.plain_text ?? part?.text?.content ?? "").join("")
         : "";
+      // Описание базы — способ отличить одноимённые «Роли» друг от друга:
+      // мастер показывает его в отказе про несколько совпадений, и человек
+      // видит, какая из копий его.
+      const description = Array.isArray(item?.description)
+        ? item.description.map((part) => part?.plain_text ?? part?.text?.content ?? "").join("")
+        : "";
       const sources = Array.isArray(item?.data_sources) ? item.data_sources : [];
       return {
         id: item?.id || "",
@@ -64,6 +70,7 @@ export function normalizeSearchResults(payload) {
         object: item?.object || "",
         dataSourceId: sources[0]?.id || (item?.object === "data_source" ? item.id : ""),
         dataSourceCount: sources.length,
+        description: description.trim().slice(0, 160),
       };
     })
     .filter((item) => item.title);
