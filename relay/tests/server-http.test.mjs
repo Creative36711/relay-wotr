@@ -5,6 +5,9 @@
 
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync, mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { createTransportServer } from "../src/server.mjs";
 import { createFakeStore, settingsRows, slotRows, queueRow, knownAgentRows } from "./fake-sheets.mjs";
 
@@ -122,6 +125,66 @@ test("неизвестный путь отвечает словами, а не �
     assert.match(body.why, /неизвестный путь/);
   } finally {
     await ctx.close();
+  }
+});
+
+test("адрес и ключ из формы: файл записан, демо снято без перезапуска", async () => {
+  // Живая история владельца: служба поднята в демо, книга есть, но адрес
+  // вводят в браузере. После ввода пульт обязан показывать книгу, а не демо,
+  // и файл — появиться сам.
+  const dir = mkdtempSync(join(tmpdir(), "relay-bridge-"));
+  const bridgeFile = join(dir, "bridge.txt");
+  const book = createFakeStore({ slots: slotRows(), settings: settingsRows(), queue: [], runs: [], events: [], agents: knownAgentRows() });
+  const { server } = createTransportServer({
+    spreadsheetId: "bridge",
+    demo: true,
+    bridgeFile,
+    bridgeStoreFactory: () => book,
+    log: () => {},
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  try {
+    const before = await (await fetch(`${base}/api/snapshot`)).json();
+    assert.equal(before.demo, true, "до ввода адреса — демо");
+
+    const saved = await (await fetch(`${base}/api/bridge-config`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ url: "https://script.google.com/macros/s/AKfycbx000/exec", key: "2eJGAzY7Wz3eokdFHtZnBCFMEiLUNbozsFaFkVWd" }),
+    })).json();
+    assert.equal(saved.ok, true, saved.why);
+    assert.match(readFileSync(bridgeFile, "utf8"), /^https:\/\/script\.google\.com\/macros\/s\/AKfycbx000\/exec=2eJGAz/);
+
+    const after = await (await fetch(`${base}/api/snapshot`)).json();
+    assert.equal(after.demo, false, "демо снято без перезапуска");
+    assert.equal(after.slots.length, 4, "слоты читаются из книги");
+
+    const health = await (await fetch(`${base}/api/health`)).json();
+    assert.equal(health.demo, false, "health не врёт про демо");
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test("обрезанный ключ не пишется в файл", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "relay-bridge-"));
+  const bridgeFile = join(dir, "bridge.txt");
+  const { server } = createTransportServer({ spreadsheetId: "bridge", demo: true, bridgeFile, log: () => {} });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  try {
+    const bad = await (await fetch(`${base}/api/bridge-config`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ url: "https://script.google.com/macros/s/AKfycbx000/exec", key: "коротко" }),
+    })).json();
+    assert.equal(bad.ok, false);
+    assert.match(bad.why, /короче 20/);
+    assert.throws(() => readFileSync(bridgeFile, "utf8"), /ENOENT/, "файл не создан");
+    assert.equal((await (await fetch(`${base}/api/snapshot`)).json()).demo, true);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
   }
 });
 

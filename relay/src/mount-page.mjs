@@ -1,9 +1,18 @@
-// Страница установки моста: адрес, куда вставлять код, и сам код.
+// Страница установки моста: код, куда его вставлять, и два поля ввода.
 //
 // Зачем в продукте. «Скопируйте файл relay/apps-script/Code.gs» — это
 // инструкция для того, у кого есть файлы под рукой. Владелец открывает книгу в
 // браузере, и лишний шаг «найдите файл в репозитории» ничего не даёт: тот же
 // текст можно отдать прямо со службы, одной кнопкой.
+//
+// Второе назначение — приём адреса и ключа. Раньше они писались в файл
+// `relay/bridge.txt` руками, и это самый неочевидный шаг: формат `адрес=ключ`,
+// какое расширение, где лежит. Теперь достаточно вставить два значения в поля
+// на этой странице: служба сама запишет `bridge.txt` рядом с собой и
+// перечитает настройки без перезапуска.
+//
+// Их можно вставить и в окно запуска (Запустить транспорт.bat) — оно спросит
+// то же самое. Это для тех, кто ещё не открывал пульт.
 //
 // Страница не хранит секретов: код одинаков для всех, ключ владелец вписывает
 // в него сам. Поэтому она доступна без пароля — как и пульт.
@@ -27,7 +36,7 @@ const escape = (text) =>
  * `existing` — уже настроенный адрес моста, если он есть: тогда страница не
  * предлагает ставить заново, а проверяет и говорит, что происходит.
  */
-export function mountPage({ existing = "", version = "" } = {}) {
+export function mountPage({ existing = "", version = "", file = "", canSave = false } = {}) {
   const code = bridgeCode();
   const configured = Boolean(existing);
   return `<!doctype html>
@@ -59,7 +68,29 @@ export function mountPage({ existing = "", version = "" } = {}) {
        <p class="muted">Служба запущена в демо-режиме: пульт работает, но ничего не помнит.</p>`}
 </div>
 
-<h2>Куда вставлять — и куда НЕ вставлять</h2>
+<h2>Вставьте адрес и ключ</h2>
+<div class="card">
+  ${canSave ? `
+  <p class="muted">Развернули мост — Google показал две вещи: <b>адрес веб-приложения</b> (оканчивается на
+    <code>/exec</code>) и <b>идентификатор развёртывания</b>. Вставьте адрес в первое поле и тот же ключ,
+    который вписали в <code>Code.gs</code>, — во второе. Нажмите кнопку: служба сама запишет настройку
+    и сразу проверит связь. Перезапускать ничего не нужно.</p>
+  <p><label for="url">Адрес веб-приложения</label><br />
+     <input id="url" type="url" spellcheck="false" autocomplete="off"
+            placeholder="https://script.google.com/macros/s/…/exec" value="${escape(existing)}" /></p>
+  <p><label for="key">Ключ моста (тот, что внутри Code.gs)</label><br />
+     <input id="key" type="password" spellcheck="false" autocomplete="off"
+            placeholder="40 символов" /></p>
+  <p><button id="save">Сохранить и проверить</button>
+     <span id="save-note" class="muted"></span></p>
+  <p class="muted">Идентификатор развёртывания в поля не нужен: он служит для обновления развёртывания,
+     а не для доступа. Адрес уже содержит его внутри.</p>`
+  : `<p class="warn">Записать настройку служба не может: папка только для чтения.
+       Тогда допишите вручную в <code>${escape(file || "relay/bridge.txt")}</code> строкой <code>адрес=ключ</code>
+       и перезапустите <code>Запустить транспорт.bat</code>.</p>`}
+</div>
+
+<h2>Куда вставлять код — и куда НЕ вставлять</h2>
 <div class="card">
   <p><span class="bad">Не сюда:</span> проект <b>Gateway</b> из папки Arena. Он живёт отдельно,
      умеет только файлы (логи, payloads) и книгу не читает. Если вставить мост туда,
@@ -79,8 +110,8 @@ export function mountPage({ existing = "", version = "" } = {}) {
     <li><b>Развернуть → Новое развёртывание → тип «Веб-приложение»</b>.
         «Запуск от имени» — <b>Я</b>, «У кого есть доступ» — <b>Все</b>.
         Скопируйте адрес вида <code>https://script.google.com/macros/s/…/exec</code>.</li>
-    <li>Сохраните адрес и ключ в файл <code>relay/bridge.txt</code> одной строкой:
-        <code>адрес=ключ</code>. Перезапустите <code>Запустить транспорт.bat</code>.</li>
+    <li>Вернитесь на эту страницу и вставьте адрес и ключ в поля выше — служба сохранит их сама.
+        Запускать батник заново не нужно.</li>
   </ol>
   <p class="muted">Почему «Все», а не «Только я»: с «Только я» транспорт получил бы страницу входа
      вместо данных. Замок — это ключ внутри скрипта; без него мост ничего не отдаёт.</p>
@@ -108,6 +139,33 @@ export function mountPage({ existing = "", version = "" } = {}) {
       say("Выделено — нажмите Ctrl+C, если копирование не сработало.", "warn");
     }
   };
+  // Кнопка сохранения есть только там, где файл вообще можно записать
+  // (см. canSave выше): без неё поля вели бы в никуда.
+  const saveButton = document.getElementById("save");
+  if (saveButton) saveButton.onclick = async () => {
+    const url = document.getElementById("url").value.trim();
+    const key = document.getElementById("key").value.trim();
+    const out = document.getElementById("save-note");
+    const say = (text, cls = "muted") => { out.className = cls; out.textContent = text; };
+    if (!/^https:\\/\\/[^\\s]+\\/exec\\/?$/.test(url)) {
+      say("Адрес должен начинаться с https:// и оканчиваться на /exec — скопируйте его из окна развёртывания целиком.", "bad");
+      return;
+    }
+    if (key.length < 20) { say("Ключ короче 20 символов: проверьте, что вставили его целиком.", "bad"); return; }
+    say("Сохраняю…");
+    const response = await fetch("/api/bridge-config", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ url, key }),
+    });
+    const data = await response.json();
+    if (!data.ok) {
+      say(data.why || "Не получилось сохранить.", "bad");
+      return;
+    }
+    say(data.why, "ok");
+  };
+
   document.getElementById("check").onclick = async () => {
     say("Проверяю…");
     try {
