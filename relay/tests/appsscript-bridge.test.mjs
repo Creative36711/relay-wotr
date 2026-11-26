@@ -245,7 +245,7 @@ test("страница установки: скрипт разбирается �
 
 test("код для книги: те же действия, ключ обязателен, данных без ключа нет", () => {
   const code = readFileSync(new URL("../apps-script/Code.gs", import.meta.url), "utf8");
-  for (const action of ["read", "write", "append", "updateRange", "meta", "ensureSheet"]) {
+  for (const action of ["read", "write", "append", "updateRange", "meta", "ensureSheet", "notion"]) {
     assert.ok(code.includes(`'${action}'`), `мост умеет действие ${action}`);
   }
   assert.match(code, /body\.key \|\| ''\) !== String\(SECRET\)/, "ключ проверяется до любого действия");
@@ -254,4 +254,120 @@ test("код для книги: те же действия, ключ обяза�
   const getBlock = code.slice(code.indexOf("function doGet()"));
   assert.doesNotMatch(getBlock, /readValues_|getDataRange/, "GET не отдаёт содержимое книги");
   assert.match(code, /SpreadsheetApp\.getActiveSpreadsheet/, "скрипт живёт внутри книги, а не ищет её по ID");
+});
+
+test("действие «notion»: путь ограничен /v1/, токен обязателен, хост зашит в скрипт", () => {
+  const code = readFileSync(new URL("../apps-script/Code.gs", import.meta.url), "utf8");
+  const block = code.slice(code.indexOf("case 'notion':"), code.indexOf("default:", code.indexOf("case 'notion':")));
+  assert.ok(block, "блок notion на месте");
+  assert.match(block, /\/\^\\\/v1\\\/\//, "путь проверяется на /v1/");
+  assert.match(block, /нет токена Notion/, "без токена запроса нет");
+  assert.match(block, /api\.notion\.com/, "хост Notion зашит в скрипт, а не берётся из запроса");
+  assert.match(block, /muteHttpExceptions: true/, "статус Notion доходит как есть");
+  assert.match(block, /followRedirects: false/, "редирект не скрывается за следованием");
+  // Область видимости: ключ проверяется до switch, значит и до notion.
+  assert.ok(code.indexOf("String(body.key || '') !== String(SECRET)") < code.indexOf("case 'notion':"),
+    "ключ проверяется до действия notion");
+});
+
+test("Notion через мост: рабочий запрос идёт по адресу моста, а не напрямую", async () => {
+  const { createNotionFetch, searchDatabases } = await import("../src/notion-db.mjs");
+  const calls = [];
+  const fetchImpl = async (url, init = {}) => {
+    calls.push({ url, init });
+    if (String(url).includes("bridge")) {
+      const body = JSON.parse(init.body);
+      assert.equal(body.action, "notion");
+      assert.equal(body.path, "/v1/search");
+      assert.equal(body.token, "ntn_x");
+      assert.equal(body.method, "POST");
+      return {
+        ok: true, status: 200,
+        text: async () => JSON.stringify({ ok: true, status: 200, text: JSON.stringify({ results: [] }) }),
+      };
+    }
+    throw new Error("прямой запрос не должен состояться: мост ответил");
+  };
+  const notionFetch = createNotionFetch({ bridge: { url: "https://bridge/exec", key: "k" }, fetchImpl });
+  const found = await searchDatabases({ token: "ntn_x", fetchImpl: notionFetch });
+  assert.deepEqual(found, [], "пустой поиск — пустой список, мост ответил данными");
+  assert.equal(calls.length, 1, "ровно один запрос — к мосту");
+  assert.ok(calls[0].url.includes("bridge"));
+});
+
+test("Notion через мост: мост недоступен — откат на прямой путь", async () => {
+  const { createNotionFetch } = await import("../src/notion-db.mjs");
+  const calls = [];
+  const fetchImpl = async (url) => {
+    calls.push(String(url));
+    if (String(url).includes("bridge")) throw new Error("fetch failed");
+    return {
+      ok: true, status: 200, url: "https://api.notion.com/v1/users/me",
+      headers: { entries: () => [] },
+      text: async () => '{"object":"user"}',
+    };
+  };
+  const notionFetch = createNotionFetch({ bridge: { url: "https://bridge/exec", key: "k" }, fetchImpl });
+  const response = await notionFetch("https://api.notion.com/v1/users/me", {
+    headers: { Authorization: "Bearer ntn_x" },
+  });
+  assert.equal(response.status, 200);
+  assert.ok(calls.includes("https://bridge/exec"), "мост пробовался первым");
+  assert.ok(calls.includes("https://api.notion.com/v1/users/me"), "прямой путь остался запасным");
+});
+
+test("Notion через мост: старый код в книге называет причину, а не прячет её в сетевой ошибке", async () => {
+  const { createNotionFetch, searchDatabases } = await import("../src/notion-db.mjs");
+  const fetchImpl = async (url) => {
+    if (String(url).includes("bridge")) {
+      // Так отвечает Code.gs без действия «notion» — до обновления книги.
+      return { ok: true, status: 200, text: async () => JSON.stringify({ ok: false, why: "неизвестное действие «notion»" }) };
+    }
+    throw new Error("fetch failed");
+  };
+  const notionFetch = createNotionFetch({ bridge: { url: "https://bridge/exec", key: "k" }, fetchImpl });
+  await assert.rejects(() => searchDatabases({ token: "ntn_x", fetchImpl: notionFetch }), (error) => {
+    assert.match(error.message, /устарел/);
+    assert.match(error.message, /Code\.gs/);
+    return true;
+  });
+});
+
+test("Notion через мост: отказ Notion (401) доходит как есть, без отката на прямой путь", async () => {
+  const { createNotionFetch, searchDatabases } = await import("../src/notion-db.mjs");
+  const calls = [];
+  const fetchImpl = async (url) => {
+    calls.push(String(url));
+    if (String(url).includes("bridge")) {
+      return { ok: true, status: 200, text: async () => JSON.stringify({ ok: true, status: 401, text: '{"object":"error","message":"Could not authenticate"}' }) };
+    }
+    throw new Error("прямой путь не нужен: Notion уже ответил через мост");
+  };
+  const notionFetch = createNotionFetch({ bridge: { url: "https://bridge/exec", key: "k" }, fetchImpl });
+  await assert.rejects(() => searchDatabases({ token: "ntn_bad", fetchImpl: notionFetch }), (error) => {
+    assert.match(error.message, /Could not authenticate/);
+    return true;
+  });
+  assert.equal(calls.filter((url) => url.includes("api.notion.com")).length, 0, "прямой запрос не делался");
+});
+
+test("Notion через мост: моста нет или нет токена — обычный прямой fetch", async () => {
+  const { createNotionFetch } = await import("../src/notion-db.mjs");
+  const direct = async (url) => ({
+    ok: true, status: 200, url: String(url),
+    headers: { entries: () => [] },
+    text: async () => "{}",
+  });
+
+  const withoutBridge = createNotionFetch({ bridge: null, fetchImpl: direct });
+  const a = await withoutBridge("https://api.notion.com/v1/users/me", { headers: { Authorization: "Bearer ntn_x" } });
+  assert.equal(a.status, 200);
+
+  // Проверка сети не носит токена — она должна идти напрямую и без моста.
+  const calls = [];
+  const tracked = async (url) => { calls.push(String(url)); return direct(url); };
+  const withBridge = createNotionFetch({ bridge: { url: "https://bridge/exec", key: "k" }, fetchImpl: tracked });
+  const b = await withBridge("https://api.notion.com/v1/users/me", { headers: { "Notion-Version": "2022-06-28" } });
+  assert.equal(b.status, 200);
+  assert.deepEqual(calls, ["https://api.notion.com/v1/users/me"], "без токена мост не спрашивается");
 });

@@ -134,6 +134,45 @@ function doPost(e) {
         }
         return sendJson_({ ok: true, created: true, name: body.sheet });
       }
+      // Проход к api.notion.com мимо локальной сети. Служба на машине владельца
+      // упирается в VPN или фильтр по домену (TCP есть, TLS рвётся), а отсюда,
+      // из Google, запрос идёт по чистому каналу — так же, как раньше шёл из
+      // браузера через ScriptCat. Токен приходит на каждый запрос и нигде не
+      // хранится: мост, адрес и ключ — владельца. Путь ограничен /v1/, хост
+      // зашит здесь же — произвольный адрес скрипт не отдаёт.
+      case 'notion': {
+        var notionPath = String(body.path || '');
+        if (!/^\/v1\//.test(notionPath)) return sendJson_({ ok: false, why: 'путь должен начинаться с /v1/' });
+        var notionToken = String(body.token || '');
+        if (!notionToken) return sendJson_({ ok: false, why: 'нет токена Notion' });
+        var notionMethod = String(body.method || 'GET').toUpperCase();
+        if (['GET', 'POST', 'PATCH', 'DELETE'].indexOf(notionMethod) < 0) {
+          return sendJson_({ ok: false, why: 'метод ' + notionMethod + ' не поддерживается' });
+        }
+        var notionOptions = {
+          method: notionMethod,
+          headers: {
+            'Authorization': 'Bearer ' + notionToken,
+            'Notion-Version': String(body.notionVersion || '2022-06-28')
+          },
+          // Свой ответ, а не страница входа: статус Notion доходит как есть.
+          muteHttpExceptions: true,
+          // Редирект настоящий Notion на /v1/ не отдаёт; свой — это подмена,
+          // и она должна быть видна по коду, а не скрыта за следованием.
+          followRedirects: false
+        };
+        var notionPayload = body.payload;
+        if (notionPayload !== undefined && notionPayload !== null && notionPayload !== '') {
+          notionOptions.headers['Content-Type'] = 'application/json';
+          notionOptions.payload = typeof notionPayload === 'string' ? notionPayload : JSON.stringify(notionPayload);
+        }
+        var notionResponse = UrlFetchApp.fetch('https://api.notion.com' + notionPath, notionOptions);
+        return sendJson_({
+          ok: true,
+          status: notionResponse.getResponseCode(),
+          text: notionResponse.getContentText()
+        });
+      }
       default:
         return sendJson_({ ok: false, why: 'неизвестное действие «' + body.action + '»' });
     }
