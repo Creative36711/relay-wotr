@@ -164,7 +164,19 @@ export function planBatch({
     if (!plan.ok) break;
     plans.push(plan);
     takenQueue = takenQueue.map((item) => (norm(item["ID"]) === norm(plan.item["ID"]) ? { ...item, "Статус": QUEUE.LEASED } : item));
-    takenRuns = [...takenRuns, { "Слот": plan.slot.slotId, "Статус": "issued" }];
+    // Перенос в «занятые» обязан нести роль, карточку и аккаунт, и не только
+    // слот. Раньше здесь была одна пара полей — и проверка пределов внутри
+    // пакета не видела ни роли, ни карточки: три карточки одной роли уезжали в
+    // три контейнера, хотя `planOne` по отдельности каждую из них запрещал.
+    // Ошибка была невидимой, потому что вне пакета всё работало.
+    takenRuns = [...takenRuns, {
+      "Run ID": `plan-${i}`,
+      "Слот": plan.slot.slotId,
+      "Аккаунт": plan.slot.account,
+      "Роль": plan.item["Роль"],
+      "Карточка": plan.item["Карточка"],
+      "Статус": "issued",
+    }];
   }
   return { plans, why: decision.why, requested: decision.count };
 }

@@ -7,7 +7,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createService } from "../src/service.mjs";
-import { createFakeStore, settingsRows, slotRows, queueRow, runRow, eventRow } from "./fake-sheets.mjs";
+import { createFakeStore, settingsRows, slotRows, queueRow, runRow, eventRow, agentRow, knownAgentRows } from "./fake-sheets.mjs";
 
 const makeService = (initial = {}, { nowMs } = {}) => {
   const store = createFakeStore({
@@ -16,6 +16,9 @@ const makeService = (initial = {}, { nowMs } = {}) => {
     queue: [],
     runs: [],
     events: [],
+    // Агенты уже созданы: эти тесты про выдачу и учёт, а не про ленивое
+    // создание. Цикл «сначала создать агента» проверяется отдельно ниже.
+    agents: knownAgentRows(),
     ...initial,
   });
   let clock = nowMs || Date.now();

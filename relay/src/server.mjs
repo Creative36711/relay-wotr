@@ -133,7 +133,9 @@ export function createTransportServer({
     ? () => searchDatabases({ token: notionToken, fetchImpl, query: "" })
     : null;
 
-  const service = createService({ store, now, log, notionSearch });
+  // Токен передаётся явно, а не читается службой из окружения: иначе тесты и
+  // вложенные вызовы незаметно ходили бы в настоящий Notion.
+  const service = createService({ store, now, log, notionSearch, notionToken });
 
   const server = createServer(async (request, response) => {
     allowOrigin(response);
