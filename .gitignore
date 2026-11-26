@@ -6,3 +6,6 @@ relay/node_modules/
 relay/.env
 *.log
 .DS_Store
+
+# Секреты локальной установки: в репозиторий не идут.
+notion-token.txt

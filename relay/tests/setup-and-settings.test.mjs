@@ -188,8 +188,10 @@ test("токен Notion из пульта: проверяется сразу и 
   // принимается в пульте, проверяется тем же поиском и начинает действовать
   // без перезапуска службы.
   const calls = [];
+  const saved = [];
   const service = createService({
     store: createFakeStore({ slots: slotRows(), settings: settingsRows() }),
+    saveNotionToken: (value) => { saved.push(value); return { ok: true, path: "/tmp/notion-token.txt" }; },
     notionFetch: async (url, init) => {
       calls.push({ url, auth: init.headers.Authorization });
       return {
@@ -211,6 +213,9 @@ test("токен Notion из пульта: проверяется сразу и 
   assert.match(ok.why, /Видно баз: 1/);
   assert.equal(calls[0].auth, "Bearer ntn_1234567890abcdef");
   assert.equal(service.memory.notionToken, "ntn_1234567890abcdef");
+  // Принятый токен уходит в локальное сохранение — перезапуск без ввода.
+  assert.deepEqual(saved, ["ntn_1234567890abcdef"]);
+  assert.match(ok.why, /сохранён локально/);
 
   // Токен действует: «Найти и применить» видит базы без окружения.
   const plan = await service.setup({});
