@@ -17,6 +17,8 @@ import { readFile } from "node:fs/promises";
 import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createSheetsStore } from "./store.mjs";
+import { mountPage } from "./mount-page.mjs";
+import { createAppsScriptStore } from "./appsscript-bridge.mjs";
 import { createService } from "./service.mjs";
 import { readiness } from "./setup.mjs";
 import { searchDatabases } from "./notion-db.mjs";
@@ -93,6 +95,9 @@ export function createTransportServer({
   storeFactory = createSheetsStore,
   NOTION_TOKEN = "",
   demo = false,
+  bridgeUrl = "",
+  bridgeKey = "",
+  version = "",
 } = {}) {
   // Демо-режим — не игрушка, а первое знакомство: пульт показывается до того,
   // как заведена книга. Служба при этом та же, меняется только хранилище.
@@ -147,6 +152,38 @@ export function createTransportServer({
     if (request.method === "OPTIONS") return send(response, 204, "");
 
     try {
+      // Страница установки моста: адрес, куда вставлять код, и сам код.
+      // Отдельный путь, а не файл в web/: кода моста в статике нет, он
+      // читается из apps-script/Code.gs — одна копия, не две.
+      if (url.pathname === "/api/mount") {
+        return send(response, 200, mountPage({ existing: bridgeUrl, version }), {
+          "Content-Type": "text/html; charset=utf-8",
+        });
+      }
+
+      // Проверка связи с мостом. Владелец должен узнать «не тот адрес» или
+      // «доступ не Все» здесь, а не по пустому пульту с кодами ошибок.
+      if (url.pathname === "/api/bridge-probe") {
+        if (!bridgeUrl) {
+          return send(response, 200, {
+            ok: false,
+            why: "Мост не настроен: служба в демо-режиме. Пройдите шаги на этой странице.",
+          });
+        }
+        try {
+          const probe = createAppsScriptStore({ url: bridgeUrl, key: bridgeKey });
+          const meta = await probe.meta();
+          const titles = (meta.sheets || []).map((item) => item.properties.title).filter(Boolean);
+          return send(response, 200, {
+            ok: true,
+            why: `Мост отвечает. В книге листов: ${titles.length}${titles.length ? ` (${titles.join(", ")})` : ""}`,
+            titles,
+          });
+        } catch (error) {
+          return send(response, 200, { ok: false, why: `Мост не отвечает: ${error.message}` });
+        }
+      }
+
       if (url.pathname === "/api/health") {
         return send(response, 200, {
           ok: true, at: new Date(now()).toISOString(), service: "relay-wotr",

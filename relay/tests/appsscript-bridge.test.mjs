@@ -148,6 +148,20 @@ test("недоступный адрес называет три причины, 
   });
 });
 
+test("страница установки: говорит, куда вставлять и куда НЕ вставлять", async () => {
+  const { mountPage, bridgeCode } = await import("../src/mount-page.mjs");
+  const html = mountPage({ version: "1.25.0" });
+  // Владелец уже принял Gateway за нужный скрипт: разница должна быть на
+  // странице, а не в переписке.
+  assert.match(html, /Gateway/);
+  assert.match(html, /Не сюда/);
+  assert.match(html, /Расширения/);
+  // Кода две копии быть не должно: страница читает тот же файл, что и README.
+  assert.ok(bridgeCode().includes("doPost"), "код моста читается из файла");
+  assert.ok(html.includes(bridgeCode().split("\n")[0]), "текст кода вставлен в страницу");
+  assert.match(html, /Скопировать код/, "кнопка копирования: файл искать не нужно");
+});
+
 test("код для книги: те же действия, ключ обязателен, данных без ключа нет", () => {
   const code = readFileSync(new URL("../apps-script/Code.gs", import.meta.url), "utf8");
   for (const action of ["read", "write", "append", "updateRange", "meta", "ensureSheet"]) {
