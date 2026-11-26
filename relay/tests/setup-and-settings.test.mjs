@@ -10,6 +10,8 @@ import assert from "node:assert/strict";
 import { planSetup, applySetup, readiness, pickDatabase, discoverableKeys } from "../src/setup.mjs";
 import { auditSettings, advancedKeys, basicKeys, parseSettings, SETTINGS, REQUIRED_KEYS } from "../src/settings.mjs";
 import { createFakeStore, settingsRows, slotRows } from "./fake-sheets.mjs";
+import { createDemoStore } from "../src/demo-store.mjs";
+import { createService } from "../src/service.mjs";
 
 const databases = [
   { title: "Роли", dataSourceId: "ds-roles" },
@@ -47,12 +49,41 @@ test("похожее название подсказывается вместо 
   assert.match(pick.why, /похожие/);
 });
 
-test("без базы «Слоты» мастер не пропускает дальше и говорит, что делать", () => {
+test("без базы «Слоты» в Notion мастер не блокирует: слоты читаются из книги", () => {
   const plan = planSetup({ projectName: "WOTR", databases: databases.filter((item) => item.title !== "Слоты") });
-  assert.equal(plan.ok, false);
-  assert.deepEqual(plan.requiredMissing, ["notion.slotsDb"]);
+  // Ключ остался в шаге — чтобы старые книги не теряли значение, — но
+  // обязательным он больше не является: `notion.slotsDb` не читает ни одна
+  // строка службы, и требовать базу, которой транспорт не пользуется, значит
+  // отправлять человека делать работу без результата.
+  assert.equal(plan.ok, true);
+  assert.deepEqual(plan.requiredMissing, []);
   const step = plan.steps.find((item) => item.key === "notion.slotsDb");
-  assert.match(step.hint, /создайте базу/);
+  assert.equal(step.required, false);
+  assert.match(step.why, /лист книги/);
+});
+
+test("демо-режим: мастер не советует чинить доступ, которого нет", () => {
+  // Демо живёт в памяти: книга не подключена, Notion не ищется. Совет «дайте
+  // интеграции доступ» здесь — ложный след: человек идёт проверять доступ там,
+  // где доступа ещё нет вовсе.
+  const plan = planSetup({ projectName: "WOTR", databases: [], demo: true });
+  assert.equal(plan.ok, false);
+  assert.match(plan.why, /демо-режиме/);
+  assert.doesNotMatch(plan.why, /дайте интеграции доступ/);
+});
+
+test("пустой поиск назван отсутствием токена, а не доступом к странице", () => {
+  // Транспорт без NOTION_TOKEN ищет не «и не находит», а не ищет вообще.
+  // Это разные поломки и разные действия человека.
+  const plan = planSetup({ projectName: "WOTR", databases: [] });
+  assert.match(plan.why, /NOTION_TOKEN/);
+  assert.doesNotMatch(plan.why, /дайте интеграции доступ/);
+});
+
+test("снапшот говорит, что служба в демо-режиме", async () => {
+  const service = createService({ store: createDemoStore() });
+  const shot = await service.snapshot();
+  assert.equal(shot.demo, true, "пульт не должен угадывать демо по пустому журналу");
 });
 
 test("применение плана пишет найденные ключи в лист «Настройки»", async () => {

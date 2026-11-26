@@ -53,7 +53,7 @@ export const SETTINGS = {
 };
 
 /** Ключи, без которых цикл не работает: они обязаны быть в basic. */
-export const REQUIRED_KEYS = ["project.name", "notion.rolesDb", "notion.slotsDb"];
+export const REQUIRED_KEYS = ["project.name", "notion.rolesDb"];
 
 const toNumber = (value, fallback) => {
   const n = Number(String(value ?? "").replace(",", "."));

@@ -21,11 +21,29 @@ const norm = (value) => String(value ?? "").trim().toLowerCase();
  * первой: иначе транспорт начнёт писать в чужую копию, и это выяснится через
  * неделю.
  */
-export function pickDatabase(results, title) {
+export function pickDatabase(results, title, { demo = false } = {}) {
   const wanted = norm(title);
   const hits = (results || []).filter((item) => norm(item?.title) === wanted);
   if (!hits.length) {
     const similar = (results || []).filter((item) => norm(item?.title).includes(wanted)).map((item) => item.title);
+    if (demo) {
+      // В демо-режиме искать негде: книга в памяти, Notion не подключён.
+      // Совет «дайте интеграции доступ» здесь — ложный след: человек идёт
+      // проверять доступ там, где доступа ещё нет вовсе.
+      return {
+        ok: false,
+        why: `база «${title}» не найдена: служба запущена в демо-режиме, книга не подключена`,
+      };
+    }
+    if (!results || !results.length) {
+      // Пустой поиск — это не «базы нет». Он означает, что транспорт не знает
+      // токен Notion, и назвать причиной доступ к странице значит отправить
+      // человека чинить не то.
+      return {
+        ok: false,
+        why: "Notion не подключён: транспорт не знает токен, искать базы нечем — задайте NOTION_TOKEN при запуске",
+      };
+    }
     return {
       ok: false,
       why: similar.length
@@ -49,11 +67,11 @@ export function pickDatabase(results, title) {
  * Побочных эффектов нет — план можно показать человеку до записи. Это и есть
  * «мастер»: один экран, где видно всё, и одна кнопка «применить».
  */
-export function planSetup({ projectName = "", settings = {}, databases = [], gateway = null } = {}) {
+export function planSetup({ projectName = "", settings = {}, databases = [], gateway = null, demo = false } = {}) {
   const steps = [];
   const discovered = {};
 
-  const roles = pickDatabase(databases, "Роли");
+  const roles = pickDatabase(databases, "Роли", { demo });
   steps.push({
     key: "notion.rolesDb",
     ok: roles.ok,
@@ -63,18 +81,23 @@ export function planSetup({ projectName = "", settings = {}, databases = [], gat
   });
   if (roles.ok) discovered["notion.rolesDb"] = roles.id;
 
-  const slots = pickDatabase(databases, "Слоты");
+  // Слоты живут в книге (лист «Слоты»), а не в Notion: служба читает их из
+  // хранилища и ни строчки кода не читает `notion.slotsDb`. Пока ключ был
+  // обязательным, мастер не пропускал дальше без базы, которой транспорт
+  // никогда не пользуется, — то есть требовал работу без результата.
+  const slots = pickDatabase(databases, "Слоты", { demo });
   steps.push({
     key: "notion.slotsDb",
     ok: slots.ok,
-    why: slots.ok ? "найдена база «Слоты»" : slots.why,
+    why: slots.ok ? "найдена база «Слоты» (необязательно: слоты читаются из книги)"
+      : "база «Слоты» в Notion не нужна: слоты — лист книги, транспорт их уже читает",
     value: slots.ok ? slots.id : "",
-    required: true,
-    hint: slots.ok ? "" : "создайте базу «Слоты» под той же страницей, что «Роли»",
+    required: false,
+    hint: "",
   });
   if (slots.ok) discovered["notion.slotsDb"] = slots.id;
 
-  const requests = pickDatabase(databases, "Запросы");
+  const requests = pickDatabase(databases, "Запросы", { demo });
   steps.push({
     key: "notion.requestsDb",
     ok: requests.ok,
@@ -134,7 +157,9 @@ export function planSetup({ projectName = "", settings = {}, databases = [], gat
 export function readiness({ settings = {}, slots = [], sheets = null } = {}) {
   const problems = [];
   if (!settings["notion.rolesDb"]) problems.push("не найдена база «Роли» — запустите мастер настройки");
-  if (!settings["notion.slotsDb"]) problems.push("не найдена база «Слоты» — запустите мастер настройки");
+  // «Слоты» в Notion не нужны с тех пор, как слоты переехали в книгу: ключ
+  // остаётся в реестре для старых книг, но готовность от него не зависит.
+
   const active = slots.filter((slot) => slot.enabled);
   if (!active.length) problems.push("нет ни одного активного слота: цикл некому работать");
   if (!active.some((slot) => slot.admin)) problems.push("нет административного слота: Координатору негде жить");

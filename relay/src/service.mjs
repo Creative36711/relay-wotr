@@ -830,6 +830,11 @@ export function createService({
     }
     return {
       at: isoNow(now()),
+      // Демо-режим — не «ещё одно поле», а ответ на вопрос, который человек
+      // задаёт первым: «почему здесь не мои данные». Служба без книги живёт в
+      // памяти, и снаружи это отличимо только так: слоты, журнал и мастер при
+      // этом выглядят настоящими.
+      demo: Boolean(store.demo),
       mode: data.settings["cycle.mode"],
       paused: memory.paused,
       pauseReason: memory.pauseReason,
@@ -876,7 +881,12 @@ export function createService({
         searchError = error.message;
       }
     }
-    const plan = planSetup({ projectName: projectName || current["project.name"], settings: current, databases });
+    const plan = planSetup({
+      projectName: projectName || current["project.name"],
+      settings: current,
+      databases,
+      demo: Boolean(store.demo),
+    });
     const applied = plan.ok ? await applySetup({ store, plan, now }) : { ok: false, why: plan.why };
     const events = plan.steps.map((step) => `${step.ok ? "✓" : "✕"} ${step.key}: ${step.why}`);
     await record({
