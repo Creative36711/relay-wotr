@@ -16,6 +16,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { randomBytes } from "node:crypto";
 
 const path = new URL("../Запустить транспорт.bat", import.meta.url);
 const bytes = readFileSync(path);
@@ -65,6 +66,28 @@ test("батник: мост Apps Script — первый путь, ключ Goo
   // Один файл — две формы записи: «адрес=ключ» и два значения подряд.
   assert.match(text, /findstr \/n \/c:"="/, "разбирает форму «адрес=ключ»");
   assert.match(text, /Разделителя нет/, "и форму двумя строками");
+});
+
+test("ключ моста: 40 символов, безопасен для cmd и для bridge.txt", () => {
+  // Ключ придумывает владелец, но требования к нему — наши: если в строке
+  // окажется `=` или `%`, разбор bridge.txt в батнике сломается, и человек
+  // будет искать причину в мосте, а не в символе.
+  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
+  const make = () => {
+    const bytes = randomBytes(40);
+    let out = "";
+    for (let i = 0; i < 40; i += 1) out += alphabet[bytes[i] % alphabet.length];
+    return out;
+  };
+  const keys = Array.from({ length: 20 }, make);
+  for (const key of keys) {
+    assert.equal(key.length, 40);
+    // cmd: % ! ^ & | < > " — специальные; = разделяет адрес и ключ в bridge.txt.
+    assert.doesNotMatch(key, /[%!^&|<>"= \t]/, `небезопасный символ в ключе: ${key}`);
+    assert.equal(JSON.stringify(key).slice(1, -1), key, "ключ не требует экранирования в Code.gs");
+  }
+  // 40 символов из алфавита 58 — около 234 бит: перебирать бессмысленно.
+  assert.ok(keys.every((key) => new Set(key).size > 20), "ключи не вырождены");
 });
 
 test("батник: окно не закрывается само — ошибку надо прочитать", () => {

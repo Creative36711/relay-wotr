@@ -130,6 +130,7 @@ async function refresh() {
     snapshot = shot;
     renderHeader(shot);
     renderSetupHint(shot);
+    renderMountButton(shot);
     renderSlots(shot);
     renderQueue(shot);
     renderEvents(shot);
@@ -170,6 +171,22 @@ function renderSetupHint(shot) {
       "Расширенные настройки трогать не нужно — без них цикл работает.";
 }
 
+/**
+ * Кнопка «Код для входа в книгу».
+ *
+ * Зачем кнопка, а не строка в README. Слово «вставьте код ниже» без «ниже» —
+ * это тупик: владелец открывает пульт и ищет, откуда взять код. Кнопка ведёт
+ * на страницу с тем же кодом, кнопкой «Скопировать» и проверкой связи.
+ *
+ * Видна только в демо: когда мост настроен, предлагать установку поверх
+ * работающего — значит приглашать сломать рабочее.
+ */
+function renderMountButton(shot) {
+  const button = $("btn-mount");
+  if (!button) return;
+  button.style.display = shot.demo ? "" : "none";
+}
+
 async function discover() {
   $("setup-note").textContent = "ищу базы…";
   const result = await post("/api/control", { action: "setup" });
@@ -204,6 +221,8 @@ function bind() {
     await refresh();
   };
   $("btn-discover").onclick = discover;
+  const mountButton = $("btn-mount");
+  if (mountButton) mountButton.onclick = () => { window.open("/api/mount", "_blank", "noopener"); };
   $("event-filter").onchange = () => snapshot && renderEvents(snapshot);
   $("btn-enqueue").onclick = async () => {
     const card = $("queue-card").value.trim();
