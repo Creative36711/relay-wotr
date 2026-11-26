@@ -20,6 +20,9 @@ export const QUEUE = {
   CANCELLED: "cancelled",
 };
 
+/** Вид строки очереди: не работа по миссии, а задание создать агента. */
+export const PROVISION_KIND = "provision";
+
 export const RUN = {
   ISSUED: "issued",
   ALIVE: "alive",
@@ -132,6 +135,11 @@ export function claimable(slots, slotId, { queue = [], roles = [], roleAllows = 
   const roleByName = new Map(roles.map((role) => [norm(role.name), role]));
   return queue
     .filter((item) => norm(item["Статус"]) === QUEUE.WAITING)
+    // Задания на создание агента не раздаются обычной выдачей. Их забирает
+    // только тот слот, для которого они поставлены, и отдельным входом:
+    // иначе `planOne` выдал бы «создай агента» как рабочую карточку, и вкладка
+    // чужого контейнера создала бы агента не в том слоте.
+    .filter((item) => norm(item["Вид"]) !== PROVISION_KIND)
     .filter((item) => {
       const target = norm(item["Слот"]);
       return !target || target === slotId;

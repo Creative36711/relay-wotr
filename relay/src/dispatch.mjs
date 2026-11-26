@@ -15,6 +15,7 @@
 
 import { claimable, planDispatch, queueSummary, leaseItem, QUEUE } from "./queue.mjs";
 import { slotAcceptsRole, slotById } from "./slots.mjs";
+import { roleLimits, byAccountCost } from "./limits.mjs";
 import { isAdminRole } from "./schema.mjs";
 import { slotGate } from "./accounts.mjs";
 import { norm } from "./util.mjs";
@@ -47,7 +48,10 @@ export function assignable(slots, { state = new Map(), runs = [], roles = [], ma
  * он есть всегда, даже когда связь с Notion недоступна, а цена ошибки высока —
  * Coordinator, ушедший на рабочий слот, съедает квоту исполнителя (D-004).
  */
-export function planOne({ slots, queue, runs, roles = [], state, itemId = "", slotId = "", maxParallelPerSlot = 1 }) {
+export function planOne({
+  slots, queue, runs, roles = [], state, itemId = "", slotId = "",
+  maxParallelPerSlot = 1, maxPerRole = 1,
+}) {
   const roleByName = new Map(roles.map((role) => [norm(role.name), role]));
   const free = assignable(slots, { state, runs, roles, maxParallelPerSlot });
   if (!free.length) {
@@ -74,7 +78,13 @@ export function planOne({ slots, queue, runs, roles = [], state, itemId = "", sl
 
   // Слот: названный в строке — сильнее правила; названный в вызове — сильнее всех.
   const wanted = norm(slotId) || norm(item["Слот"]);
-  const byType = free.filter((slot) => Boolean(slot.admin) === Boolean(adminNeeded));
+  // Выбор слота — по расходу аккаунта, а не по порядку в таблице.
+  //
+  // Квота считается на аккаунт, и все роли дублируются на каждом аккаунте.
+  // Значит «первый свободный» — худший выбор: первый аккаунт выгорит, а
+  // остальные будут стоять. Ровный расход оставляет запас, из которого можно
+  // добрать, когда один аккаунт всё-таки упрётся в лимит.
+  const byType = byAccountCost(free, { runs, state, admin: adminNeeded }).map((entry) => entry.slot);
   const target = wanted
     ? free.find((slot) => norm(slot.slotId) === wanted)
     : byType[0];
@@ -105,6 +115,19 @@ export function planOne({ slots, queue, runs, roles = [], state, itemId = "", sl
     };
   }
 
+  // Пределы на роль и на карточку. Стоят здесь, а не в вызывающем коде:
+  // захват строки — последняя точка, после которой отказ стоит дорого
+  // (строку придётся возвращать в очередь, а вкладка уже могла её увидеть).
+  // Причина отказа уходит и в журнал, и Координатору, поэтому она говорит,
+  // какая именно роль занята и где, а не «нельзя».
+  const limits = roleLimits({
+    role: item["Роль"],
+    card: item["Карточка"],
+    runs,
+    maxPerRole,
+  });
+  if (!limits.ok) return { ok: false, why: limits.why, limits };
+
   const leased = leaseItem(item, { slotId: target.slotId });
   if (!leased.ok) return { ok: false, why: leased.why };
 
@@ -124,7 +147,10 @@ export function planOne({ slots, queue, runs, roles = [], state, itemId = "", sl
  * позволяет предел, — «сейчас выгоднее одна карточка, чем четыре». Диспетчер
  * не спорит с этим решением и не «добирает» до предела.
  */
-export function planBatch({ slots, queue, runs, state, roles = [], maxParallel = 1, requested = null, maxParallelPerSlot = 1 }) {
+export function planBatch({
+  slots, queue, runs, state, roles = [], maxParallel = 1, requested = null,
+  maxParallelPerSlot = 1, maxPerRole = 1,
+}) {
   const summary = queueSummary({ queue, runs, slots });
   const free = assignable(slots, { state, runs, maxParallelPerSlot }).length;
   const decision = planDispatch({ queueSummary: { ...summary, idleSlots: new Array(free).fill(0) }, maxParallel, requested });
@@ -132,7 +158,9 @@ export function planBatch({ slots, queue, runs, state, roles = [], maxParallel =
   let takenQueue = queue;
   let takenRuns = runs;
   for (let i = 0; i < decision.count; i += 1) {
-    const plan = planOne({ slots, queue: takenQueue, runs: takenRuns, roles, state, maxParallelPerSlot });
+    const plan = planOne({
+      slots, queue: takenQueue, runs: takenRuns, roles, state, maxParallelPerSlot, maxPerRole,
+    });
     if (!plan.ok) break;
     plans.push(plan);
     takenQueue = takenQueue.map((item) => (norm(item["ID"]) === norm(plan.item["ID"]) ? { ...item, "Статус": QUEUE.LEASED } : item));
