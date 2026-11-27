@@ -28,7 +28,7 @@ const ZONE_ARG = zoneIndex >= 0 && argv[zoneIndex + 1] ? argv[zoneIndex + 1].rep
  * а на устаревшей копии списка. Теперь копия одна: `--zone` остаётся для ручных
  * прогонов и проб, а пустой аргумент означает «зона роли».
  */
-const DEFAULT_ZONE = "tools/script-cat/**, tools/relay-*.mjs, tools/*.mjs, relay/**, docs/**, package.json, .gitignore, AGENTS.md, README.md, WARDEN-SCRIPTCAT-MIGRATION.md, .github/**";
+const DEFAULT_ZONE = "tools/script-cat/**, tools/firefox-relay-manager/**, tools/relay-*.mjs, tools/*.mjs, relay/**, docs/**, package.json, .gitignore, AGENTS.md, README.md, WARDEN-SCRIPTCAT-MIGRATION.md, .github/**";
 const zone = ZONE_ARG || DEFAULT_ZONE;
 
 const checks = [];
