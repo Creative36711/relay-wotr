@@ -95,6 +95,11 @@ currentRoles = structuredClone(allRoles); currentRoles[1].url = 'https://www.are
 assert.match((await run(settings)).text,/домене этой вкладки/);
 currentRoles = structuredClone(allRoles); currentRoles[2].id = currentRoles[0].id;
 assert.match((await run(settings)).text,/один Agent URL/);
+// D-015: рабочая роль без Agent URL в «Ролях» — норма, а не поломка:
+// адрес живёт в листе «Экземпляры» и появляется при ленивом создании
+// агента. Пустой URL не должен блокировать допуск к проекту.
+currentRoles = structuredClone(allRoles); currentRoles[2].url = ''; currentRoles[2].id = '';
+assert.equal((await run(settings)).ok, true, 'пустой Agent URL рабочей роли не блокирует допуск');
 currentRoles = structuredClone(allRoles); currentSchemas.requests.properties['Кому'].select.options = [];
 assert.match((await run(settings)).text,/отсутствует вариант/);
 currentSchemas = structuredClone(schemas); branch = 'main';

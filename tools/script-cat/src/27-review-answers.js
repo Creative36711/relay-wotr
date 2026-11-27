@@ -1043,8 +1043,14 @@
         sentAt: Number(receipt.sentAt) || Date.now(), verified: true,
       };
       GM_setValue(K.expect, restored);
+      // D-015: «своя страница» сверяется с адресом ДОСТАВКИ, а не строки
+      // «Роли»: у рабочих ролей там пусто, и пустой адрес совпал бы с
+      // любой текущей страницей — вкладка осталась бы не там, где чат.
       let same = false;
-      try { same = new URL(role.url, location.href).pathname === location.pathname; } catch { same = false; }
+      try {
+        const delivery = (typeof roleDeliveryUrl === "function" ? await roleDeliveryUrl(role) : role.url) || "";
+        same = Boolean(delivery) && new URL(delivery, location.href).pathname === location.pathname;
+      } catch { same = false; }
       if (!same) await navigateTo(role, "квитанция подтверждает прямой возврат ответа");
       return "recovered";
     }

@@ -19,8 +19,14 @@
   }
   function projectRoleAllowed(role) {
     if (ACTIVE_PROFILE.legacy) return true;
+    // D-015: у рабочих ролей «Agent URL» в «Ролях» пуст — адрес берётся из
+    // листа «Экземпляры» (пара роль + слот), и проверять здесь нечего:
+    // отсутствие адреса назовёт `roleDeliveryUrl` ниже, с причиной. А вот
+    // НЕПРАВИЛЬНЫЙ адрес — стоп: страница открылась бы не в том контейнере.
+    const raw = String(role?.url || "").trim();
+    if (!raw) return true;
     try {
-      const target = new URL(role.url, location.href);
+      const target = new URL(raw, location.href);
       if (target.origin === location.origin && /^\/agent\/[\w-]+\/?$/.test(target.pathname)) return true;
     } catch { /* остановка ниже */ }
     pause("Адрес роли должен быть страницей агента Arena на том же домене, что и эта вкладка. " +
@@ -207,12 +213,22 @@
       const roleIds = new Set();
       const recipientOptions = schemas["Запросы"]["Кому"].select.options || [];
       for (const role of active) {
-        let url;
-        try { url = new URL(role.url); } catch { throw new Error(`У роли «${role.name}» некорректный Agent URL.`); }
-        if (url.origin !== location.origin || !/^\/agent\/[\w-]+\/?$/.test(url.pathname) || !role.id)
-          throw new Error(`У роли «${role.name}» Agent URL должен быть страницей агента на домене этой вкладки.`);
-        if (roleIds.has(role.id.toLowerCase())) throw new Error("Несколько активных ролей используют один Agent URL.");
-        roleIds.add(role.id.toLowerCase());
+        // D-015: у рабочих ролей «Agent URL» в «Ролях» снят — рабочий адрес
+        // живёт в листе «Экземпляры» (пара роль + слот) и появляется там,
+        // когда агента создаёт сам транспорт. Пустой адрес — норма, а не
+        // поломка: проверяем только то, что заполнено, и не требуем того,
+        // что создаётся лениво при выдаче. Требовать URL у каждой активной
+        // роли — запрет на включение проекта, который чинится только правкой
+        // базы, хотя системе от неё ничего не нужно.
+        const rawUrl = String(role.url || "").trim();
+        if (rawUrl) {
+          let url;
+          try { url = new URL(rawUrl); } catch { throw new Error(`У роли «${role.name}» некорректный Agent URL.`); }
+          if (url.origin !== location.origin || !/^\/agent\/[\w-]+\/?$/.test(url.pathname) || !role.id)
+            throw new Error(`У роли «${role.name}» Agent URL должен быть страницей агента на домене этой вкладки.`);
+          if (roleIds.has(role.id.toLowerCase())) throw new Error("Несколько активных ролей используют один Agent URL.");
+          roleIds.add(role.id.toLowerCase());
+        }
         if (["Executor", "Auditor"].includes(role.fn) && !recipientOptions.some((option) => option.name === role.name))
           throw new Error(`В «Запросы → Кому» отсутствует вариант «${role.name}».`);
       }
