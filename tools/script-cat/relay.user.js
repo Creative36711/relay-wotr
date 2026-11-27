@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Relay — передача хода между агентами
 // @namespace    https://arena.ai/
-// @version      1.30.0
+// @version      1.31.0
 // @updateURL    https://raw.githubusercontent.com/Creative36711/relay-wotr/main/tools/script-cat/relay.user.js
 // @downloadURL  https://raw.githubusercontent.com/Creative36711/relay-wotr/main/tools/script-cat/relay.user.js
 // @description  Цикл Координатор → исполнитель → Координатор: агент сам коммитит, пушит и мержит PR; ScriptCat ждёт мерж и нажимает Continue.
@@ -97,7 +97,7 @@
     // D-073: отпечаток сборки вшивает build.mjs (SHA-256 источника). Номер версии
     // говорит «какой выпуск», отпечаток — «какая именно сборка»: без него проверка
     // «работает новая версия, а не прежняя под новым номером» невозможна.
-    buildFingerprint: "77369b39e2ac0687",
+    buildFingerprint: "eff379eead8f15aa",
     repo: "", // для ссылки на PR из номера
     tickMs: 15000,
     mergeGraceMs: 90000, // сколько ждём мерж, прежде чем нажать кнопки за агента
@@ -804,7 +804,7 @@
 
   const NTFY_BASE = "https://ntfy.sh";
   const SCRIPT_VERSION =
-    (typeof GM_info !== "undefined" && GM_info?.script?.version) || "1.30.0";
+    (typeof GM_info !== "undefined" && GM_info?.script?.version) || "1.31.0";
 
   /** «https://ntfy.sh/topic?x=1» и «topic» одинаково дают topic. */
   function normalizeNtfyTopic(raw) {
@@ -23686,10 +23686,11 @@ function reviewPullRequest({ files, pr, zone } = {}) {
 
   /** Опознание: почта контейнера → слот книги. Кеш живёт до перезагрузки. */
   async function relayIdentity({ force = false } = {}) {
-    if (relayClient.slotId && !force) return relayClient.slotId;
     const nowMs = Date.now();
-    // Повтор hello раз в 10 минут: аккаунт в книге могут добавить после старта.
-    if (relayClient.slotId && nowMs - relayClient.helloAt < 600000) return relayClient.slotId;
+    // Обычный вызов держит кеш до 10 минут; forced presence обязан обходить кеш.
+    // Иначе после перезапуска Node оставался бы slotId, но служба не видела
+    // вкладку до следующего полноценного pull.
+    if (relayClient.slotId && !force && nowMs - relayClient.helloAt < 600000) return relayClient.slotId;
     const read = typeof readAccountEmail === "function"
       ? await readAccountEmail({ expand: false }).catch(() => null)
       : null;
@@ -23865,7 +23866,8 @@ function reviewPullRequest({ files, pr, zone } = {}) {
     // Объявляем вкладку службе даже при локальной паузе. Иначе пульт видит
     // «административный клиент не найден» и не может объяснить, что именно
     // мешает команде. Пауза по-прежнему запрещает брать работу/turn.
-    const slotId = await relayIdentity().catch(() => "");
+    const refreshPresence = !relayClient.lastPresenceAt || Date.now() - Number(relayClient.lastPresenceAt) >= 60000;
+    const slotId = await relayIdentity({ force: refreshPresence }).catch(() => "");
     if (typeof setStatus === "function") setStatus();
     if (!slotId) return;
     const paused = typeof isPaused === "function" && isPaused();
