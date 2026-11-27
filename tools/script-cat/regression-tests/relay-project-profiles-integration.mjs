@@ -106,6 +106,7 @@ assert.equal(accidentalRelease, 0, 'отложенный tick(true) не сни�
 assert.equal(controls.releaseProjectHold(), true);
 assert.equal(controls.projectHeld(), false); assert.deepEqual(writes, [['step', false]]);
 assert.equal(controls.projectRoleAllowed({id:'r',url:'https://arena.ai/agent/a-123'}), true);
+assert.equal(controls.projectRoleAllowed({id:'r',url:''}), true, 'пустой Agent URL (адрес в «Экземплярах») не блокирует переход');
 for (const url of ['https://www.arena.ai/agent/a-123', 'https://arena.ai/agent/a/other', 'https://arena.ai/agent/a.evil', 'https://evil.invalid/agent/a'])
   assert.equal(controls.projectRoleAllowed({id:'r',url}), false, url);
 assert.equal(pauses.length, 4);
