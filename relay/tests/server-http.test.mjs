@@ -348,6 +348,9 @@ test("пульт: поле токена Notion и честная подпись 
     assert.doesNotMatch(js, /shot\.demo \|\| shot\.notion\?\.ready \? "none"/,
       "строка целиком при готовом Notion не прячется");
     assert.match(js, /\/api\/net-deep/, "диагностика по звеньям");
+    assert.match(js, /if \(!response\.ok\) throw new Error\(data\.why \|\| `HTTP \$\{response\.status\}`\)/,
+      "HTTP failure from network diagnostics is shown instead of rendering an empty report");
+    assert.match(js, /Array\.isArray\(data\.steps\)/, "empty or malformed diagnostics are reported explicitly");
     assert.match(js, /\/api\/roles-to-book/, "роли переезжают в книгу — Notion перестаёт быть обязательным");
     assert.match(js, /\/api\/book-speed/, "замер книги: цифры вместо «медленно»");
     // Проверка одна на всё: иначе «мост молчит» и «Notion молчит» лечатся

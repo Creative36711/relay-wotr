@@ -869,8 +869,13 @@ async function checkNotionNet() {
   note.className = "muted";
   note.textContent = "иду по шагам…";
   try {
-    const data = await (await fetch("/api/net-deep", { cache: "no-store" })).json();
-    const rows = (data.steps || []).map((step) => `
+    const response = await fetch("/api/net-deep", { cache: "no-store" });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.why || `HTTP ${response.status}`);
+    if (!Array.isArray(data.steps) || data.steps.length === 0) {
+      throw new Error(data.why || "служба не вернула результаты проверки сети");
+    }
+    const rows = data.steps.map((step) => `
       <div class="diag-row ${step.ok ? "ok" : "bad"}">
         <span class="mark">${step.ok ? "●" : "✕"}</span>
         <span class="diag-name">${escapeHtml(step.name)}</span>
