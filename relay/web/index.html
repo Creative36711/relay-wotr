@@ -33,6 +33,13 @@
   </div>
   <div class="row wrap operator-tools">
     <button id="btn-approve-project" class="primary hidden" type="button">Проверить и разрешить проект</button>
+    <!--
+      Единственный способ переключить окно Firefox на нужную вкладку — просьба
+      человека. Менеджер контейнеров сам этого не делает (D-022): иначе он
+      поднимал окно поверх работы владельца и получалось «пока не переключишься,
+      ничего не отправляется».
+    -->
+    <button id="btn-open-tab" class="ghost hidden" type="button" title="Показать вкладку контейнера в браузере">Открыть вкладку</button>
     <details class="diagnostic-details">
       <summary>Диагностика</summary>
       <button id="btn-copy-diagnostics" class="ghost">Скопировать отчёт</button>

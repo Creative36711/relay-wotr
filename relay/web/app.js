@@ -221,7 +221,8 @@ function operatorGuidance(shot) {
             : reason === "credentials-missing" ? "вкладке не доставлены обязательные подключения из Relay"
               : reason || "проверка проекта не завершена";
     const next = missing.length
-      ? "Дождитесь синхронизации сохранённых BAT/ScriptCat настроек; вводите только действительно отсутствующие значения в разделе «Проект»."
+      ? "Дождитесь синхронизации сохранённых BAT/ScriptCat настроек; вводите только действительно отсутствующие значения в разделе «Проект». " +
+        "Если вкладка держит уже полученный ответ, «Дожать ход» работает и без этих подключений: чтение маркера их не требует."
       : "Исправьте указанную причину и повторите проверку из admin-вкладки.";
     return {
       tone: "warn", mark: "!", title: missing.length ? "Для проекта не заданы подключения" : "Проект заблокировал запуск",
@@ -237,7 +238,8 @@ function operatorGuidance(shot) {
     // выдаёт, дубля задания не создаёт.
     tone: "warn", mark: "…", title: "Ход у Координатора: ответ ждёт применения",
     detail: `Вкладка «${heldAdmin.slotId}» приняла ход и держит ожидание plan: ответ Координатора (CF_COORDINATOR_RESULT) ` +
-      `надо прочитать и передать карточку дальше. Нажмите «Дожать ход» — вкладка сделает шаг в течение пятнадцати секунд. ` +
+      `надо прочитать и передать карточку дальше. Нажмите «Дожать ход» — вкладка сделает шаг в течение пятнадцати секунд, ` +
+      `даже если окно браузера занято другим: переключать вкладку не нужно. ` +
       `Это безопасно: шаг только применяет уже полученный ответ, новую работу не выдаёт и дубль задания не создаёт. ` +
       `Если маркера ещё нет, шаг честно ответит «ещё отвечает» — и его можно повторить.`,
     canStep: false,
@@ -390,6 +392,65 @@ function syncControls(shot = snapshot) {
   }
 }
 
+// ───────────────────── «Открыть вкладку»: фокус по просьбе человека ──────
+//
+// Менеджер контейнеров больше не переключает окно сам (D-022). Если человеку
+// нужно посмотреть вкладку контейнера — капча, вход, проверка ответа — он
+// просит об этом здесь. Мост живёт в content script расширения (bridge.js) и
+// видит события этой страницы; без расширения кнопка честно говорит, что
+// показать вкладку некому, а не делает вид, что позвала менеджера.
+let managerBridgeReady = false;
+const focusAnswers = new Map();
+
+if (typeof window !== "undefined" && window.addEventListener) {
+  window.addEventListener("relay-manager-bridge-ready", (event) => {
+    let detail = event && event.detail;
+    if (typeof detail === "string") { try { detail = JSON.parse(detail); } catch { return; } }
+    if (!detail || detail.source !== "relay-container-manager") return;
+    managerBridgeReady = true;
+    syncControls(snapshot || {});
+  });
+  window.addEventListener("relay-manager-focus-result", (event) => {
+    let detail = event && event.detail;
+    if (typeof detail === "string") { try { detail = JSON.parse(detail); } catch { return; } }
+    if (!detail || detail.source !== "relay-container-manager") return;
+    const waiter = focusAnswers.get(String(detail.requestId || ""));
+    if (waiter) waiter(detail);
+  });
+}
+
+/** Слот, вкладку которого человеку имеет смысл показать прямо сейчас. */
+function focusableSlot(shot = {}) {
+  const admins = adminClientsFor(shot);
+  const holder = admins.find((client) => localHoldKind(client)) || admins[0] || null;
+  return holder ? String(holder.slotId || "") : "";
+}
+
+async function openSlotTab(slotId) {
+  if (!managerBridgeReady) {
+    announceAction("Показать вкладку может только расширение Relay Container Manager: без него у пульта нет доступа к окнам браузера.", "warn");
+    return;
+  }
+  if (!slotId) {
+    announceAction("Не знаю, какую вкладку показать: служба ещё не сообщила админ-слот.", "warn");
+    return;
+  }
+  const requestId = `focus-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  announceAction(`Прошу показать вкладку «${slotId}»…`);
+  const answer = await new Promise((resolve) => {
+    focusAnswers.set(requestId, resolve);
+    try {
+      window.dispatchEvent(new CustomEvent("relay-pult-focus-request", {
+        detail: JSON.stringify({ source: "relay-pult", requestId, slotId }),
+      }));
+    } catch { resolve({ ok: false, why: "страница не смогла позвать менеджер" }); }
+    setTimeout(() => resolve({ ok: false, why: "менеджер не ответил за пять секунд" }), 5000);
+  });
+  focusAnswers.delete(requestId);
+  if (answer && answer.ok) announceAction(`Вкладка «${slotId}» открыта в браузере.`, "ok");
+  else announceAction(`Вкладку показать не удалось: ${(answer && answer.why) || "причина неизвестна"}.`, "warn");
+}
+
 function renderOperatorGuidance(shot) {
   const guidance = operatorGuidance(shot);
   const card = $("operator-card");
@@ -404,6 +465,18 @@ function renderOperatorGuidance(shot) {
     approvalButton.title = blocked
       ? "Админская вкладка сама проверит сохранённые Notion, Drive, GitHub и схему; данные работы не очищаются, автоцикл не включается."
       : "Доступна только для живого проекта с причиной «не разрешён»";
+  }
+  const openTabButton = $("btn-open-tab");
+  if (openTabButton) {
+    const slotId = focusableSlot(shot);
+    // Кнопка нужна там, где человеку есть что смотреть: вкладка держит ход,
+    // ждёт капчу или простаивает. На пустом снимке её нет — незачем.
+    openTabButton.classList.toggle("hidden", !slotId);
+    openTabButton.disabled = !slotId || busy || controlBusy;
+    openTabButton.dataset.slotId = slotId;
+    openTabButton.title = managerBridgeReady
+      ? `Показать вкладку «${slotId}» в браузере. Менеджер сам окно не переключает`
+      : "Расширение Relay Container Manager не установлено: показать вкладку некому";
   }
   if (!card) return;
   card.className = `operator-card ${guidance.tone}`;
@@ -1165,6 +1238,8 @@ async function copyDiagnostics() {
 }
 
 function bind() {
+  const openTabButton = $("btn-open-tab");
+  if (openTabButton) openTabButton.onclick = () => openSlotTab(String(openTabButton.dataset.slotId || ""));
   $("btn-step").onclick = (event) => {
     // Та же кнопка в трёх ролях: «Шаг» — новый ход, «Запросить ход заново» —
     // снять зависший запрос, «Дожать ход» — заставить вкладку прочитать ответ.

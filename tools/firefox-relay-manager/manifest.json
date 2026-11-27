@@ -1,7 +1,7 @@
 {
   "manifest_version": 2,
   "name": "Relay Container Manager",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "Открывает Arena в нужных изолированных контейнерах Firefox и запускает автоцикл Relay.",
   "permissions": [
     "contextualIdentities",
@@ -9,6 +9,7 @@
     "storage",
     "alarms",
     "http://127.0.0.1:8787/*",
+    "http://localhost:8787/*",
     "https://arena.ai/*",
     "https://www.arena.ai/*"
   ],
@@ -19,6 +20,11 @@
   "content_scripts": [
     {
       "matches": ["https://arena.ai/*", "https://www.arena.ai/*"],
+      "js": ["bridge.js"],
+      "run_at": "document_start"
+    },
+    {
+      "matches": ["http://127.0.0.1:8787/*", "http://localhost:8787/*"],
       "js": ["bridge.js"],
       "run_at": "document_start"
     }

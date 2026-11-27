@@ -480,10 +480,22 @@ export function createTransportServer({
             text: `вкладка забрала выдачу ${result.work.runId}`, runId: result.work.runId, card: result.work.card,
           }).catch(() => {});
         }
-        const responseResult = !body.localBusy
-          ? { ...result, ...(projectSettings ? { projectSettings } : {}), ...(projectSelection ? { projectSelection } : {}),
-              ...(projectSettingsUnavailable ? { projectSettingsUnavailable } : {}) }
-          : result;
+        // Настройки проекта уезжают во вкладку всегда, в том числе когда она
+        // держит ход (`localBusy`). Раньше они откладывались до «свободного»
+        // hello — и вкладка, ждущая `expect:plan`, не получала их никогда:
+        // шаг упирался в «Relay ещё не синхронизировал credentials», пульт
+        // советовал «дожать», «дожать» упирался в тот же гейт. Тумблер
+        // «применять настройки только на простое» оставлен в клиенте: он
+        // решает, когда менять профиль и перезагружать страницу, а не
+        // получать уже сохранённые значения. Переключение профиля
+        // (`projectSelection`) по-прежнему ждёт простоя: оно перезагружает
+        // страницу и не должно обрывать ход.
+        const responseResult = {
+          ...result,
+          ...(projectSettings ? { projectSettings } : {}),
+          ...(projectSelection && !body.localBusy ? { projectSelection } : {}),
+          ...(projectSettingsUnavailable && !body.localBusy ? { projectSettingsUnavailable } : {}),
+        };
         return send(response, result.ok === false && result.why?.includes("нет в таблице") ? 404 : 200,
           responseResult, projectSettings || projectSelection || projectSettingsUnavailable ? privateCorsHeaders(request) : {});
       }
