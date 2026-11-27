@@ -22,7 +22,7 @@ test("forced hello bypasses the 10-minute identity cache after Relay restart", a
       lastPresenceAt: 0,
       warned: { hello: "", version: "" },
     },
-    SCRIPT_VERSION: "1.33.0",
+    SCRIPT_VERSION: "1.33.1",
     K: { pending: "pending", expect: "expect" },
     location: { pathname: "/" },
     readAccountEmail: async () => ({ email: "admin@example.com" }),
@@ -33,7 +33,7 @@ test("forced hello bypasses the 10-minute identity cache after Relay restart", a
     sent: [],
     relayPost: async (payload) => {
       context.sent.push(payload);
-      return { ok: true, slot: { slotId: "admin", admin: true }, requiredScriptVersion: "1.33.0" };
+      return { ok: true, slot: { slotId: "admin", admin: true }, requiredScriptVersion: "1.33.1" };
     },
   };
   vm.createContext(context);
@@ -42,6 +42,26 @@ test("forced hello bypasses the 10-minute identity cache after Relay restart", a
   assert.equal(slot, "admin");
   assert.equal(context.sent.length, 1, "force sends a fresh hello instead of returning cached slotId");
   assert.equal(context.sent[0].action, "hello");
+});
+
+test("local hold diagnostics include routing metadata but never prompt or page content", () => {
+  const start = client.indexOf("function relayLocalStateSummary(");
+  const end = client.indexOf("/** POST действия в службу", start);
+  assert.ok(start >= 0 && end > start, "local summary function is present");
+  const context = {};
+  vm.createContext(context);
+  vm.runInContext(`${client.slice(start, end)}\nthis.summary = relayLocalStateSummary;`, context);
+  const summary = JSON.parse(JSON.stringify(context.summary({
+    kind: "heal", roleId: "role-123", roleName: "Maintainer", turnId: "heal-turn-1",
+    at: 1795780000000, sentAt: 1795780001000, verified: false,
+    text: "private prompt", prompt: { body: "private" }, roleUrl: "https://arena.ai/private",
+  })));
+  assert.equal(summary.kind, "heal");
+  assert.equal(summary.roleName, "Maintainer");
+  assert.equal(summary.turnId, "heal-turn-1");
+  assert.equal("text" in summary, false);
+  assert.equal("prompt" in summary, false);
+  assert.equal("roleUrl" in summary, false);
 });
 
 test("admin poll skips and client exceptions are saved to local and Relay journals", () => {

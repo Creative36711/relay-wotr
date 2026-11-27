@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Relay — передача хода между агентами
 // @namespace    https://arena.ai/
-// @version      1.33.0
+// @version      1.33.1
 // @updateURL    https://raw.githubusercontent.com/Creative36711/relay-wotr/main/tools/script-cat/relay.user.js
 // @downloadURL  https://raw.githubusercontent.com/Creative36711/relay-wotr/main/tools/script-cat/relay.user.js
 // @description  Цикл Координатор → исполнитель → Координатор: агент сам коммитит, пушит и мержит PR; ScriptCat ждёт мерж и нажимает Continue.
@@ -97,7 +97,7 @@
     // D-073: отпечаток сборки вшивает build.mjs (SHA-256 источника). Номер версии
     // говорит «какой выпуск», отпечаток — «какая именно сборка»: без него проверка
     // «работает новая версия, а не прежняя под новым номером» невозможна.
-    buildFingerprint: "46c4ae0c311faaea",
+    buildFingerprint: "79a942ab0c61a1c5",
     repo: "", // для ссылки на PR из номера
     tickMs: 15000,
     mergeGraceMs: 90000, // сколько ждём мерж, прежде чем нажать кнопки за агента
@@ -804,7 +804,7 @@
 
   const NTFY_BASE = "https://ntfy.sh";
   const SCRIPT_VERSION =
-    (typeof GM_info !== "undefined" && GM_info?.script?.version) || "1.33.0";
+    (typeof GM_info !== "undefined" && GM_info?.script?.version) || "1.33.1";
 
   /** «https://ntfy.sh/topic?x=1» и «topic» одинаково дают topic. */
   function normalizeNtfyTopic(raw) {
@@ -23704,6 +23704,32 @@ function reviewPullRequest({ files, pr, zone } = {}) {
     return true;
   }
 
+  /** Только поля для диагностики: промпты, текст и URL никогда не уходят в Relay. */
+  function relayLocalStateSummary(value) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+    const out = {};
+    for (const key of ["kind", "roleId", "roleName", "roleFn", "turnId", "runId", "ref"]) {
+      const item = value[key];
+      if (typeof item === "string" && item.trim()) out[key] = item.trim().slice(0, 120);
+    }
+    for (const key of ["at", "sentAt", "tries"]) {
+      const item = Number(value[key]);
+      if (Number.isFinite(item) && item > 0) out[key] = item;
+    }
+    for (const key of ["verified", "undelivered", "captcha"]) {
+      if (typeof value[key] === "boolean") out[key] = value[key];
+    }
+    if (value.heal && typeof value.heal === "object") {
+      const heal = {};
+      for (const key of ["kind", "runId"]) {
+        const item = value.heal[key];
+        if (typeof item === "string" && item.trim()) heal[key] = item.trim().slice(0, 120);
+      }
+      if (Object.keys(heal).length) out.heal = heal;
+    }
+    return out;
+  }
+
   /** POST действия в службу. Служба живёт на машине владельца, без неё — тишина. */
   async function relayPost(body) {
     const base = relayBase();
@@ -23967,7 +23993,15 @@ function reviewPullRequest({ files, pr, zone } = {}) {
         if (relayClient.admin) log(text, true, { ntfy: "quiet" });
         await relayPost({
           action: "event", slotId, kind: "state", level: relayClient.admin ? "warn" : "info", text,
-          data: { relayClientState: true, localBusy: true, localWaiting: holdKey },
+          data: {
+            relayClientState: true,
+            localBusy: true,
+            localWaiting: holdKey,
+            localState: {
+              expect: relayLocalStateSummary(waiting),
+              pending: relayLocalStateSummary(pending),
+            },
+          },
         });
       }
       if (waiting) await relayBeat(slotId, waiting);

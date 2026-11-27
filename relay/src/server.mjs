@@ -306,6 +306,7 @@ export function createTransportServer({
           token,
           fetchImpl,
           book: bridgeReady() ? { url: bridge.url } : null,
+          proxy: currentProxy(),
         }));
       }
 

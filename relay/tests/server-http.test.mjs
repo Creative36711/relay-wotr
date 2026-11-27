@@ -132,7 +132,7 @@ test("пульт: поле токена Notion и честная подпись 
     assert.match(html, /id="notion-token"/, "есть куда вставить токен Notion");
     assert.match(html, /Проверить токен/, "и чем его проверить");
 
-    assert.match(html, /id="btn-notion-net"/, "и чем проверить сеть — без токена");
+    assert.match(html, /id="btn-notion-net"[^>]*>Проверить сеть/, "видимая кнопка проверки сети без токена названа прямо");
 
     const js = await (await fetch(`${ctx.base}/app.js`)).text();
     // Токен уходит на свой маршрут и без перезапуска службы.
