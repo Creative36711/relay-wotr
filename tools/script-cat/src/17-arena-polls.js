@@ -94,7 +94,7 @@
    * кнопку, а текст остаётся висеть в поле (24.10, 18:50).
    */
   async function pollWait(check, timeoutMs = 4000, stepMs = 120) {
-    const deadline = Date.now() + timeoutMs;
+    const deadline = Date.now() + patience(timeoutMs);
     while (Date.now() < deadline) {
       const found = check();
       if (found) return found;
@@ -401,7 +401,7 @@
    * → закрыть заново» и давал мигание, которое видно глазом.
    */
   async function ensureComposer(timeoutMs = 20000, { role = null } = {}) {
-    const deadline = Date.now() + timeoutMs;
+    const deadline = Date.now() + patience(timeoutMs);
     let closed = 0;
     let polled = 0;
     let foreign = null;
@@ -506,7 +506,10 @@
    * `disabled`, и клик по ней ничего не делает. Поэтому ждём именно активности.
    */
   async function waitForSendReady(editor, timeoutMs = 4000) {
-    const deadline = Date.now() + timeoutMs;
+    // D-036: в фоновой вкладке браузер режет таймеры (до одного пробуждения
+    // в минуту) — короткий дедлайн истекает раньше первой проверки, и отправка
+    // «не уходит», пока Мастер не вернётся во вкладку. Растягиваем как в 19.
+    const deadline = Date.now() + patience(timeoutMs);
     let attempts = 0;
     while (Date.now() < deadline) {
       const btn = sendButton(editor);
@@ -552,7 +555,7 @@
     const started = Date.now();
     // Пустая настройка не должна превращать ожидание в NaN: без числа
     // deadline был бы NaN, и кнопка считалась бы недоступной мгновенно.
-    const deadline = started + (Number(timeoutMs) || 20000);
+    const deadline = started + patience(Number(timeoutMs) || 20000);
     let lastPrompt = 0;
     let rewrites = 0;
     // 1.16.1: перевставки по непринятому вводу считаются отдельно от возврата
@@ -786,7 +789,7 @@
   async function waitSent(key, known, timeoutMs, text = "", since = 0) {
     // Ожидание не должно стать бесконечным из-за пустой настройки: без числа
     // deadline был бы NaN, и опрос шёл бы вечно.
-    const deadline = Date.now() + (Number(timeoutMs) || 6000);
+    const deadline = Date.now() + patience(Number(timeoutMs) || 6000);
     for (;;) {
       // Капча важнее любого признака: Arena успевает показать нашу реплику до
       // проверки, а до агента она не доходит. Признак «отправлено» в это
@@ -865,7 +868,7 @@
    * котором появление капчи отменяет её так же, как капча до клика.
    */
   async function captchaGuard() {
-    const deadline = Date.now() + (Number(C.captchaGuardMs) || 8000);
+    const deadline = Date.now() + patience(Number(C.captchaGuardMs) || 8000);
     while (Date.now() < deadline) {
       if (captchaDialog()) return true;
       await sleep(400);

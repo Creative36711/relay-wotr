@@ -38,8 +38,8 @@ const cut = (from, to) => {
 };
 
 // ── 0. Версия: D-122 из 1.16.1 присутствует и в выпуске 1.19.0 ────────────
-assert.match(src, /^\/\/ @version\s+1\.35\.2\s*$/m, 'сборка 1.35.2 объявлена');
-assert.match(src, /\|\| "1.35.2";/, 'SCRIPT_VERSION совпадает с @version');
+assert.match(src, /^\/\/ @version\s+1\.35\.3\s*$/m, 'сборка 1.35.3 объявлена');
+assert.match(src, /\|\| "1.35.3";/, 'SCRIPT_VERSION совпадает с @version');
 
 // ── 1. Факт приёма ввода запоминается в writePrompt ────────────────────────
 const writeSrc = cut('  function writePrompt(editor, text, attempt = 1) {', '  const composerText =');
@@ -72,7 +72,7 @@ const runWait = async ({ everRegistered, healWorks = true, budget = 20000, healM
   const field = () => text;
   const wait = new Function(
     'sendReady', 'writePrompt', 'log', 'sleep', 'C', 'Date', 'flat', 'composerText',
-    'reinsertPrompt', 'unregisteredWrite', 'lastWrite', 'dbg',
+    'reinsertPrompt', 'unregisteredWrite', 'lastWrite', 'dbg', 'patience',
     `${waitSrc}\nreturn waitSendReady;`,
   )(
     () => (accepted && text ? { ok: true, btn: 'SEND' } : { ok: false, why: 'кнопка Send ещё неактивна', editor: {} }),
@@ -99,6 +99,7 @@ const runWait = async ({ everRegistered, healWorks = true, budget = 20000, healM
     () => !everRegistered,
     { registered: !everRegistered },
     (...args) => out.dbg.push(args),
+    (ms) => ms,
   );
   const btn = await wait({}, 'задание 4182 знака', budget);
   return { btn, ...out, field: field() };

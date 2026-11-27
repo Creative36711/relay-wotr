@@ -87,6 +87,7 @@ const runWait = async ({ readyAfter, budget = 900, fieldText = '' }) => {
     'Date',
     'flat',
     'composerText',
+    'patience',
     `${waitSrc}\nreturn waitSendReady;`,
   )(
     () => {
@@ -109,6 +110,7 @@ const runWait = async ({ readyAfter, budget = 900, fieldText = '' }) => {
     // flat/composerText — боевые помощники; поле отдаёт то, что в него вставили.
     (x) => String(x || '').replace(/[\s\u00a0]+/g, ' ').trim().toLowerCase(),
     () => fieldText,
+    (ms) => ms,
   );
   const btn = await wait({}, 'задание CASEA-2.12', budget);
   return { btn, ...out };

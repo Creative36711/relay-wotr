@@ -91,7 +91,7 @@ const waitSrc = cut('  async function waitSent(', '  /**\n   * Текст зад
 // проверяется влияние капчи, а не расхождение текстов.
 function waitSentWith({ captcha, fresh = false, holds = false, same = true }) {
   const fn = new Function(
-    'userSaysSince', 'composerHolds', 'sameSubmission', 'captchaDialog', 'sleep', 'Date',
+    'userSaysSince', 'composerHolds', 'sameSubmission', 'captchaDialog', 'sleep', 'Date', 'patience',
     `${waitSrc}\nreturn waitSent;`,
   );
   const run = fn(
@@ -101,6 +101,7 @@ function waitSentWith({ captcha, fresh = false, holds = false, same = true }) {
     () => (captcha ? {} : null),
     async () => {},
     Date,
+    (ms) => ms,
   );
   return run('ключ', ['m-old'], 10, 'текст задания', 0);
 }
@@ -142,7 +143,7 @@ const guardSrc = cut('  async function captchaGuard() {', '  /** Enter в пол
   const run = (dialogAt) => {
     let calls = 0;
     let now = 0;
-    const fn = new Function('sleep', 'captchaDialog', 'C', 'Date', `${guardSrc}\nreturn captchaGuard;`)(
+    const fn = new Function('sleep', 'captchaDialog', 'C', 'Date', 'patience', `${guardSrc}\nreturn captchaGuard;`)(
       async () => {
         now += 400;
       },
@@ -152,6 +153,7 @@ const guardSrc = cut('  async function captchaGuard() {', '  /** Enter в пол
       },
       { captchaGuardMs: 8000 },
       { now: () => now },
+      (ms) => ms,
     );
     return fn();
   };

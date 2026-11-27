@@ -133,7 +133,7 @@
   /** Кнопка действительно готова: в документе, видима и не заблокирована. */
   async function clickReady(el, timeoutMs = C.clickReadyMs) {
     if (pressable(el)) return true;
-    const found = await waitFor(() => (pressable(el) ? el : null), timeoutMs, 250);
+    const found = await waitFor(() => (pressable(el) ? el : null), patience(timeoutMs), 250);
     return Boolean(found);
   }
 
