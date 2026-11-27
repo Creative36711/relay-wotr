@@ -125,6 +125,9 @@ held = false; approved = false; await wrapped.refreshQuestions(); await wrapped.
 assert(heldNotes > 0, 'но простой очереди не молчит: блокировка записывается в журнал (внешний D-023)');
 approved = true; await wrapped.refreshQuestions(); await wrapped.refreshDecisions(); assert.equal(qCalls + dCalls, 2);
 assert.match(bootSource, /GM_getValue\(K\.step, false\) && !projectHeld\(\)/, 'сохранённый автоматический шаг не снимает hold');
+const profilesSource = readFileSync(new URL('../src/02-profiles-core.js', import.meta.url), 'utf8');
+assert.match(profilesSource, /sessionStorage\.setItem\(PROJECT_HOLD_PREFIX \+ profile\.id, "1"\)/,
+  'переключение проекта из пульта ставит удержание (D-035)');
 
 // Из ссылок берётся ID базы из пути, не ID view после '?'; чужой хост не принимается.
 const lookupSource = cut('  /** UUID базы из HTTPS-ссылки Notion;', '  /** Read-only план миграции:');
