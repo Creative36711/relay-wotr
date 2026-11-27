@@ -266,7 +266,7 @@ function operatorGuidance(shot) {
   };
   if (Number(shot.counts?.waiting || 0) > 0) return {
     tone: "ok", mark: "✓", title: "Работа в очереди",
-    detail: `В очереди ${shot.counts.waiting} заданий. Автоцикл выдаст их сам; в ручном режиме «Шаг» по-прежнему доступен.`,
+    detail: `В очереди ${shot.counts.waiting} заданий. При выдаче Relay подберёт подходящий слот/аккаунт с учётом квоты; если пары роль×слот ещё нет, сначала запустит provisioning, затем отправит карточку. Автоцикл сделает это сам; в ручном режиме нажмите «Шаг».`,
     canStep: true,
   };
   return {
