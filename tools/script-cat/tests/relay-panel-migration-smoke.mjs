@@ -13,7 +13,8 @@ const web = await readFile(new URL("../../../relay/web/app.js", import.meta.url)
 test("Node Relay: вкладка видима при локальной паузе, но пауза не разрешает pull", () => {
   const tick = client.slice(client.indexOf("async function relayClientTick()"), client.indexOf("function relayClientStart()"));
   assert.ok(tick.indexOf("relayIdentity()") < tick.indexOf("isPaused()"), "сначала hello/регистрация, затем локальный pause gate");
-  assert.match(tick, /relayIdentity\(\{ force: true \}\)/, "paused-вкладка обновляет presence heartbeat");
+  assert.match(tick, /refreshPresence[\s\S]*?relayIdentity\(\{ force: refreshPresence \}\)/, "каждая вкладка обновляет presence в службе раз в минуту даже при локальном ожидании");
+  assert.match(client, /relayClient\.slotId && !force && nowMs - relayClient\.helloAt < 600000/, "force обходит десятиминутный кеш hello после перезапуска службы");
   assert.match(service, /localPaused: Boolean\(localPaused\)/, "снимок хранит локальную паузу клиента");
   const identity = client.slice(client.indexOf("async function relayIdentity("), client.indexOf("/** Отчёт службе"));
   assert.match(identity, /const email = String\(\(read && read\.email\) \|\| ""\)/, "hello использует email только текущей вкладки Arena");

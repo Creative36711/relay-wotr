@@ -154,7 +154,7 @@ test("service: задание выдаётся только своему сло�
   });
   // Вкладка worker-2 не должна получить задание чужого контейнера: она его не
   // выполнит, а строка застрянет в «leased» до ручной чистки.
-  const pulled = await service.pull({ scriptVersion: "1.30.0", slotId: "worker-2", tab: "t2" });
+  const pulled = await service.pull({ scriptVersion: "1.31.0", slotId: "worker-2", tab: "t2" });
   // Отсутствие `kind: provision` и есть проверка: задание осталось за worker-1.
   assert.notEqual(pulled.kind, "provision", `worker-2 не должен создавать агента чужого слота: ${pulled.why}`);
   assert.equal(pulled.work, null);

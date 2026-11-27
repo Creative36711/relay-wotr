@@ -111,10 +111,11 @@
 
   /** Опознание: почта контейнера → слот книги. Кеш живёт до перезагрузки. */
   async function relayIdentity({ force = false } = {}) {
-    if (relayClient.slotId && !force) return relayClient.slotId;
     const nowMs = Date.now();
-    // Повтор hello раз в 10 минут: аккаунт в книге могут добавить после старта.
-    if (relayClient.slotId && nowMs - relayClient.helloAt < 600000) return relayClient.slotId;
+    // Обычный вызов держит кеш до 10 минут; forced presence обязан обходить кеш.
+    // Иначе после перезапуска Node оставался бы slotId, но служба не видела
+    // вкладку до следующего полноценного pull.
+    if (relayClient.slotId && !force && nowMs - relayClient.helloAt < 600000) return relayClient.slotId;
     const read = typeof readAccountEmail === "function"
       ? await readAccountEmail({ expand: false }).catch(() => null)
       : null;
@@ -290,7 +291,8 @@
     // Объявляем вкладку службе даже при локальной паузе. Иначе пульт видит
     // «административный клиент не найден» и не может объяснить, что именно
     // мешает команде. Пауза по-прежнему запрещает брать работу/turn.
-    const slotId = await relayIdentity().catch(() => "");
+    const refreshPresence = !relayClient.lastPresenceAt || Date.now() - Number(relayClient.lastPresenceAt) >= 60000;
+    const slotId = await relayIdentity({ force: refreshPresence }).catch(() => "");
     if (typeof setStatus === "function") setStatus();
     if (!slotId) return;
     const paused = typeof isPaused === "function" && isPaused();
