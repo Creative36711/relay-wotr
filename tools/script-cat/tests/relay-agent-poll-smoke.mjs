@@ -106,6 +106,7 @@ function makePollApi(groups) {
   const fn = new Function(
     'document', 'GM_getValue', 'GM_setValue', 'log', 'sleep', 'firstLine', 'textHash',
     'nowIso', 'gateway', 'C', 'pause', 'location', 'window', 'nodeId', 'visible', 'getComputedStyle', 'Date',
+    'patience',
     `${pollBlock}
      return { answerPolls, pollQuestions, pollLogEntry, POLL_REPLY };`,
   );
@@ -131,6 +132,7 @@ function makePollApi(groups) {
     () => ({ visibility: 'visible', display: 'block' }),
     // Часы идут быстрее реальных: ожидание кнопки не должно растягивать пробу.
     { now: () => (clock += 250) },
+    (ms) => ms,
   );
 }
 

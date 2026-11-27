@@ -142,7 +142,7 @@ function harness({ server = backend(), storage = new Map(), clock = { ms: 100000
   const create = new Function(
     'document', 'GM_getValue', 'GM_setValue', 'log', 'sleep', 'firstLine', 'nowIso',
     'request', 'fetch', 'networkish', 'K', 'C', 'pause', 'location', 'window',
-    'nodeId', 'visible', 'getComputedStyle', 'Date',
+    'nodeId', 'visible', 'getComputedStyle', 'Date', 'patience',
     `${hashBlock}\n${gatewayBlock}\n${pollBlock}\nreturn { answerPolls, pollLogEntry, flushPollJournal, pollJournalQueue, gateway, POLL_REPLY };`,
   );
   const api = create(
@@ -154,6 +154,7 @@ function harness({ server = backend(), storage = new Map(), clock = { ms: 100000
     { KeyboardEvent: class KeyboardEvent { constructor(type) { this.type = type; } } },
     (node) => node.id.replace('chat-message-', ''), () => true,
     () => ({ visibility: 'visible', display: 'block' }), now,
+    (ms) => ms,
   );
   return { ...api, server, storage, clock, state, network, logs, requests, get, set };
 }

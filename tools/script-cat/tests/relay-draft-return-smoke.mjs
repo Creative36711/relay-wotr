@@ -58,7 +58,7 @@ assert.equal(makeSame([TEXT], TEXT)(null, KEY, TEXT), false, 'без наход�
 // ── 2. waitSent: поле больше не одиночный veto ──────────────────────────────
 const waitSrc = cut('  async function waitSent(', '  /**\n   * Текст задания всё ещё в поле ввода?');
 const waitSent = (bubbles, field, same, { captcha = false } = {}) => new Function(
-  'userSaysSince', 'composerHolds', 'sameSubmission', 'captchaDialog', 'sleep', 'Date',
+  'userSaysSince', 'composerHolds', 'sameSubmission', 'captchaDialog', 'sleep', 'Date', 'patience',
   `${waitSrc}\nreturn waitSent;`,
 )(
   () => (bubbles.length ? { id: 'm-0', at: 0 } : null),
@@ -67,6 +67,7 @@ const waitSent = (bubbles, field, same, { captcha = false } = {}) => new Functio
   () => (captcha ? {} : null),
   async () => {},
   Date,
+  (ms) => ms,
 )(KEY, ['m-old'], 20, TEXT, 0);
 
 const incident = await waitSent([TEXT], TEXT, true);

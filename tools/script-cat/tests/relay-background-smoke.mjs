@@ -73,6 +73,29 @@ assert.doesNotMatch(src, /logThrottled\(\s*"[^"]*bg[^"]*"/, 'фон не лог�
 assert.match(src, /const tabHidden = \(\) => \{/, 'распознавание скрытой вкладки осталось');
 assert.match(src, /const patience = \(ms\) => \(tabHidden\(\)/, 'ожидания в фоне по-прежнему растягиваются');
 
+// ── 3б. D-036: весь путь отправки растягивает дедлайны в фоне ──────────────
+// Симптом Мастера: плашка убрана, промпт в поле, а сообщение не уходит, пока
+// он сам не переключится на вкладку. Дедлайн короче периода пробуждения
+// фоновой вкладки истекает до первой проверки — решает только patience.
+for (const [fn, what] of [
+  ['async function pollWait(', 'опрос поля'],
+  ['async function ensureComposer(', 'поиск редактора'],
+  ['async function waitForSendReady(', 'активация кнопки Send'],
+  ['async function waitSendReady(', 'ожидание готовности Send'],
+  ['async function waitSent(', 'подтверждение доставки'],
+  ['async function captchaGuard(', 'карантин капчи'],
+]) {
+  const at = src.indexOf(fn);
+  assert.ok(at > 0, `${what}: ${fn} на месте`);
+  const body = src.slice(at, src.indexOf('\n  }', at));
+  assert.match(body, /patience\(/, `${what}: дедлайн растягивается patience в фоне`);
+}
+assert.match(
+  src,
+  /waitFor\(\(\) => \(pressable\(el\) \? el : null\), patience\(timeoutMs\)/,
+  'clickReady тоже ждёт через patience',
+);
+
 // ── 4. Возврат во вкладку будит цикл сразу ─────────────────────────────────
 assert.match(
   src,

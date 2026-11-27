@@ -74,6 +74,7 @@ function waitSentWith({ fresh = false, holdsText = '', captcha = false, same = t
     'captchaDialog',
     'sleep',
     'Date',
+    'patience',
     `${waitOnly}\nreturn waitSent;`,
   );
   const run = fn(
@@ -83,6 +84,7 @@ function waitSentWith({ fresh = false, holdsText = '', captcha = false, same = t
     () => (captcha ? {} : null),
     async () => {},
     Date,
+    (ms) => ms,
   );
   return run('dispatch 1fc527ed, run 8abe7712', ['m-old'], 10, 'Задание 5.4 …', 0);
 }
