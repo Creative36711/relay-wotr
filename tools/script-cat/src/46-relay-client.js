@@ -142,7 +142,7 @@
           // паузе, а не только факт паузы — иначе после сброса хода кнопка
           // «Шаг» мертва без единой объяснимой строки.
           localPauseReason: typeof isPaused === "function" && isPaused() && typeof GM_getValue === "function"
-            ? String(GM_getValue(K.paused, "") || "").replace(/\s+/g, " ").slice(0, 160)
+            ? String((typeof tabPauseReason === "function" ? tabPauseReason() : GM_getValue(K.paused, "")) || "").replace(/\s+/g, " ").slice(0, 160)
             : "",
           v: 1,
           tab: relayTabId(),

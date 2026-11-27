@@ -1,5 +1,109 @@
   // ───────────────────────────── пауза ─────────────────────────────
-  const isPaused = () => Boolean(GM_getValue(K.paused, ""));
+  /**
+   * Пауза принадлежит ВКЛАДКЕ, а не всем контейнерам сразу.
+   *
+   * 28.11 в 00:44:32 капча появилась в админском контейнере и поставила паузу.
+   * `cfn-paused` — ключ хранилища ScriptCat, а оно общее для всех вкладок
+   * профиля: через секунду на паузе стояли все четыре контейнера
+   * (`localPaused: true` у admin, worker-1…3 с одной и той же причиной), и
+   * пульт не мог запустить ни одного хода. Человек решил капчу в одной
+   * вкладке — разморозились все, хотя «Продолжить» он нажимал один раз.
+   *
+   * Теперь пауза живёт в `sessionStorage`: у каждой вкладки своё состояние,
+   * переходы между страницами агентов его сохраняют, а соседние контейнеры
+   * оно не трогает. Общий ключ остаётся памятью о прошлой сессии: старую
+   * паузу читаем один раз, чтобы не потерять причину, но не наследуем её
+   * как действующую.
+   */
+  const PAUSE_TAB_KEY = "cfn-paused-tab-v1";
+  const PAUSE_CTX_TAB_KEY = "cfn-pause-context-tab-v1";
+  const TAB_BORN_KEY = "cfn-tab-born-v1";
+
+  /** Когда открылась эта вкладка: по нему отличаем наследие от чужой паузы. */
+  function tabBornAt() {
+    try {
+      const seen = Number(sessionStorage.getItem(TAB_BORN_KEY) || 0);
+      if (seen > 0) return seen;
+      const born = Date.now();
+      sessionStorage.setItem(TAB_BORN_KEY, String(born));
+      return born;
+    } catch {
+      return 0;
+    }
+  }
+
+  /**
+   * Пауза этой вкладки.
+   *
+   * Наследие — только пауза, поставленная ДО открытия вкладки: она описывает
+   * остатки прошлой сессии, и терять её причину незачем. Пауза, поставленная
+   * позже (капча в соседнем контейнере), к этой вкладке не относится: именно
+   * из-за такого наследования 28.11 замерзли все четыре контейнера сразу.
+   */
+  function tabPauseReason() {
+    try {
+      const own = sessionStorage.getItem(PAUSE_TAB_KEY);
+      if (own !== null) return own;
+      const shared = GM_getValue(K.paused, "");
+      let reason = "";
+      let at = 0;
+      if (shared && typeof shared === "object") {
+        reason = String(shared.reason || "");
+        at = Number(shared.at || 0);
+      } else {
+        reason = String(shared || "");
+        // Строка — пауза сборки до 1.35.5: считаем её старой.
+        at = 0;
+      }
+      const born = tabBornAt();
+      const inherited = reason && (!at || !born || at < born) ? reason : "";
+      sessionStorage.setItem(PAUSE_TAB_KEY, inherited);
+      return inherited;
+    } catch {
+      return String(GM_getValue(K.paused, "") || "");
+    }
+  }
+
+  function tabPauseSet(reason) {
+    const value = String(reason || "");
+    try {
+      if (value) sessionStorage.setItem(PAUSE_TAB_KEY, value);
+      else sessionStorage.removeItem(PAUSE_TAB_KEY);
+      // Дублируем в общий ключ — но это только история и наследие для
+      // вкладки, открытой после паузы. Действующей паузой он больше не
+      // считается: `isPaused` читает вкладочное значение, поэтому запись
+      // сюда не морозит соседние контейнеры.
+      GM_setValue(K.paused, value ? { reason: value, at: Date.now() } : "");
+    } catch {
+      // Приватный режим: остаётся общее хранилище — прежнее поведение.
+      GM_setValue(K.paused, value ? { reason: value, at: Date.now() } : "");
+    }
+    return value;
+  }
+
+  function tabPauseContext() {
+    try {
+      const raw = sessionStorage.getItem(PAUSE_CTX_TAB_KEY);
+      if (raw !== null) return raw ? JSON.parse(raw) : null;
+    } catch {
+      // Ниже — общий ключ.
+    }
+    return GM_getValue(K.pause, null);
+  }
+
+  function tabPauseContextSet(context) {
+    try {
+      if (context) sessionStorage.setItem(PAUSE_CTX_TAB_KEY, JSON.stringify(context));
+      else sessionStorage.removeItem(PAUSE_CTX_TAB_KEY);
+    } catch {
+      // Приватный режим: контекст живёт в общем ключе.
+    }
+    // Общий ключ — история для вкладки, открытой позже; действующим он не
+    // считается (см. `tabPauseContext`).
+    GM_setValue(K.pause, context || null);
+  }
+
+  const isPaused = () => Boolean(tabPauseReason());
 
   /**
    * Автоцикл — состояние ОКНА, а не хранилища скрипта.
@@ -81,7 +185,8 @@
   function pause(reason, context = {}) {
     // Причина, которая была ДО этой паузы: по ней решается, новый это инцидент
     // или уточнение того же самого (D-094).
-    const before = String(GM_getValue(K.paused, "") || "");
+    const ownReason = () => (typeof tabPauseReason === "function" ? tabPauseReason() : String(GM_getValue(K.paused, "") || ""));
+    const before = String(ownReason() || "");
     const info = {
       kind: context.kind || "error",
       reason: String(reason),
@@ -142,7 +247,7 @@
     // уже записаны, повторно их не пишем и разбор второй раз не запускаем.
     // Другая причина того же инцидента дописывается в контекст (`also`) — чтобы
     // не потерять факт, но не подменять ответственного.
-    const live = GM_getValue(K.pause, null);
+    const live = typeof tabPauseContext === "function" ? tabPauseContext() : GM_getValue(K.pause, null);
     // Один инцидент — это либо буквально та же остановка (ключ совпал), либо
     // каскад по той же карточке: `arena-error` приходит через секунду после
     // `prompt-compile`, и причина у него своя. Вторая пауза каскада описывает
@@ -184,7 +289,8 @@
       if (!also.some((item) => item && item.reason === info.reason)) {
         also.push({ kind: info.kind, reason: info.reason, at: info.at });
       }
-      GM_setValue(K.pause, { ...live, also, lastAt: info.at });
+      if (typeof tabPauseContextSet === "function") tabPauseContextSet({ ...live, also, lastAt: info.at });
+      else GM_setValue(K.pause, { ...live, also, lastAt: info.at });
       log(`ПАУЗА (та же остановка, причина уточнена): ${info.reason}`, true, { skip: true, ntfy: false });
       setStatus();
       return;
@@ -222,8 +328,10 @@
       }
       return;
     }
-    GM_setValue(K.paused, info.reason);
-    GM_setValue(K.pause, info);
+    if (typeof tabPauseSet === "function") tabPauseSet(info.reason);
+    else GM_setValue(K.paused, info.reason);
+    if (typeof tabPauseContextSet === "function") tabPauseContextSet(info);
+    else GM_setValue(K.pause, info);
     log(`ПАУЗА${forHuman ? "" : ` (решает ${info.with === "warden" ? "приёмка" : info.with === "transport" ? "транспорт" : info.with === "install" ? "установка сборки" : "повтор"})`}: ${info.reason}`, true, { skip: true });
     // Тихая пауза — для остановок, которые Мастер не разбирает: вопрос ушёл
     // приёмке, миссию закрыли в обход неё, приёмка сама решает по существу.
@@ -480,11 +588,13 @@
   }
 
   function resume(reason = "проверено Мастером") {
-    const before = GM_getValue(K.paused, "");
+    const before = typeof tabPauseReason === "function" ? tabPauseReason() : GM_getValue(K.paused, "");
     if (!before) return;
-    const paused = GM_getValue(K.pause, null);
-    GM_setValue(K.paused, "");
-    GM_setValue(K.pause, null);
+    const paused = typeof tabPauseContext === "function" ? tabPauseContext() : GM_getValue(K.pause, null);
+    if (typeof tabPauseSet === "function") tabPauseSet("");
+    else GM_setValue(K.paused, "");
+    if (typeof tabPauseContextSet === "function") tabPauseContextSet(null);
+    else GM_setValue(K.pause, null);
     // Пауза из-за «Something went wrong»: сообщение не приняли, и ожидание
     // ответа — фикция. «Продолжить» — это и есть просьба отправить заново,
     // поэтому окно свежести ошибки (`arenaRetryMs`) считается от нажатия, а в
@@ -605,13 +715,13 @@
     const el = document.getElementById(ui.status);
     if (!el) return;
     const auto = autoOn();
-    const paused = GM_getValue(K.paused, "");
+    const paused = typeof tabPauseReason === "function" ? tabPauseReason() : GM_getValue(K.paused, "");
     const me = GM_getValue("cfn-me", "");
     const short = paused.length > 70 ? `${paused.slice(0, 70)}…` : paused;
     // D-092: панель называет адресата. «Пауза» без адресата читается как
     // «нужен Мастер», а теперь это не так: постановку разбирает приёмка,
     // поломку — транспорт. Красный цвет — только тому, что правда ждёт человека.
-    const who = String(GM_getValue(K.pause, null)?.with || "");
+    const who = String((typeof tabPauseContext === "function" ? tabPauseContext() : GM_getValue(K.pause, null))?.with || "");
     const label = { master: "ждёт Мастера", warden: "решает приёмка", transport: "решает транспорт", self: "повтор", install: "ждёт установки сборки" }[who] || "";
     // D-004: метка аккаунта рядом с ролью. Без неё на четырёх контейнерах
     // невозможно понять, какая это вкладка, и «почему не идёт» ищут не там.
@@ -771,13 +881,13 @@
       return;
     }
     const auto = autoOn();
-    const reason = GM_getValue(K.paused, "");
+    const reason = typeof tabPauseReason === "function" ? tabPauseReason() : GM_getValue(K.paused, "");
 
     // Пауза. Снять её может только человек: подтверждение показывает причину.
     if (reason) {
       if (!confirm(`Цикл стоит на паузе.\n\nПричина: ${reason}\n\nСнять паузу и продолжить?`)) return;
       if (typeof releaseProjectHold === "function" && !releaseProjectHold()) return;
-      const ctx = GM_getValue(K.pause, null) || {};
+      const ctx = (typeof tabPauseContext === "function" ? tabPauseContext() : GM_getValue(K.pause, null)) || {};
       // Возвращаем тот режим, в котором цикл стоял: пауза не должна
       // превращать ручной шаг в постоянный автоцикл.
       autoSet(ctx.wasAuto === true);

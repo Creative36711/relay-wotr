@@ -724,7 +724,8 @@
         { ntfy: "quiet", title: "Relay: временный сбой" },
       );
       setTimeout(() => {
-        if (!isPaused() || String(GM_getValue(K.paused, "")) !== String(info.reason)) return;
+        const ownReason = typeof tabPauseReason === "function" ? tabPauseReason() : GM_getValue(K.paused, "");
+        if (!isPaused() || String(ownReason) !== String(info.reason)) return;
         resume(`временный сбой: автопродолжение ${decision.attempt} из ${decision.max}`);
       }, Math.max(1000, decision.delayMs));
       return { verdict, decision, retried: true };

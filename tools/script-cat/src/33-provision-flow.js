@@ -98,7 +98,7 @@
   function provisionIdleReason(cfg = provisionConfig()) {
     if (!cfg.agentProvisionEnabled) return "provisioning выключен";
     if (!C.notion) return "нет Notion-токена профиля";
-    if (GM_getValue(K.paused, "")) return "цикл на паузе";
+    if (typeof isPaused === "function" ? isPaused() : GM_getValue(K.paused, "")) return "цикл на паузе";
     if (GM_getValue(K.pending, null) || GM_getValue(K.expect, null)) return "активный командный ход";
     if (GM_getValue(K.pilotWait, null)) return "идёт пилот";
     if (provisionRequestState()) return "provisioning-запрос уже выдан";

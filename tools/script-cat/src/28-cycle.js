@@ -392,7 +392,10 @@
       // Единственное исключение — пауза, поставленная прошлой миссией: к
       // текущей она не относится и молча держала бы новый цикл.
       if (!(await clearStaleMissionPause())) {
-        if (fromToggle) log(`Шаг не выполнен: цикл на паузе (${GM_getValue(K.paused, "")}).`, true);
+        if (fromToggle) {
+          const own = typeof tabPauseReason === "function" ? tabPauseReason() : GM_getValue(K.paused, "");
+          log(`Шаг не выполнен: цикл на паузе (${own}).`, true);
+        }
         return;
       }
     }

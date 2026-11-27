@@ -46,7 +46,7 @@ assert.match(src, /const boot = async \(\) => \{\s*migrateState\(\);\s*\/\/[^\n]
 
 // 1.3. Ни один автопуть не включает цикл сам.
 assert.doesNotMatch(src, /GM_setValue\(K\.auto, true\)/, 'автоцикл не включается через хранилище');
-assert.match(src, /projectApproved\(\) && !projectHeld\(\) && !GM_getValue\(K\.paused, ""\)/, 'ссылка не обходит сохранённую паузу');
+assert.match(src, /projectApproved\(\) && !projectHeld\(\) && !isPaused\(\)/, 'ссылка не обходит сохранённую паузу');
 assert.match(src, /Автоцикл включён через ссылку — только для этой вкладки/, 'это честно сказано');
 
 // ── 2. «Шаг» с корня открывает ту роль, где есть работа ────────────────────

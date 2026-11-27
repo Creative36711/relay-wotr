@@ -347,6 +347,10 @@ test("пульт: поле токена Notion и честная подпись 
     assert.match(js, /shot\.notion\?\.ready \? "none"/, "поле токена скрывается при готовом Notion");
     assert.doesNotMatch(js, /shot\.demo \|\| shot\.notion\?\.ready \? "none"/,
       "строка целиком при готовом Notion не прячется");
+    // Выход из зависшего запроса хода: пауза в ScriptCat не должна делать
+    // пульт нерабочим на 15 минут жизни запроса.
+    assert.match(js, /retry-turn/, "кнопка «Запросить ход заново»");
+    assert.match(js, /Запросить ход заново/);
     assert.match(js, /\/api\/net-deep/, "диагностика по звеньям");
     assert.match(js, /if \(!response\.ok\) throw new Error\(data\.why \|\| `HTTP \$\{response\.status\}`\)/,
       "HTTP failure from network diagnostics is shown instead of rendering an empty report");

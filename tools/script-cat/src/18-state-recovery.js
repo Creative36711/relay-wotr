@@ -50,9 +50,16 @@
     // восстановительная после обновления) оставляла кнопку «Шаг» мёртвой:
     // пульт видел localPaused и запрещал шаг, пока Мастер искал причину в
     // виджете. ↺ — явное действие Мастера, оно снимает и удержание тоже.
-    if (GM_getValue(K.paused, "")) {
-      GM_setValue(K.paused, "");
-      GM_setValue(K.pause, null);
+    // Пауза принадлежит вкладке: снятая здесь, она не размораживает соседние
+    // контейнеры и не снимает их причину (см. `tabPauseReason`).
+    if (typeof tabPauseReason === "function" ? tabPauseReason() : GM_getValue(K.paused, "")) {
+      if (typeof tabPauseSet === "function") {
+        tabPauseSet("");
+        tabPauseContextSet(null);
+      } else {
+        GM_setValue(K.paused, "");
+        GM_setValue(K.pause, null);
+      }
       log("Локальная пауза снята вместе с ходом — кнопка «Шаг» снова доступна.", false, { ntfy: "quiet" });
     }
     // Снимок недоприменённого хода — часть хода: ↺ снимает его вместе с

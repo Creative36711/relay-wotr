@@ -34,7 +34,7 @@
       const clean = new URL(location.href);
       clean.searchParams.delete("cf-auto");
       history.replaceState(null, "", clean.toString());
-      if (projectApproved() && !projectHeld() && !GM_getValue(K.paused, "")) {
+      if (projectApproved() && !projectHeld() && !isPaused()) {
         autoSet(true);
         log("Автоцикл включён через ссылку — только для этой вкладки.");
       } else log("Автозапуск по ссылке пропущен: проверьте допуск, удержание и сохранённую паузу.", true);
@@ -55,7 +55,9 @@
         .then(() => beatHeartbeat())
         .catch((e) => console.warn("[Relay heartbeat]", (e && e.message) || e));
     };
-    if (!GM_getValue(K.paused, "")) beat();
+    // Пауза — своя у вкладки: замороженный соседний контейнер не должен
+    // глушить heartbeat живой вкладки.
+    if (!isPaused()) beat();
     setInterval(beat, Math.max(60000, Number(C.heartbeatMs) || 600000));
     // Вернулись во вкладку — не ждём очередного тика: в фоне таймеры режутся,
     // и без этого следующая проверка могла бы случиться через минуту.
