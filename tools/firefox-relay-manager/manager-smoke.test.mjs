@@ -30,6 +30,13 @@ test("tab lifecycle reuses Arena tabs, leaves admin and user-owned tabs alone", 
   assert.match(background, /slotHasLocalBusy/);
 });
 
+test("a new coordinator turn focuses the admin tab exactly once (D-035)", () => {
+  assert.match(background, /let focusedTurnId = "";/);
+  assert.match(background, /slot\.admin && shot\.turnRequest && String\(shot\.turnRequest\.id \|\| ""\) !== focusedTurnId/,
+    "focus is edge-triggered per turn request id");
+  assert.match(background, /browser\.tabs\.update\(tab\.id, \{ active: true \}\)/);
+});
+
 test("the content bridge forwards only a cycle-mode message, not browser privileges", () => {
   assert.match(bridge, /relay-manager-cycle-mode/);
   assert.match(bridge, /relay-container-manager-mode/);

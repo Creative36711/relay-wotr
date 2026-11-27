@@ -318,8 +318,8 @@ const makeHarness = ({ activeMission, maxTries = 3, holdMs = 1800000 }) => {
 }
 
 // ── 5. Оформление выпуска и настройки ───────────────────────────────────────
-assert.match(src, /^\/\/ @version\s+1\.34\.3\s*$/m, 'сборка 1.34.3 объявлена');
-assert.match(src, /\|\| "1.34.3";/, 'SCRIPT_VERSION совпадает с @version');
+assert.match(src, /^\/\/ @version\s+1\.35\.0\s*$/m, 'сборка 1.35.0 объявлена');
+assert.match(src, /\|\| "1.35.0";/, 'SCRIPT_VERSION совпадает с @version');
 {
   const from = at('  const C = {');
   const cfg = src.slice(from, src.indexOf('\n  };', from));

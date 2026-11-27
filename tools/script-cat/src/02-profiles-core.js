@@ -248,8 +248,13 @@
     if (index >= 0) next[index] = profile;
     else next.push(profile);
     rawSet(PROFILE_REGISTRY_KEY, next);
-    try { sessionStorage.setItem(PROFILE_SESSION_KEY, profile.id); }
-    catch { return false; }
+    try {
+      sessionStorage.setItem(PROFILE_SESSION_KEY, profile.id);
+      // Переключение проекта: отложенный шаг прошлого профиля не должен
+      // выполниться в новом после перезагрузки — до явного действия
+      // («Шаг» из пульта или «Включить» здесь) вкладка держится (D-035).
+      sessionStorage.setItem(PROJECT_HOLD_PREFIX + profile.id, "1");
+    } catch { return false; }
     return true;
   }
 

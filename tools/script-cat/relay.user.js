@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Relay — передача хода между агентами
 // @namespace    https://arena.ai/
-// @version      1.34.3
+// @version      1.35.0
 // @updateURL    https://raw.githubusercontent.com/Creative36711/relay-wotr/main/tools/script-cat/relay.user.js
 // @downloadURL  https://raw.githubusercontent.com/Creative36711/relay-wotr/main/tools/script-cat/relay.user.js
 // @description  Цикл Координатор → исполнитель → Координатор: агент сам коммитит, пушит и мержит PR; ScriptCat ждёт мерж и нажимает Continue.
@@ -97,7 +97,7 @@
     // D-073: отпечаток сборки вшивает build.mjs (SHA-256 источника). Номер версии
     // говорит «какой выпуск», отпечаток — «какая именно сборка»: без него проверка
     // «работает новая версия, а не прежняя под новым номером» невозможна.
-    buildFingerprint: "729eed2d42e0d2ee",
+    buildFingerprint: "20a230826f7f8c3e",
     repo: "", // для ссылки на PR из номера
     tickMs: 15000,
     mergeGraceMs: 90000, // сколько ждём мерж, прежде чем нажать кнопки за агента
@@ -438,8 +438,13 @@
     if (index >= 0) next[index] = profile;
     else next.push(profile);
     rawSet(PROFILE_REGISTRY_KEY, next);
-    try { sessionStorage.setItem(PROFILE_SESSION_KEY, profile.id); }
-    catch { return false; }
+    try {
+      sessionStorage.setItem(PROFILE_SESSION_KEY, profile.id);
+      // Переключение проекта: отложенный шаг прошлого профиля не должен
+      // выполниться в новом после перезагрузки — до явного действия
+      // («Шаг» из пульта или «Включить» здесь) вкладка держится (D-035).
+      sessionStorage.setItem(PROJECT_HOLD_PREFIX + profile.id, "1");
+    } catch { return false; }
     return true;
   }
 
@@ -893,7 +898,7 @@
 
   const NTFY_BASE = "https://ntfy.sh";
   const SCRIPT_VERSION =
-    (typeof GM_info !== "undefined" && GM_info?.script?.version) || "1.34.3";
+    (typeof GM_info !== "undefined" && GM_info?.script?.version) || "1.35.0";
 
   /** «https://ntfy.sh/topic?x=1» и «topic» одинаково дают topic. */
   function normalizeNtfyTopic(raw) {
@@ -2223,8 +2228,14 @@
   }
   function projectRoleAllowed(role) {
     if (ACTIVE_PROFILE.legacy) return true;
+    // D-015: у рабочих ролей «Agent URL» в «Ролях» пуст — адрес берётся из
+    // листа «Экземпляры» (пара роль + слот), и проверять здесь нечего:
+    // отсутствие адреса назовёт `roleDeliveryUrl` ниже, с причиной. А вот
+    // НЕПРАВИЛЬНЫЙ адрес — стоп: страница открылась бы не в том контейнере.
+    const raw = String(role?.url || "").trim();
+    if (!raw) return true;
     try {
-      const target = new URL(role.url, location.href);
+      const target = new URL(raw, location.href);
       if (target.origin === location.origin && /^\/agent\/[\w-]+\/?$/.test(target.pathname)) return true;
     } catch { /* остановка ниже */ }
     pause("Адрес роли должен быть страницей агента Arena на том же домене, что и эта вкладка. " +
@@ -2411,12 +2422,22 @@
       const roleIds = new Set();
       const recipientOptions = schemas["Запросы"]["Кому"].select.options || [];
       for (const role of active) {
-        let url;
-        try { url = new URL(role.url); } catch { throw new Error(`У роли «${role.name}» некорректный Agent URL.`); }
-        if (url.origin !== location.origin || !/^\/agent\/[\w-]+\/?$/.test(url.pathname) || !role.id)
-          throw new Error(`У роли «${role.name}» Agent URL должен быть страницей агента на домене этой вкладки.`);
-        if (roleIds.has(role.id.toLowerCase())) throw new Error("Несколько активных ролей используют один Agent URL.");
-        roleIds.add(role.id.toLowerCase());
+        // D-015: у рабочих ролей «Agent URL» в «Ролях» снят — рабочий адрес
+        // живёт в листе «Экземпляры» (пара роль + слот) и появляется там,
+        // когда агента создаёт сам транспорт. Пустой адрес — норма, а не
+        // поломка: проверяем только то, что заполнено, и не требуем того,
+        // что создаётся лениво при выдаче. Требовать URL у каждой активной
+        // роли — запрет на включение проекта, который чинится только правкой
+        // базы, хотя системе от неё ничего не нужно.
+        const rawUrl = String(role.url || "").trim();
+        if (rawUrl) {
+          let url;
+          try { url = new URL(rawUrl); } catch { throw new Error(`У роли «${role.name}» некорректный Agent URL.`); }
+          if (url.origin !== location.origin || !/^\/agent\/[\w-]+\/?$/.test(url.pathname) || !role.id)
+            throw new Error(`У роли «${role.name}» Agent URL должен быть страницей агента на домене этой вкладки.`);
+          if (roleIds.has(role.id.toLowerCase())) throw new Error("Несколько активных ролей используют один Agent URL.");
+          roleIds.add(role.id.toLowerCase());
+        }
         if (["Executor", "Auditor"].includes(role.fn) && !recipientOptions.some((option) => option.name === role.name))
           throw new Error(`В «Запросы → Кому» отсутствует вариант «${role.name}».`);
       }
@@ -12798,7 +12819,7 @@
     const held = typeof projectHeld === "function" && projectHeld();
     const reason = typeof projectBlockReason === "function" ? projectBlockReason() : "";
     const why = held
-      ? "вкладка держит переключение проекта (нажмите «Шаг» или «Включить» — удержание снимется)"
+      ? "вкладка держит переключение проекта (нажмите «Шаг» на пульте или «Включить» здесь — удержание снимется)"
       : reason === "invalid"
         ? "профиль вкладки повреждён или изменён в другой вкладке («Управление проектами» → обновите страницу)"
         : reason === "legacy"
@@ -17511,8 +17532,14 @@
         sentAt: Number(receipt.sentAt) || Date.now(), verified: true,
       };
       GM_setValue(K.expect, restored);
+      // D-015: «своя страница» сверяется с адресом ДОСТАВКИ, а не строки
+      // «Роли»: у рабочих ролей там пусто, и пустой адрес совпал бы с
+      // любой текущей страницей — вкладка осталась бы не там, где чат.
       let same = false;
-      try { same = new URL(role.url, location.href).pathname === location.pathname; } catch { same = false; }
+      try {
+        const delivery = (typeof roleDeliveryUrl === "function" ? await roleDeliveryUrl(role) : role.url) || "";
+        same = Boolean(delivery) && new URL(delivery, location.href).pathname === location.pathname;
+      } catch { same = false; }
       if (!same) await navigateTo(role, "квитанция подтверждает прямой возврат ответа");
       return "recovered";
     }
@@ -22840,6 +22867,22 @@ function reviewPullRequest({ files, pr, zone } = {}) {
   }
 
   /**
+   * Удержание после переключения проекта (D-035): ход или выдача из пульта —
+   * явное действие Мастера, и оно же снимает удержание. Без этого вкладка с
+   * оставшимся ключом удержания (его могла записать старая версия скрипта)
+   * уходила в вечный цикл «планирующий ход повторится: вкладка пока не
+   * создала ожидание» — служба передавала ход, а вкладка молча стояла.
+   */
+  function relayReleaseSwitchHold(reason) {
+    if (typeof projectHeld !== "function" || !projectHeld()) return;
+    const released = typeof releaseProjectHold === "function" && releaseProjectHold();
+    log(released
+      ? `Удержание после переключения снято: ${reason} — явное действие пульта.`
+      : `Удержание после переключения не снялось (хранилище вкладки), но ${reason} — явное действие пульта: выполняю.`,
+      false, { ntfy: "quiet" });
+  }
+
+  /**
    * Взять работу: карточка книги → та же выдача, что и всегда.
    *
    * `dispatchTask` собирает промпт из карточки Notion, ставит Running и
@@ -22863,6 +22906,7 @@ function reviewPullRequest({ files, pr, zone } = {}) {
       await relayWorkFailed(work, "активной миссии нет: карточке неоткуда взять контекст и промпт");
       return;
     }
+    relayReleaseSwitchHold("выдача работы из очереди");
     let problem = "";
     try {
       const done = await dispatchTask(card, role, mission, { runId: String(work.runId) });
@@ -23033,6 +23077,7 @@ function reviewPullRequest({ files, pr, zone } = {}) {
       // coordinatorStep/requestPlan, что и старый ручной цикл. Если открыта
       // не Coordinator, tick(true) сам перейдёт на неё и сохранит шаг.
       log("Пульт Relay передал планирующий ход: запускаю Координатора.", false, { ntfy: "quiet" });
+      relayReleaseSwitchHold("планирующий ход Координатора");
       if (typeof tick === "function") await tick(true);
       const expectAfter = GM_getValue(K.expect, null);
       const pendingAfter = GM_getValue(K.pending, null);

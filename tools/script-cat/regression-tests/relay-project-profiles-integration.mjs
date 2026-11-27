@@ -106,6 +106,7 @@ assert.equal(accidentalRelease, 0, 'отложенный tick(true) не сни�
 assert.equal(controls.releaseProjectHold(), true);
 assert.equal(controls.projectHeld(), false); assert.deepEqual(writes, [['step', false]]);
 assert.equal(controls.projectRoleAllowed({id:'r',url:'https://arena.ai/agent/a-123'}), true);
+assert.equal(controls.projectRoleAllowed({id:'r',url:''}), true, 'пустой Agent URL (адрес в «Экземплярах») не блокирует переход');
 for (const url of ['https://www.arena.ai/agent/a-123', 'https://arena.ai/agent/a/other', 'https://arena.ai/agent/a.evil', 'https://evil.invalid/agent/a'])
   assert.equal(controls.projectRoleAllowed({id:'r',url}), false, url);
 assert.equal(pauses.length, 4);
@@ -124,6 +125,9 @@ held = false; approved = false; await wrapped.refreshQuestions(); await wrapped.
 assert(heldNotes > 0, 'но простой очереди не молчит: блокировка записывается в журнал (внешний D-023)');
 approved = true; await wrapped.refreshQuestions(); await wrapped.refreshDecisions(); assert.equal(qCalls + dCalls, 2);
 assert.match(bootSource, /GM_getValue\(K\.step, false\) && !projectHeld\(\)/, 'сохранённый автоматический шаг не снимает hold');
+const profilesSource = readFileSync(new URL('../src/02-profiles-core.js', import.meta.url), 'utf8');
+assert.match(profilesSource, /sessionStorage\.setItem\(PROJECT_HOLD_PREFIX \+ profile\.id, "1"\)/,
+  'переключение проекта из пульта ставит удержание (D-035)');
 
 // Из ссылок берётся ID базы из пути, не ID view после '?'; чужой хост не принимается.
 const lookupSource = cut('  /** UUID базы из HTTPS-ссылки Notion;', '  /** Read-only план миграции:');
