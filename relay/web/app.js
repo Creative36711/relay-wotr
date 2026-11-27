@@ -229,6 +229,11 @@ function operatorGuidance(shot) {
       canStep: false,
     };
   }
+  if (heldAdmin?.localWaiting === "expect:plan" && !heldAdmin.localPaused) return {
+    tone: "ok", mark: "…", title: "ScriptCat ждёт результат плана Координатора",
+    detail: `Ожидание plan — активный ход, а не команда для повторного «Шага». Не сбрасывайте его и не запускайте дубликат. Когда ScriptCat обнаружит CF_COORDINATOR_RESULT, он передаст выбранную карточку в очередь Relay; Relay выберет слот/аккаунт и при необходимости создаст агента. Сам факт вставки или отправки промпта не подтверждает, что Arena обработала его.`,
+    canStep: false,
+  };
   if (shot.turnRequest && heldAdmin) return {
     tone: "warn", mark: "…", title: "Координатор ждёт Admin; ScriptCat удерживает опрос",
     detail: `${localHoldDescription(heldAdmin)}. Relay сохранил запрос ${shot.turnRequest.id} и не сбросил его. Не нажимайте «Шаг» повторно — нажмите «Скопировать диагностику» и пришлите отчёт агенту.`,

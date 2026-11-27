@@ -11,6 +11,7 @@ test("Firefox add-on requests only the APIs needed for exact-container tab contr
   assert.equal(manifest.manifest_version, 2);
   assert.ok(manifest.permissions.includes("contextualIdentities"));
   assert.ok(manifest.permissions.includes("tabs"));
+  assert.ok(manifest.permissions.includes("windows"));
   assert.ok(manifest.permissions.includes("http://127.0.0.1:8787/*"));
   assert.ok(manifest.permissions.includes("https://arena.ai/*"));
   assert.ok(!manifest.permissions.includes("cookies"), "cookie contents are not read");
@@ -34,7 +35,10 @@ test("a new coordinator turn focuses the admin tab exactly once (D-035)", () => 
   assert.match(background, /let focusedTurnId = "";/);
   assert.match(background, /slot\.admin && shot\.turnRequest && String\(shot\.turnRequest\.id \|\| ""\) !== focusedTurnId/,
     "focus is edge-triggered per turn request id");
+  assert.match(background, /await focusManagedTab\(current\)/);
+  assert.match(background, /browser\.windows\.update\(tab\.windowId, \{ focused: true \}\)/);
   assert.match(background, /browser\.tabs\.update\(tab\.id, \{ active: true \}\)/);
+  assert.match(background, /focusedTurnId = requestId/);
 });
 
 test("the content bridge forwards only a cycle-mode message, not browser privileges", () => {

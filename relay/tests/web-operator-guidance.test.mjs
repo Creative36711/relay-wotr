@@ -36,6 +36,19 @@ test("unfinished heal + outstanding coordinator request gets clear safe guidance
   assert.match(result.detail, /Не нажимайте «Шаг» повторно/);
 });
 
+test("expect:plan is described as an active wait, not orphaned work or a request to click Step", () => {
+  const result = helpers.operatorGuidance(snapshot({
+    scriptClients: [{ slotId: "admin", localBusy: true, localWaiting: "expect:plan", scriptVersion: "1.35.2" }],
+  }));
+  assert.equal(result.canStep, false);
+  assert.match(result.title, /ждёт результат плана/);
+  assert.match(result.detail, /активный ход/);
+  assert.match(result.detail, /CF_COORDINATOR_RESULT/);
+  assert.match(result.detail, /выберет слот\/аккаунт/);
+  assert.match(result.detail, /не подтверждает, что Arena обработала/);
+  assert.doesNotMatch(result.title, /незавершённой работе/);
+});
+
 test("project permission block is shown before a coordinator request and disables futile Step retries", () => {
   helpers.setProjectProfiles([]);
   const result = helpers.operatorGuidance(snapshot({
