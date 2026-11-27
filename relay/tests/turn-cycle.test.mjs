@@ -272,6 +272,23 @@ test("кнопка пульта передаёт планирующий ход C
   assert.equal(service.memory.coordinatorTurnRequest, null, "успешный ack закрывает запрос");
 });
 
+test("ошибка чтения Notion при запуске Coordinator сохраняет запрос и называется ошибкой, не отсутствием миссии", async () => {
+  const { service, store } = makeService();
+  const step = await service.step({ origin: "panel" });
+  const claimed = await service.pull({ slotId: "admin", tab: "admin-tab", scriptVersion: "1.34.1" });
+  assert.equal(claimed.kind, "turn");
+  await service.report({ slotId: "admin", tab: "admin-tab", payload: {
+    turnAck: true, turnRequestId: claimed.turnId, retry: true,
+    missionError: "Не задан Notion token: bearer ntn_1234567890abcdef1234",
+  } });
+  assert.equal(service.memory.coordinatorTurnRequest.id, step.turnRequestId, "сетевой отказ не теряет ход");
+  assert.equal(service.memory.coordinatorTurnRequest.claimedBy, "", "ход можно получить повторно");
+  const event = store.objects("events").find((item) => String(item["Текст"] || "").includes("проверка миссии в Notion завершилась ошибкой"));
+  assert.ok(event, "журнал различает ошибку чтения Notion от пустого списка миссий");
+  assert.match(event["Текст"], /планирующий ход не начат/);
+  assert.doesNotMatch(event["Текст"], /ntn_1234567890abcdef1234/, "токен не попадает в журнал");
+});
+
 test("ход приёмки: шаг ждёт вердикт, а не советует выдачу", async () => {
   const { service } = makeService({ settings: settingsRows({ "cycle.turn": "warden" }) });
   const step = await service.step({ origin: "pulse" });

@@ -142,7 +142,7 @@ test("подробная причина проверки допуска попа
     const projectId = "123e4567-e89b-12d3-a456-426614174000";
     const response = await fetch(`${ctx.base}/api/agent`, {
       method: "POST", headers: { origin: "https://arena.ai", "content-type": "application/json" },
-      body: JSON.stringify({ action: "event", slotId: "admin", tab: "approval-result-tab", scriptVersion: "1.34.3",
+      body: JSON.stringify({ action: "event", slotId: "admin", tab: "approval-result-tab", scriptVersion: "1.35.1",
         kind: "state", level: "warn", text: "Проверка отказана",
         data: { projectApprovalResult: false, projectId, projectName: "WOTR",
           projectApprovalFailure: "Drive: папка проекта недоступна" } }),

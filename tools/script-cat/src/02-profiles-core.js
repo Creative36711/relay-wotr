@@ -271,6 +271,8 @@
   Object.freeze(C);
   const projectApproved = () => !ACTIVE_PROFILE.invalid && !ACTIVE_PROFILE.legacy &&
     GM_getValue("cfn-project-approved", false) === true;
+  const projectCredentialsReady = () => ACTIVE_PROFILE.invalid || ACTIVE_PROFILE.legacy || Boolean(
+    GM_getValue("cfn-notion-token", "") && GM_getValue("cfn-gw-url", "") && GM_getValue("cfn-gw-key", ""));
   const projectProfileSnapshot = () => {
     if (ACTIVE_PROFILE.invalid || ACTIVE_PROFILE.legacy) return null;
     const keys = ["id", "name", "roles", "missions", "requests", "questions", "pageUrl", "questionsUrl", "repo", "branch", "driveFolder", "repos", "roleRepos",

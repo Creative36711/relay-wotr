@@ -1010,14 +1010,21 @@ export function createService({
         request.claimedBy = "";
         request.claimUntil = 0;
       } else if (matches) clearCoordinatorTurnRequest();
+      const missionError = String(payload.missionError || "")
+        .replace(/(?:ntn|secret)_[A-Za-z0-9_-]{12,}/gi, "[TOKEN REDACTED]")
+        .replace(/Bearer\s+[A-Za-z0-9._~+/-]+=*/gi, "Bearer [REDACTED]")
+        .slice(0, 240);
       await record({
-        slot: slotId, tab, kind: "state",
-        text: payload.noMission
-          ? "планирующий ход не начат: активной миссии в Notion нет"
-          : payload.retry
-            ? "планирующий ход повторится: вкладка пока не создала ожидание"
-            : "планирующий ход принят вкладкой",
-        data: { turnRequestId: String(payload.turnRequestId || ""), noMission: Boolean(payload.noMission), retry: Boolean(payload.retry) },
+        slot: slotId, tab, kind: "state", level: missionError || payload.noMission ? "warn" : "info",
+        text: missionError
+          ? `планирующий ход не начат: проверка миссии в Notion завершилась ошибкой — ${missionError}; запрос оставлен для повтора`
+          : payload.noMission
+            ? "планирующий ход не начат: активной миссии в Notion нет"
+            : payload.retry
+              ? "планирующий ход повторится: вкладка пока не создала ожидание"
+              : "планирующий ход принят вкладкой",
+        data: { turnRequestId: String(payload.turnRequestId || ""), noMission: Boolean(payload.noMission), retry: Boolean(payload.retry),
+          ...(missionError ? { missionError } : {}) },
       });
       return { ok: true, turnAck: true, cleared: Boolean(matches && !payload.retry) };
     }

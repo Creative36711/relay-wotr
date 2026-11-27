@@ -142,7 +142,7 @@ assert.match(src, /getElementById\(ui\.reset\)\.onclick = \(\) => \{/, 'кноп
 assert.match(src, /const work = resetStateDialog\(\);[\s\S]*?trackProjectTask\(work\)[\s\S]*?\.catch\(/, 'отказ сети при снятии хода не теряется');
 assert.match(src, /id="\$\{ui\.clear\}" title="Очистить только журнал"/, 'очистка сообщает, что очередь не меняется');
 assert.match(src, /reset: \(\) => resetStateDialog\(\)/, 'в консоли есть __relay.reset()');
-assert.match(src, /const boot = \(\) => \{\s*migrateState\(\);/, 'миграция выполняется до первого шага');
+assert.match(src, /const boot = async \(\) => \{\s*migrateState\(\);/, 'миграция выполняется до первого шага');
 assert.match(src, /title="версия скрипта">v\$\{SCRIPT_VERSION\}/, 'в панели видно, какая версия загружена');
 
 console.log('OK: relay 1.4.63 — обновление сохраняет ожидание и ставит паузу, ↺ снимает ход целиком, журнал не засоряется');
