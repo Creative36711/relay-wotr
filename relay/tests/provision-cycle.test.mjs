@@ -33,7 +33,7 @@ const makeService = (initial = {}) => {
 
 test("нет агента — вкладка получает задание создать его, а не «жди»", async () => {
   const { service } = makeService({ queue: [queueRow({ id: "q-1", card: "c-1", role: "Technical Artist" })] });
-  const pulled = await service.pull({ scriptVersion: "1.31.0", slotId: "worker-2", tab: "aa11" });
+  const pulled = await service.pull({ scriptVersion: "1.33.0", slotId: "worker-2", tab: "aa11" });
   assert.equal(pulled.ok, true);
   assert.equal(pulled.kind, "provision", "это задание, а не работа");
   assert.equal(pulled.work, null);
@@ -44,7 +44,7 @@ test("нет агента — вкладка получает задание с�
 
 test("задание адресовано тому слоту, который спросил, а не первому свободному", async () => {
   const { service, store } = makeService({ queue: [queueRow({ id: "q-1", role: "Technical Artist" })] });
-  await service.pull({ scriptVersion: "1.31.0", slotId: "worker-3", tab: "cc33" });
+  await service.pull({ scriptVersion: "1.33.0", slotId: "worker-3", tab: "cc33" });
   const tasks = store.objects("queue").filter((row) => row["Вид"] === "provision");
   assert.equal(tasks.length, 1);
   assert.equal(tasks[0]["Слот"], "worker-3", "агент появляется там, где спросили");
@@ -53,7 +53,7 @@ test("задание адресовано тому слоту, который с
 
 test("адрес, сообщённый вкладкой, попадает в «Экземпляры» и закрывает задание", async () => {
   const { service, store } = makeService({ queue: [queueRow({ id: "q-1", role: "Technical Artist" })] });
-  await service.pull({ scriptVersion: "1.31.0", slotId: "worker-2", tab: "aa11" });
+  await service.pull({ scriptVersion: "1.33.0", slotId: "worker-2", tab: "aa11" });
 
   const ready = await service.agentReady({
     role: "Technical Artist", slotId: "worker-2",
@@ -90,12 +90,12 @@ test("agentReady закрывает точный активный queueId, а н
 
 test("после создания агента та же карточка достаётся вкладке с адресом", async () => {
   const { service } = makeService({ queue: [queueRow({ id: "q-1", card: "c-1", role: "Technical Artist" })] });
-  const pulled = await service.pull({ scriptVersion: "1.31.0", slotId: "worker-2", tab: "aa11" });
+  const pulled = await service.pull({ scriptVersion: "1.33.0", slotId: "worker-2", tab: "aa11" });
   assert.equal(pulled.kind, "provision");
 
   await service.agentReady({ role: "Technical Artist", slotId: "worker-2", url: "https://arena.example/list/ta", tab: "aa11" });
 
-  const work = await service.pull({ scriptVersion: "1.31.0", slotId: "worker-2", tab: "aa11" });
+  const work = await service.pull({ scriptVersion: "1.33.0", slotId: "worker-2", tab: "aa11" });
   assert.equal(work.kind, undefined, "теперь это работа, а не задание");
   assert.equal(work.work.card, "c-1");
   // Раньше здесь всегда было пусто: адрес брали из строки роли, а роли в плане
@@ -106,7 +106,7 @@ test("после создания агента та же карточка дос
 test("адрес соседнего контейнера не подставляется: у каждой пары свой", async () => {
   const { service } = makeService({ queue: [queueRow({ id: "q-1", card: "c-1", role: "Technical Artist" })] });
   await service.agentReady({ role: "Technical Artist", slotId: "worker-2", url: "https://arena.example/list/ta" });
-  const pulled = await service.pull({ scriptVersion: "1.31.0", slotId: "worker-3", tab: "cc33" });
+  const pulled = await service.pull({ scriptVersion: "1.33.0", slotId: "worker-3", tab: "cc33" });
   assert.equal(pulled.kind, "provision", "в worker-3 агента ещё нет — нужен свой");
 });
 
@@ -121,7 +121,7 @@ test("повторное сообщение адреса не плодит вт�
 
 test("создать не удалось — причина записана, а не проглочена", async () => {
   const { service, store } = makeService({ queue: [queueRow({ id: "q-1", role: "Technical Artist" })] });
-  await service.pull({ scriptVersion: "1.31.0", slotId: "worker-2", tab: "aa11" });
+  await service.pull({ scriptVersion: "1.33.0", slotId: "worker-2", tab: "aa11" });
   const failed = await service.agentReady({
     role: "Technical Artist", slotId: "worker-2", tab: "aa11",
     note: "не хватило квоты контейнера", failed: true,
@@ -137,10 +137,10 @@ test("создать не удалось — причина записана, а
 
 test("неудача не блокирует навсегда: следующая карточка снова просит агента", async () => {
   const { service } = makeService({ queue: [queueRow({ id: "q-1", role: "Technical Artist" })] });
-  await service.pull({ scriptVersion: "1.31.0", slotId: "worker-2" });
+  await service.pull({ scriptVersion: "1.33.0", slotId: "worker-2" });
   await service.agentReady({ role: "Technical Artist", slotId: "worker-2", failed: true, note: "сбой" });
 
-  const again = await service.pull({ scriptVersion: "1.31.0", slotId: "worker-2", tab: "bb22" });
+  const again = await service.pull({ scriptVersion: "1.33.0", slotId: "worker-2", tab: "bb22" });
   assert.equal(again.kind, "provision", "вторая попытка разрешена");
   assert.match(again.why, /не создался раньше/);
 });
@@ -160,9 +160,9 @@ test("без роли, слота или адреса строка не пише
 
 test("вторая вкладка того же слота не получает то же задание повторно", async () => {
   const { service, store } = makeService({ queue: [queueRow({ id: "q-1", role: "Technical Artist" })] });
-  const first = await service.pull({ scriptVersion: "1.31.0", slotId: "worker-2", tab: "aa11" });
+  const first = await service.pull({ scriptVersion: "1.33.0", slotId: "worker-2", tab: "aa11" });
   assert.equal(first.kind, "provision");
-  const second = await service.pull({ scriptVersion: "1.31.0", slotId: "worker-2", tab: "aa99" });
+  const second = await service.pull({ scriptVersion: "1.33.0", slotId: "worker-2", tab: "aa99" });
   assert.notEqual(second.kind, "provision", "одна пара — одно задание");
   assert.equal(store.objects("queue").filter((row) => row["Вид"] === "provision").length, 1);
 });
@@ -171,7 +171,7 @@ test("наследование: адрес из строки роли закры
   const { service, store } = makeService({ queue: [queueRow({ id: "q-1", card: "c-1", role: "Technical Artist" })] });
   // Старая база: адрес лежит в строке роли, листа «Экземпляры» ещё нет.
   store.sheets.roles = [["Роль"], ["Technical Artist"]];
-  const pulled = await service.pull({ scriptVersion: "1.31.0", slotId: "worker-1", tab: "aa11" });
+  const pulled = await service.pull({ scriptVersion: "1.33.0", slotId: "worker-1", tab: "aa11" });
   // Роли из Notion в тесте нет, значит адреса тоже нет — но главное здесь то,
   // что запрос не падает и остаётся заданием, а не отказом.
   assert.equal(pulled.ok, true);
@@ -205,7 +205,7 @@ test("шаг с готовым агентом выдаёт карточку вм
 test("шаг и вкладка не создают агента дважды", async () => {
   const { service, store } = makeService({ queue: [queueRow({ id: "q-1", role: "Technical Artist" })] });
   await service.step({ origin: "panel" });
-  await service.pull({ scriptVersion: "1.31.0", slotId: "worker-1", tab: "aa11" });
+  await service.pull({ scriptVersion: "1.33.0", slotId: "worker-1", tab: "aa11" });
   const tasks = store.objects("queue").filter((row) => row["Вид"] === "provision");
   assert.equal(tasks.length, 1, "одна пара — одно задание, кто бы ни спросил");
 });

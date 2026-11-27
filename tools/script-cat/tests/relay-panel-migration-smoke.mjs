@@ -22,6 +22,10 @@ test("Node Relay: вкладка видима при локальной пауз
   assert.match(identity, /relayClient\.lastError = why/, "отказ hello виден в статусе виджета");
   assert.match(client, /lastContactAt \? "не зарегистрирован" : "нет связи"/, "различает сетевой сбой и отказ опознания");
   assert.match(client, /ответ в неизвестном формате/, "ошибка протокола не маскируется под тишину");
+  assert.match(client, /Админская вкладка не опросила очередь Relay/);
+  assert.match(client, /action: "event", slotId, kind: "state", level: relayClient\.admin \? "warn" : "info", text/);
+  assert.match(web, /adminPolledRecently/, "пульт различает hello и фактический pull");
+  assert.match(web, /bannerHistoryNext/, "временные плашки записываются в историю");
   assert.match(web, /локальной паузе/, "пульт объясняет, почему admin вкладка не забирает команду");
   assert.match(web, /if \(adminClients\.length && outdated\.length\)/, "ссылка на обновление видна только при реально устаревшем клиенте");
   assert.match(web, /timeZone: "Europe\/Moscow"/, "временные метки пульта форматируются в московской зоне");

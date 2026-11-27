@@ -23,7 +23,7 @@ import { defaultNotionTokenPath, readNotionToken, writeNotionToken } from "./not
 import { serviceAccountFromEnv, createServiceAccountToken } from "./google-auth.mjs";
 
 // Версия службы в одном месте: она печатается в шапке страницы установки.
-const VERSION = "1.32.0";
+const VERSION = "1.34.0";
 
 const PORT = Number(process.env.PORT || 8787);
 const HOST = process.env.HOST || "0.0.0.0";
@@ -146,8 +146,17 @@ server.listen(PORT, HOST, async () => {
   // соседствовало с непонятным списком.
   for (const note of state.notes || []) console.log(`  ! ${note}`);
   if (!state.ok) console.log("Откройте пульт: мастер настройки найдёт базы и запишет ключи.");
+  try {
+    const runner = await service.bootAutoRunner();
+    if (runner.mode === "auto") console.log("Автоцикл: фоновый диспетчер запущен (шаг каждые 15 секунд)");
+  } catch (error) {
+    console.log(`Автоцикл: фоновый диспетчер не запущен — ${error.message}`);
+  }
 });
 
-const stop = () => server.close(() => process.exit(0));
+const stop = () => {
+  service.stopAutoRunner();
+  server.close(() => process.exit(0));
+};
 process.on("SIGTERM", stop);
 process.on("SIGINT", stop);

@@ -52,7 +52,8 @@ export function createMemoryState() {
     settingsAt: 0,
     // Токен Notion, введённый в пульте. Пусто — берётся из окружения.
     notionToken: "",
-    clients: new Map(), // ScriptCat tab heartbeat: slot/tab/version, only for update guidance
+    clients: new Map(), // ScriptCat tab heartbeat and local hold state
+    slotMismatches: new Map(), // rate limit incorrect Firefox container/account bindings
     coordinatorTurnRequest: null, // one panel Step waiting for the admin Arena tab
   };
 }
@@ -61,7 +62,7 @@ const SLOT_CACHE_MS = 30000;
 
 /** Кеш справочника ролей: настройка, а не данные миссии. */
 const ROLES_CACHE_MS = 60000;
-const SUPPORTED_SCRIPT_VERSION = "1.31.0";
+const SUPPORTED_SCRIPT_VERSION = "1.33.0";
 const TURN_REQUEST_TTL_MS = 15 * 60_000;
 const TURN_REQUEST_CLAIM_MS = 30_000;
 const CLIENT_ACTIVE_MS = 3 * 60_000;
@@ -127,6 +128,9 @@ export function createService({
   log = () => {},
 } = {}) {
   if (!store) throw new Error("служба без хранилища не работает");
+
+  let autoRunnerTimer = null;
+  let autoRunnerBusy = false;
 
   async function loadSlots(force = false) {
     if (!force && memory.slotsCache && now() - memory.slotsAt < slotsCacheMs) return memory.slotsCache;
@@ -583,7 +587,7 @@ export function createService({
     return run;
   }
 
-  function rememberClient({ slotId = "", tab = "", scriptVersion = "", localPaused = false } = {}) {
+  function rememberClient({ slotId = "", tab = "", scriptVersion = "", localPaused = false, localBusy = false, localWaiting = "", source = "hello" } = {}) {
     if (!slotId || !tab) return;
     const clients = memory.clients instanceof Map ? memory.clients : new Map();
     memory.clients = clients;
@@ -594,9 +598,16 @@ export function createService({
     const key = `${slotId}:${tab}`;
     const version = String(scriptVersion || "").trim();
     const paused = Boolean(localPaused);
-    const previous = clients.get(key);
-    const changed = !previous || previous.scriptVersion !== version || previous.localPaused !== paused;
-    clients.set(key, { slotId, tab, scriptVersion: version, localPaused: paused, seenAt: nowMs });
+    const previous = clients.get(key) || {};
+    const changed = !previous.slotId || previous.scriptVersion !== version || previous.localPaused !== paused;
+    const next = {
+      ...previous, slotId, tab, scriptVersion: version, localPaused: paused,
+      localBusy: Boolean(localBusy), localWaiting: String(localWaiting || "").slice(0, 120), seenAt: nowMs,
+    };
+    if (source === "hello") next.lastHelloAt = nowMs;
+    if (source === "pull") next.lastPullAt = nowMs;
+    if (source === "beat") next.lastBeatAt = nowMs;
+    clients.set(key, next);
     return changed;
   }
 
@@ -612,7 +623,7 @@ export function createService({
    * контейнера не должно ломать транспорт. Неизвестный аккаунт — честный
    * отказ с подсказкой, какой слот добавить.
    */
-  async function hello({ account = "", tab = "", path = "", scriptVersion = "", localPaused = false } = {}) {
+  async function hello({ account = "", tab = "", path = "", scriptVersion = "", localPaused = false, localBusy = false, localWaiting = "", expectedSlot = "" } = {}) {
     const slots = await loadSlots(true);
     const slot = slotByAccount(slots, account);
     if (!slot) {
@@ -627,7 +638,22 @@ export function createService({
         slots: slots.map((item) => ({ slotId: item.slotId, account: item.account, admin: item.admin })),
       };
     }
-    const clientChanged = rememberClient({ slotId: slot.slotId, tab, scriptVersion, localPaused });
+    const expected = String(expectedSlot || "").trim();
+    if (expected && expected !== slot.slotId) {
+      const text = `менеджер открыл контейнер для слота ${expected}, но аккаунт в Arena опознан как ${slot.slotId}; работа заблокирована`;
+      const key = `${tab}:${expected}:${slot.slotId}`;
+      const mismatches = memory.slotMismatches instanceof Map ? memory.slotMismatches : new Map();
+      memory.slotMismatches = mismatches;
+      if (now() - Number(mismatches.get(key) || 0) >= 60000) {
+        mismatches.set(key, now());
+        await record({ slot: slot.slotId, account, tab, kind: "accounts", level: "error", text, data: { expectedSlot: expected, actualSlot: slot.slotId, path } });
+      }
+      return { ok: false, why: text, expectedSlot: expected, actualSlot: slot.slotId };
+    }
+    if (memory.slotMismatches instanceof Map) {
+      for (const key of memory.slotMismatches.keys()) if (key.startsWith(`${tab}:`)) memory.slotMismatches.delete(key);
+    }
+    const clientChanged = rememberClient({ slotId: slot.slotId, tab, scriptVersion, localPaused, localBusy, localWaiting, source: "hello" });
     if (clientChanged) {
       await record({
         slot: slot.slotId, account, tab, kind: "state",
@@ -655,7 +681,7 @@ export function createService({
     const slot = slotById(data.slots, slotId);
     if (!slot) return { ok: false, why: `слота ${slotId} нет в таблице` };
     if (!slot.enabled) return idle(`слот ${slotId} выключен`);
-    rememberClient({ slotId, tab, scriptVersion, localPaused });
+    rememberClient({ slotId, tab, scriptVersion, localPaused, source: "pull" });
 
     const liveRuns = data.runs.filter(isLiveRun);
 
@@ -781,7 +807,7 @@ export function createService({
 
   /** `beat`: вкладка жива. Продлевает выдачу и говорит, чего она ждёт. */
   async function beat({ slotId = "", runId = "", tab = "", waiting = "", silentMs = 0, scriptVersion = "", localPaused = false } = {}) {
-    rememberClient({ slotId, tab, scriptVersion, localPaused });
+    rememberClient({ slotId, tab, scriptVersion, localPaused, localBusy: true, localWaiting: waiting, source: "beat" });
     const at = isoNow(now());
     const data = await loadAll();
     const index = data.runs.findIndex((run) => norm(run["Run ID"]) === norm(runId));
@@ -1047,7 +1073,13 @@ export function createService({
   }
 
   /** `event`: любая запись журнала от вкладки или пульта. */
-  async function event({ slotId = "", account = "", tab = "", kind = "state", level = "info", text = "", card = "", runId = "", durationMs = "", data = null } = {}) {
+  async function event({ slotId = "", account = "", tab = "", scriptVersion = "", localPaused = false, kind = "state", level = "info", text = "", card = "", runId = "", durationMs = "", data = null } = {}) {
+    if (data && data.relayClientState === true) {
+      rememberClient({
+        slotId, tab, scriptVersion, localPaused,
+        localBusy: Boolean(data.localBusy), localWaiting: String(data.localWaiting || ""), source: "state",
+      });
+    }
     const row = await record({ slot: slotId, account, tab, kind, level, text, card, runId, durationMs, data });
     return { ok: true, at: row["Время"] };
   }
@@ -1069,7 +1101,8 @@ export function createService({
         const why = "цикл завершён: миссия принята приёмкой";
         memory.lastTick = now();
         memory.lastStep = { at: isoNow(now()), count: 0, why };
-        await record({ kind: "tick", text: `шаг: ${why}` });
+        if (origin !== "auto" || memory.lastAutoIdleReason !== why) await record({ kind: "tick", text: `шаг: ${why}` });
+        memory.lastAutoIdleReason = origin === "auto" ? why : "";
         return { ok: true, planned: 0, requested: 0, why, plans: [], agentRequests: [], summary: data.settings };
       }
       const limits = limitsFromEvents(data.events);
@@ -1125,7 +1158,7 @@ export function createService({
         const waiting = data.queue.filter((item) => norm(item["Статус"]) === QUEUE.WAITING).length;
         const live = data.runs.filter(isLiveRun).length;
         if (turn === "warden") why = "миссия у приёмки (Warden): ждёт accept или rework";
-        else if (!waiting && turn === "coordinator" && origin === "panel" && live === 0) {
+        else if (!waiting && turn === "coordinator" && ["panel", "auto"].includes(origin) && live === 0) {
           let request = memory.coordinatorTurnRequest;
           if (!request || now() - Number(request.createdAt || 0) > TURN_REQUEST_TTL_MS) {
             request = { id: newQueueId(now()), createdAt: now(), claimedBy: "", claimUntil: 0 };
@@ -1145,13 +1178,18 @@ export function createService({
 
       memory.lastTick = now();
       memory.lastStep = { at: isoNow(now()), count: issued.length, why, turnRequested, turnRequestId };
-      await record({
-        kind: "tick",
-        text: issued.length || agentRequests.length
-          ? `шаг: выдач ${issued.length}${agentRequests.length ? `, заданий на агента ${agentRequests.length}` : ""} (${plan.why})`
-          : `шаг: ${why}`,
-        data: { issued, requested: agentRequests },
-      });
+      const autoIdle = origin === "auto" && !issued.length && !agentRequests.length && !turnRequested;
+      const repeatedAutoIdle = autoIdle && memory.lastAutoIdleReason === why;
+      if (!repeatedAutoIdle) {
+        await record({
+          kind: "tick",
+          text: issued.length || agentRequests.length
+            ? `шаг: выдач ${issued.length}${agentRequests.length ? `, заданий на агента ${agentRequests.length}` : ""} (${plan.why})`
+            : `шаг: ${why}`,
+          data: { issued, requested: agentRequests },
+        });
+      }
+      memory.lastAutoIdleReason = autoIdle ? why : "";
       return {
         ok: true, planned: issued.length, requested: agentRequests.length,
         turnRequested, turnRequestId,
@@ -1176,8 +1214,60 @@ export function createService({
     return { ok: true, paused: false };
   }
 
+  async function autoRunnerTick() {
+    if (autoRunnerBusy || memory.paused) return;
+    autoRunnerBusy = true;
+    try {
+      const settings = await loadSettings();
+      if (settings["cycle.mode"] !== "auto") {
+        stopAutoRunner();
+        return;
+      }
+      const outstandingTurn = memory.coordinatorTurnRequest;
+      if (outstandingTurn && now() - Number(outstandingTurn.createdAt || 0) <= TURN_REQUEST_TTL_MS) return;
+      await step({ origin: "auto" });
+    } catch (error) {
+      const text = `автоцикл Relay: шаг не выполнен — ${String(error?.message || error).slice(0, 220)}`;
+      log(text);
+      await record({ kind: "tick", level: "error", text }).catch(() => {});
+    } finally {
+      autoRunnerBusy = false;
+    }
+  }
+
+  function stopAutoRunner() {
+    if (autoRunnerTimer) clearInterval(autoRunnerTimer);
+    autoRunnerTimer = null;
+  }
+
+  function startAutoRunner() {
+    if (autoRunnerTimer) return;
+    autoRunnerTimer = setInterval(() => { void autoRunnerTick(); }, 15000);
+    autoRunnerTimer.unref?.();
+  }
+
+  async function bootAutoRunner() {
+    // До 1.34.0 Relay-кнопка режима не сохраняла выбор, поэтому старые книги
+    // содержат manual + прежний default=manual. Владелец просил автозапуск по
+    // умолчанию: мигрируем именно старый default один раз. Если в новой версии
+    // человек выберет manual, writeSetting уже запишет default=auto, и выбор
+    // переживёт перезапуск без повторного переключения.
+    const { rows } = await store.read("settings");
+    const modeRow = rows.find((row) => String(row?.[0] || "").trim() === "cycle.mode");
+    if (modeRow && String(modeRow[1] || "").trim() === "manual" && String(modeRow[4] || "").trim() === "manual") {
+      await writeSetting("cycle.mode", "auto");
+      await record({ kind: "state", text: "автоцикл включён при обновлении: прежнее значение manual было значением по умолчанию, а не сохранённым выбором" });
+    }
+    const settings = await loadSettings(true);
+    if (settings["cycle.mode"] === "auto") startAutoRunner();
+    return { ok: true, mode: settings["cycle.mode"] };
+  }
+
   async function setMode({ mode = "manual" } = {}) {
     const next = mode === "auto" ? "auto" : "manual";
+    await writeSetting("cycle.mode", next);
+    if (next === "auto") startAutoRunner();
+    else stopAutoRunner();
     await record({ kind: "ui", text: `режим цикла: ${next}` });
     return { ok: true, mode: next };
   }
@@ -1213,7 +1303,13 @@ export function createService({
       requiredScriptVersion: SUPPORTED_SCRIPT_VERSION,
       scriptClients: [...(memory.clients instanceof Map ? memory.clients.values() : [])]
         .filter((client) => now() - Number(client.seenAt || 0) <= CLIENT_ACTIVE_MS)
-        .map((client) => ({ ...client, seenAt: isoNow(client.seenAt) })),
+        .map((client) => ({
+          ...client,
+          seenAt: isoNow(client.seenAt),
+          lastHelloAt: client.lastHelloAt ? isoNow(client.lastHelloAt) : "",
+          lastPullAt: client.lastPullAt ? isoNow(client.lastPullAt) : "",
+          lastBeatAt: client.lastBeatAt ? isoNow(client.lastBeatAt) : "",
+        })),
       turnRequest: memory.coordinatorTurnRequest ? {
         id: memory.coordinatorTurnRequest.id,
         createdAt: isoNow(memory.coordinatorTurnRequest.createdAt),
@@ -1552,7 +1648,11 @@ export function createService({
     if (!check.ok) return { ok: false, why: check.why };
     switch (check.action) {
       case ACTIONS.HELLO: return hello(body);
-      case ACTIONS.PULL: return pull(body);
+      case ACTIONS.PULL: {
+        const result = await pull(body);
+        const settings = await loadSettings();
+        return { ...result, cycleMode: settings["cycle.mode"] === "auto" ? "auto" : "manual" };
+      }
       case ACTIONS.BEAT: return beat(body);
       case ACTIONS.AGENT: return agentReady({
         role: body.role, slotId: body.slotId || body.slot, url: body.url,
@@ -1580,6 +1680,7 @@ export function createService({
 
   return {
     handle, hello, pull, beat, report, event, step, pause, resume, setMode, agentReady,
+    bootAutoRunner, stopAutoRunner,
     enqueue, cancel, setup, notionTokenSet, notionNet, rolesToBook, measureBook, snapshot, incidentPackage, loadAll, record, memory, sheetTitles,
     // Только для тестов: эти функции не входят в протокол и не должны
     // вызываться из вкладки. Отдельным объектом, чтобы «наружу» случайно не

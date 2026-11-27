@@ -233,9 +233,9 @@ test("net.gmTimeoutMs из книги передаётся адаптеру Apps
   assert.equal(applied, 67000, "значение настройки управляет timeout bridge, а не только отображается в таблице");
 });
 
-test("неизвестный режим цикла откатывается к ручному", () => {
-  const values = parseSettings([["cycle.mode", "турбо", "enum", "basic", "manual", ""]]);
-  assert.equal(values["cycle.mode"], "manual");
+test("неизвестный режим цикла откатывается к автоциклу по умолчанию", () => {
+  const values = parseSettings([["cycle.mode", "турбо", "enum", "basic", "auto", ""]]);
+  assert.equal(values["cycle.mode"], "auto");
 });
 
 test("готовность объясняет каждую нехватку по отдельности", () => {
@@ -440,7 +440,7 @@ test("роли читаются из книги: Notion для работы не
   const data = await service.loadAll();
   assert.equal(data.settings["notion.rolesDb"], "ds-roles");
   // Роли достаются тем же вызовом, что и при выдаче.
-  const pull = await service.pull({ scriptVersion: "1.31.0", slotId: "worker-1", tab: "t1" });
+  const pull = await service.pull({ scriptVersion: "1.33.0", slotId: "worker-1", tab: "t1" });
   assert.equal(pull.ok, true, pull.why);
   const roles = service.memory.rolesCache || [];
   assert.ok(Array.isArray(roles));
@@ -503,7 +503,7 @@ test("справочник ролей читается: настройки не 
 
   // Справочник читается там, где нужен, — при выдаче работы: без него нельзя
   // понять, административная роль или нет. `snapshot` его не тянет и не должен.
-  await service.pull({ scriptVersion: "1.31.0", slotId: "worker-1", tab: "t1" });
+  await service.pull({ scriptVersion: "1.33.0", slotId: "worker-1", tab: "t1" });
   assert.ok(queries.some((url) => url.includes("databases/ds-roles/query")), "справочник ролей запрошен");
   const shot = await service.snapshot();
   assert.equal(shot.notion.ready, true);

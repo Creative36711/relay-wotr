@@ -28,7 +28,7 @@ export const SETTINGS = {
   "drive.logsFolderId": { group: "basic", type: "text", default: "" },
   "ntfy.topic": { group: "basic", type: "text", default: "" },
 
-  "cycle.mode": { group: "basic", type: "enum", values: ["manual", "auto"], default: "manual" },
+  "cycle.mode": { group: "basic", type: "enum", values: ["manual", "auto"], default: "auto" },
   "cycle.maxParallel": { group: "advanced", type: "number", default: 2, min: 1, max: 8 },
   // Предел одновременных выдач одной роли. По умолчанию 1: агенты одной роли
   // делят файлы и оракул, и «параллельно быстрее» здесь означает «дороже».

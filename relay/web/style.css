@@ -92,6 +92,15 @@ input { min-width: 160px; }
   background: #2a1b1d;
   white-space: pre-wrap;
 }
+.banner-history {
+  margin: 6px 16px 0;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #14171d;
+}
+.banner-history summary { cursor: pointer; color: var(--muted); font-size: 12px; }
+.banner-history .events { max-height: 220px; }
 
 main {
   display: grid;

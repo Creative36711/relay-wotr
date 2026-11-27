@@ -65,7 +65,7 @@ test("вкладка забирает работу через /api/agent", async
     const pull = await (await fetch(`${ctx.base}/api/agent`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ action: "pull", slotId: "worker-2", tab: "aa11", scriptVersion: "1.31.0" }),
+      body: JSON.stringify({ action: "pull", slotId: "worker-2", tab: "aa11", scriptVersion: "1.33.0" }),
     })).json();
     assert.equal(pull.ok, true);
     assert.equal(pull.work.card, "c-1");
