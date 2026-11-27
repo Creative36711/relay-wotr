@@ -141,6 +141,70 @@ test("менеджер Firefox не допускает работу, если Ar
   assert.ok(store.objects("events").some((event) => /работа заблокирована/.test(event["Текст"])));
 });
 
+test("недопущенный проект виден пульту и блокирует запрос нового хода до создания turnRequest", async () => {
+  const { service } = makeService();
+  const hello = await service.hello({
+    account: "creative36711@gmail.com", tab: "admin-project-blocked", scriptVersion: "1.33.1",
+    projectId: "wotr-project-1", projectName: "WOTR", projectApproved: false, projectBlockReason: "unapproved",
+  });
+  assert.equal(hello.ok, true);
+  const client = (await service.snapshot()).scriptClients.find((item) => item.slotId === "admin");
+  assert.equal(client.projectId, "wotr-project-1");
+  assert.equal(client.projectName, "WOTR");
+  assert.equal(client.projectApproved, false);
+  assert.equal(client.projectBlockReason, "unapproved");
+
+  const step = await service.step({ origin: "panel" });
+  assert.equal(step.ok, false);
+  assert.match(step.why, /WOTR.*unapproved/);
+  assert.equal(step.turnRequested, false);
+  assert.equal((await service.snapshot()).turnRequest, null, "не создаётся запрос, который вкладка заранее отвергнет");
+
+  service.memory.coordinatorTurnRequest = { id: "q-stale", createdAt: Date.now(), claimedBy: "", claimUntil: 0 };
+  const pull = await service.pull({ slotId: "admin", tab: "admin-project-blocked", scriptVersion: "1.33.1" });
+  assert.equal(pull.work, null, "админская вкладка не получает новый turn при закрытом допуске");
+  assert.match(pull.why, /WOTR.*unapproved/);
+  assert.equal(service.memory.coordinatorTurnRequest, null, "старый запрос удаляется вместо повторных отказов");
+});
+
+test("пульт запрашивает проверку допуска у живой admin-вкладки и подтверждение снимает запрос", async () => {
+  const { service } = makeService();
+  const profileId = "123e4567-e89b-12d3-a456-426614174000";
+  const first = await service.hello({
+    account: "creative36711@gmail.com", tab: "admin-project-approval", scriptVersion: "1.34.0",
+    projectId: profileId, projectName: "WOTR", projectApproved: false, projectBlockReason: "unapproved",
+  });
+  assert.equal(first.ok, true);
+  const requested = await service.requestProjectApproval({ projectId: profileId });
+  assert.equal(requested.ok, true);
+  assert.equal(requested.projectName, "WOTR");
+  const delivery = await service.hello({
+    account: "creative36711@gmail.com", tab: "admin-project-approval", scriptVersion: "1.34.0",
+    projectId: profileId, projectName: "WOTR", projectApproved: false, projectBlockReason: "unapproved",
+  });
+  assert.equal(delivery.projectApprovalRequest.projectId, profileId);
+  assert.equal(delivery.projectApprovalRequest.id, requested.requestId);
+  const acknowledged = await service.hello({
+    account: "creative36711@gmail.com", tab: "admin-project-approval", scriptVersion: "1.34.0",
+    projectId: profileId, projectName: "WOTR", projectApproved: true,
+  });
+  assert.equal(acknowledged.projectApprovalRequest, undefined);
+  assert.equal(service.memory.projectApprovalRequests.has(profileId), false);
+});
+
+test("пульт не отправляет команду проверки в старую вкладку ScriptCat", async () => {
+  const { service } = makeService();
+  const profileId = "123e4567-e89b-12d3-a456-426614174001";
+  await service.hello({
+    account: "creative36711@gmail.com", tab: "admin-old-script", scriptVersion: "1.33.1",
+    projectId: profileId, projectName: "WOTR", projectApproved: false, projectBlockReason: "unapproved",
+  });
+  const result = await service.requestProjectApproval({ projectId: profileId });
+  assert.equal(result.ok, false);
+  assert.match(result.why, /нужен ScriptCat 1\.33\.2/);
+  assert.equal(service.memory.projectApprovalRequests.has(profileId), false);
+});
+
 test("hello остаётся видимым пульту при локальной паузе и отражает её снятие", async () => {
   const { service } = makeService();
   await service.hello({ account: "creative36711@gmail.com", tab: "admin-paused", scriptVersion: "1.33.0", localPaused: true });

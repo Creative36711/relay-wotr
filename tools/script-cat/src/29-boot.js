@@ -18,8 +18,10 @@
     migrateState();
     // Автоцикл не наследуется от прошлого запуска браузера: сначала — руками.
     autoForgetPersisted();
+    // Relay owns profile and credential settings. The small Arena panel remains
+    // for executor status/logs and local controls; it has no settings entry point.
     mount();
-    if (ACTIVE_PROFILE.invalid) log("Проект вкладки недоступен. Проверьте sessionStorage и список профилей; Relay автоматически не подставлен.", true);
+    if (ACTIVE_PROFILE.invalid) log("Профиль вкладки недоступен. Откройте Relay и проверьте синхронизацию профиля.", true);
     if (debugOn()) {
       installDebugApi();
       console.info(
@@ -38,7 +40,6 @@
       } else log("Автозапуск по ссылке пропущен: проверьте допуск, удержание и сохранённую паузу.", true);
     }
     setStatus();
-    setup(false);
     setInterval(() => tick(false), C.tickMs);
     // D-026: клиент протокола службы — hello/pull/beat/report. Решений не
     // принимает; без адреса службы молчит и не мешает прежнему циклу.

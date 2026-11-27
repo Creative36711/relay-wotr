@@ -17,9 +17,137 @@ const post = async (path, body) => {
   return response.json();
 };
 
+async function loadProjectProfiles(selectId = "") {
+  const select = $("project-select");
+  if (!select) return;
+  const note = $("project-note");
+  $("btn-project-activate")?.classList.add("hidden");
+  try {
+    const response = await fetch("/api/projects", { cache: "no-store" });
+    const data = await response.json();
+    if (!response.ok || !data.ok) throw new Error(data.why || `HTTP ${response.status}`);
+    projectProfiles = Array.isArray(data.profiles) ? data.profiles : [];
+    activeProjectId = String(data.activeProjectId || "");
+    select.replaceChildren();
+    if (!projectProfiles.length) {
+      select.add(new Option("профилей пока нет", ""));
+      note.textContent = "Откройте Arena-вкладку с действующим профилем или импортируйте JSON. Секреты сохраните ниже.";
+      return;
+    }
+    select.add(new Option("выберите профиль", ""));
+    for (const profile of projectProfiles) {
+      const status = profile.secretStatus || {};
+      const ready = status.notion && status.gwUrl && status.gwKey;
+      const active = profile.id === activeProjectId ? " · активный" : "";
+      select.add(new Option(`${profile.name}${active}${ready ? " · подключения сохранены" : " · нужны подключения"}`, profile.id));
+    }
+    const preferred = selectId || activeProjectId;
+    const chosen = preferred && projectProfiles.some((item) => item.id === preferred) ? preferred : "";
+    select.value = chosen;
+    if (chosen) showProjectProfile(chosen);
+    note.textContent = "Секреты скрыты. Пустые поля сохраняют текущее значение.";
+  } catch (error) {
+    note.textContent = `Профили не загружены: ${error.message}`;
+  }
+}
+
+function showProjectProfile(id) {
+  const found = projectProfiles.find((item) => item.id === id);
+  $("btn-project-activate")?.classList.toggle("hidden", !found || found.id === activeProjectId);
+  if (!found) return;
+  const { secretStatus = {}, updatedAt = "", ...profile } = found;
+  $("project-json").value = JSON.stringify(profile, null, 2);
+  $("project-ntfy-topic").value = String(profile.ntfyTopic || "");
+  $("project-notion").value = "";
+  $("project-gw-key").value = "";
+  $("project-github").value = "";
+  $("project-ntfy").value = "";
+  $("project-gw-url").value = "";
+  $("project-note").textContent = `Сохранённые: Notion ${secretStatus.notion ? "✓" : "—"}, Drive URL/key ${secretStatus.gwUrl && secretStatus.gwKey ? "✓" : "—"}, GitHub ${secretStatus.github ? "✓" : "не задан"}. Изменено: ${updatedAt || "неизвестно"}.`;
+}
+
+function newProjectProfile() {
+  const uuid = () => crypto.randomUUID();
+  const id = uuid();
+  const sourceIds = Array.from({ length: 4 }, uuid);
+  const profile = {
+    id, name: "Новый проект", roles: sourceIds[0], missions: sourceIds[1], requests: sourceIds[2], questions: sourceIds[3],
+    pageUrl: "https://www.notion.so/", questionsUrl: "https://www.notion.so/", repo: "owner/repository", branch: "main",
+    driveFolder: "project", repos: [{ repo: "owner/repository", branch: "main", main: true }], roleRepos: [],
+  };
+  $("project-select").value = "";
+  $("project-json").value = JSON.stringify(profile, null, 2);
+  $("project-ntfy-topic").value = "";
+  $("project-note").textContent = "Заполните реальные UUID источников, ссылки, репозиторий и папку Drive; затем укажите необходимые подключения.";
+}
+
+async function importProjectProfileFile() {
+  const file = $("project-file").files?.[0];
+  if (!file) return;
+  try {
+    if (file.size > 128 * 1024) throw new Error("Файл профиля больше 128 КБ.");
+    const parsed = JSON.parse(await file.text());
+    const profile = parsed?.format === "scriptcat-project-config" ? parsed.profile : parsed?.profile || parsed;
+    if (!profile || typeof profile !== "object" || Array.isArray(profile)) throw new Error("JSON не содержит объекта профиля.");
+    $("project-json").value = JSON.stringify(profile, null, 2);
+    $("project-ntfy-topic").value = String(profile.ntfyTopic || "");
+    $("project-select").value = "";
+    $("project-note").textContent = "Профиль загружен в редактор. Экспорт не включает credentials — их можно повторно ввести ниже.";
+  } catch (error) {
+    $("project-note").textContent = `Импорт не выполнен: ${error.message}`;
+  } finally { $("project-file").value = ""; }
+}
+
+async function saveProjectConfig({ clearSecrets = false } = {}) {
+  const note = $("project-note");
+  try {
+    const profile = JSON.parse($("project-json").value);
+    profile.ntfyTopic = $("project-ntfy-topic").value.trim();
+    const secrets = {
+      notion: $("project-notion").value.trim(), gwUrl: $("project-gw-url").value.trim(),
+      gwKey: $("project-gw-key").value.trim(), github: $("project-github").value.trim(),
+      ntfyToken: $("project-ntfy").value.trim(),
+    };
+    note.textContent = "Проверяю и сохраняю профиль локально…";
+    const result = await post("/api/projects", { profile, secrets, clearSecrets });
+    if (!result.ok) throw new Error(result.why || "Relay отказал в сохранении");
+    for (const id of ["project-notion", "project-gw-url", "project-gw-key", "project-github", "project-ntfy"]) $(id).value = "";
+    await loadProjectProfiles(result.profile.id);
+    note.textContent = `Сохранено: «${result.profile.name}». ${result.profile.secretStatus.notion && result.profile.secretStatus.gwUrl && result.profile.secretStatus.gwKey
+      ? "ScriptCat получит обновление при следующем безопасном опросе; при смене настроек понадобится повторная проверка допуска."
+      : "Для рабочего подключения заполните Notion token, Drive Gateway URL и key."}`;
+    announceAction("Настройки профиля сохранены на службе Relay. Секреты скрыты; профиль и локальное состояние ScriptCat не очищались.", "ok");
+  } catch (error) {
+    note.textContent = `Не сохранено: ${error.message}`;
+    announceAction(`Настройки не сохранены: ${error.message}`, "bad");
+  }
+}
+
+async function activateSelectedProject() {
+  const id = $("project-select").value;
+  const profile = projectProfiles.find((item) => item.id === id);
+  if (!profile) { $("project-note").textContent = "Сначала выберите сохранённый профиль."; return; }
+  if (profile.id === activeProjectId) return;
+  if (!window.confirm(`Сделать «${profile.name}» активным проектом? Вкладки переключатся только после завершения локальных шагов. Автоцикл не включается.`)) return;
+  try {
+    $("project-note").textContent = "Переключаю активный профиль Relay…";
+    const result = await post("/api/projects/active", { projectId: profile.id });
+    if (!result.ok) throw new Error(result.why || "Relay отказал в переключении");
+    activeProjectId = result.activeProjectId;
+    await loadProjectProfiles(activeProjectId);
+    $("project-note").textContent = `${result.why} Очереди и ожидания каждого проекта остаются в его локальном хранилище.`;
+    announceAction("Активный проект изменён в Relay. Вкладки переключатся на безопасном опросе.", "ok");
+  } catch (error) {
+    $("project-note").textContent = `Проект не переключён: ${error.message}`;
+    announceAction(`Проект не переключён: ${error.message}`, "bad");
+  }
+}
+
 let snapshot = null;
 let busy = false;
 let controlBusy = false;
+let projectProfiles = [];
+let activeProjectId = "";
 
 function announceAction(text, tone = "") {
   const node = $("action-feedback");
@@ -45,6 +173,7 @@ function operatorGuidance(shot) {
   const admins = adminClientsFor(shot);
   const heldAdmin = admins.find((client) => client.localBusy || client.localWaiting);
   const pausedAdmin = admins.find((client) => client.localPaused);
+  const blockedProject = admins.find((client) => client.projectApproved === false);
   if (shot.demo) return {
     tone: "bad", mark: "!", title: "Это демо, не рабочая книга",
     detail: "Не нажимайте «Шаг» для реальной работы: подключите книгу через настройку Relay.", canStep: false,
@@ -54,6 +183,18 @@ function operatorGuidance(shot) {
     detail: `Новые автоматические ходы остановлены. ${shot.pauseReason || "Сохранённое состояние не сбрасывается."}`,
     canStep: false,
   };
+  if (blockedProject) {
+    const reason = String(blockedProject.projectBlockReason || "");
+    const why = reason === "unapproved" ? "не пройдена проверка допуска"
+      : reason === "invalid" ? "профиль недоступен или повреждён"
+        : reason === "legacy" ? "вкладка не выбрала профиль"
+          : reason || "проверка проекта не завершена";
+    return {
+      tone: "warn", mark: "!", title: "Проект заблокировал запуск",
+      detail: `Админская вкладка сообщила: профиль «${blockedProject.projectName || blockedProject.projectId || "проекта"}» — ${why}. Новый ход не отправляю, чтобы не повторять бесполезные запросы.`,
+      canStep: false,
+    };
+  }
   if (shot.turnRequest && heldAdmin) return {
     tone: "warn", mark: "…", title: "Координатор ждёт Admin; ScriptCat удерживает опрос",
     detail: `${localHoldDescription(heldAdmin)}. Relay сохранил запрос ${shot.turnRequest.id} и не сбросил его. Не нажимайте «Шаг» повторно — нажмите «Скопировать диагностику» и пришлите отчёт агенту.`,
@@ -120,6 +261,18 @@ function syncControls(shot = snapshot) {
 function renderOperatorGuidance(shot) {
   const guidance = operatorGuidance(shot);
   const card = $("operator-card");
+  const approvalButton = $("btn-approve-project");
+  const blocked = adminClientsFor(shot).find((client) => client.projectApproved === false &&
+    client.projectBlockReason === "unapproved" && /^[0-9a-f-]{36}$/i.test(String(client.projectId || "")));
+  if (approvalButton) {
+    approvalButton.classList.toggle("hidden", !blocked);
+    approvalButton.disabled = !blocked || busy || controlBusy;
+    approvalButton.dataset.projectId = blocked?.projectId || "";
+    approvalButton.dataset.projectName = blocked?.projectName || blocked?.projectId || "";
+    approvalButton.title = blocked
+      ? "Админская вкладка сама проверит сохранённые Notion, Drive, GitHub и схему; данные работы не очищаются, автоцикл не включается."
+      : "Доступна только для живого проекта с причиной «не разрешён»";
+  }
   if (!card) return;
   card.className = `operator-card ${guidance.tone}`;
   $("operator-mark").textContent = guidance.mark;
@@ -216,6 +369,10 @@ function diagnosticReport(shot, bannerEntries = []) {
         localPaused: Boolean(client.localPaused), localBusy: Boolean(client.localBusy),
         localWaiting: client.localWaiting || "", seenAt: client.seenAt || "",
         lastHelloAt: client.lastHelloAt || "", lastPullAt: client.lastPullAt || "", lastBeatAt: client.lastBeatAt || "",
+        ...(client.projectId ? { projectId: redactDiagnosticText(String(client.projectId).slice(0, 120)) } : {}),
+        ...(client.projectName ? { projectName: redactDiagnosticText(String(client.projectName).slice(0, 120)) } : {}),
+        ...(typeof client.projectApproved === "boolean" ? { projectApproved: client.projectApproved } : {}),
+        ...(client.projectBlockReason ? { projectBlockReason: redactDiagnosticText(String(client.projectBlockReason).slice(0, 240)) } : {}),
       })),
       slots: (shot.slots || []).map((slot) => ({
         slotId: slot.slotId, admin: Boolean(slot.admin), container: slot.container || "",
@@ -767,6 +924,33 @@ async function runConfirmedAction({ pending, actionBody, uiText, verify, done })
   }
 }
 
+async function requestProjectApproval() {
+  const button = $("btn-approve-project");
+  const projectId = String(button?.dataset.projectId || "");
+  const projectName = String(button?.dataset.projectName || projectId);
+  if (!projectId || busy || controlBusy) return;
+  const confirmed = window.confirm(
+    `Проверить профиль «${projectName}» в открытой админ-вкладке?\n\n` +
+    "ScriptCat проверит сохранённые подключения и структуру баз Notion только чтением; если схеме нужны правки, проверка остановится без изменений. При успехе разрешается работа проекта и запускаются фоновые наблюдатели вопросов и решений, которые могут создавать записи в Notion. Автоцикл не включается; очередь и ожидания сохраняются.\n\n" +
+    "Продолжить?",
+  );
+  if (!confirmed) return;
+  controlBusy = true;
+  syncControls();
+  announceAction("Передаю запрос проверки админ-вкладке…");
+  try {
+    const result = await post("/api/project-approval", { projectId });
+    if (!result?.ok) throw new Error(result?.why || "служба не приняла запрос");
+    await refresh();
+    announceAction(result.why || "Запрос передан. Дождитесь результата проверки в статусе и журнале.", "ok");
+  } catch (error) {
+    announceAction(`Не удалось запросить проверку профиля: ${error.message}. Ничего не сброшено.`, "bad");
+  } finally {
+    controlBusy = false;
+    syncControls();
+  }
+}
+
 async function copyDiagnostics() {
   const note = $("diagnostic-note");
   if (!snapshot) {
@@ -827,6 +1011,19 @@ function bind() {
     });
   };
   $("btn-copy-diagnostics").onclick = copyDiagnostics;
+  $("btn-approve-project").onclick = requestProjectApproval;
+  $("project-select").onchange = () => showProjectProfile($("project-select").value);
+  $("btn-project-new").onclick = newProjectProfile;
+  $("btn-project-activate").onclick = activateSelectedProject;
+  $("btn-project-import").onclick = () => $("project-file").click();
+  $("project-file").onchange = importProjectProfileFile;
+  $("btn-project-save").onclick = () => saveProjectConfig();
+  $("btn-project-clear-secrets").onclick = () => {
+    const id = $("project-select").value;
+    if (!id) { $("project-note").textContent = "Сначала выберите сохранённый профиль."; return; }
+    if (!window.confirm("Удалить сохранённые Notion, Drive, GitHub и ntfy credentials для выбранного профиля? Очередь, ожидания и рабочее состояние не трогаются.")) return;
+    void saveProjectConfig({ clearSecrets: true });
+  };
   $("btn-discover").onclick = discover;
   const notionButton = $("btn-notion");
   if (notionButton) notionButton.onclick = setNotionToken;
@@ -854,5 +1051,6 @@ function bind() {
 
 bind();
 renderBannerHistory();
+void loadProjectProfiles();
 refresh();
 setInterval(refresh, 5000);

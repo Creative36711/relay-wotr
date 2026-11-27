@@ -20,6 +20,8 @@ import { createAppsScriptStore } from "./appsscript-bridge.mjs";
 import { defaultBridgePath, readBridgeConfig } from "./bridge-config.mjs";
 import { defaultProxyPath, readProxyConfig } from "./proxy-config.mjs";
 import { defaultNotionTokenPath, readNotionToken, writeNotionToken } from "./notion-token-config.mjs";
+import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import { serviceAccountFromEnv, createServiceAccountToken } from "./google-auth.mjs";
 
 // Версия службы в одном месте: она печатается в шапке страницы установки.
@@ -39,6 +41,7 @@ const tokenCmd = process.env.RELAY_TOKEN_CMD || "";
 // когда владелец вставляет два значения в браузере. Переменные остаются для
 // тех, кто запускает службу скриптом.
 const bridgeFile = process.env.RELAY_BRIDGE_FILE || defaultBridgePath();
+const projectConfigFile = process.env.RELAY_PROJECT_CONFIG_FILE || join(dirname(fileURLToPath(import.meta.url)), "..", "project-config.json");
 
 // Прокси: если он задан в системе, второй раз его спрашивать не у кого.
 // `proxy.txt` рядом с `bridge.txt` — только для тех, кто запускает службу
@@ -114,6 +117,7 @@ const { server, service } = createTransportServer({
   bridgeUrl,
   bridgeKey,
   bridgeFile,
+  projectConfigFile,
   // Принятый в пульте токен служба кладёт сюда — дальше он переживает
   // перезапуск без повторного ввода.
   saveNotionToken: (value) => writeNotionToken(notionTokenFile, value),

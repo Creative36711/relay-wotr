@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Relay — передача хода между агентами
 // @namespace    https://arena.ai/
-// @version      1.33.1
+// @version      1.34.0
 // @updateURL    https://raw.githubusercontent.com/Creative36711/relay-wotr/main/tools/script-cat/relay.user.js
 // @downloadURL  https://raw.githubusercontent.com/Creative36711/relay-wotr/main/tools/script-cat/relay.user.js
 // @description  Цикл Координатор → исполнитель → Координатор: агент сам коммитит, пушит и мержит PR; ScriptCat ждёт мерж и нажимает Continue.
@@ -97,7 +97,7 @@
     // D-073: отпечаток сборки вшивает build.mjs (SHA-256 источника). Номер версии
     // говорит «какой выпуск», отпечаток — «какая именно сборка»: без него проверка
     // «работает новая версия, а не прежняя под новым номером» невозможна.
-    buildFingerprint: "79a942ab0c61a1c5",
+    buildFingerprint: "511103ae9ef5eaa2",
     repo: "", // для ссылки на PR из номера
     tickMs: 15000,
     mergeGraceMs: 90000, // сколько ждём мерж, прежде чем нажать кнопки за агента
@@ -359,8 +359,78 @@
   }
   const ACTIVE_PROFILE = Object.freeze(normalizeProfile(resolveProfile(selectedProfileId())));
   const projectStorageKey = (id, key) => `project:${id}:${String(key)}`;
-  GM_getValue = (key, fallback) => rawGet(projectStorageKey(ACTIVE_PROFILE.id, key), fallback);
+  let RELAY_PROJECT_CREDENTIALS = null;
+  const PROJECT_SECRET_FIELDS = {
+    "cfn-notion-token": "notion", "cfn-gw-url": "gwUrl", "cfn-gw-key": "gwKey",
+    "cfn-github-token": "github", "cfn-ntfy-token": "ntfyToken",
+  };
+  GM_getValue = (key, fallback) => {
+    if (String(key) === "cfn-ntfy-topic" && Object.hasOwn(ACTIVE_PROFILE, "ntfyTopic"))
+      return String(ACTIVE_PROFILE.ntfyTopic || "");
+    const field = PROJECT_SECRET_FIELDS[String(key)];
+    if (field && RELAY_PROJECT_CREDENTIALS?.projectId === ACTIVE_PROFILE.id && RELAY_PROJECT_CREDENTIALS.secretsMigrated)
+      return RELAY_PROJECT_CREDENTIALS.credentials?.[field] || fallback;
+    return rawGet(projectStorageKey(ACTIVE_PROFILE.id, key), fallback);
+  };
   GM_setValue = (key, value) => rawSet(projectStorageKey(ACTIVE_PROFILE.id, key), value);
+
+  /** Adopt owner-saved Relay settings only when the local project has no live work. */
+  function applyRelayProjectSettings(data) {
+    if (!data || data.ok !== true || data.project?.id !== ACTIVE_PROFILE.id || data.secretsMigrated !== true)
+      return { applied: false, profileChanged: false, settingsChanged: false };
+    const profile = normalizeProfile(data.project);
+    if (!validProfile(profile)) return { applied: false, profileChanged: false, settingsChanged: false };
+    const registry = profileRegistry();
+    const index = registry.findIndex((item) => item?.id === profile.id);
+    const previous = index >= 0 ? registry[index] : null;
+    const profileChanged = JSON.stringify(normalizeProfile(previous || {})) !== JSON.stringify(profile);
+    if (profileChanged) {
+      const next = registry.slice();
+      if (index >= 0) next[index] = profile;
+      else next.push(profile);
+      rawSet(PROFILE_REGISTRY_KEY, next);
+    }
+    const markerKey = projectStorageKey(profile.id, "cfn-relay-settings-updated-at");
+    const previousUpdatedAt = String(rawGet(markerKey, "") || "");
+    const updatedAt = String(data.updatedAt || "");
+    const settingsChanged = Boolean(updatedAt && previousUpdatedAt !== updatedAt);
+    RELAY_PROJECT_CREDENTIALS = {
+      projectId: profile.id, secretsMigrated: true,
+      credentials: data.credentials && typeof data.credentials === "object" ? { ...data.credentials } : {},
+    };
+    // Remove legacy secret copies only after the Relay file has been read and
+    // validated. Queues, expectations, journals and the profile UUID stay local.
+    for (const key of Object.keys(PROJECT_SECRET_FIELDS)) rawSet(projectStorageKey(profile.id, key), "");
+    if (updatedAt) rawSet(markerKey, updatedAt);
+    if (profileChanged || settingsChanged) rawSet(projectStorageKey(profile.id, "cfn-project-approved"), false);
+    return { applied: true, profileChanged, settingsChanged };
+  }
+  function applyRelayProjectSettingsUnavailable(data) {
+    if (!data || data.projectId !== ACTIVE_PROFILE.id) return false;
+    RELAY_PROJECT_CREDENTIALS = null;
+    for (const key of Object.keys(PROJECT_SECRET_FIELDS)) rawSet(projectStorageKey(ACTIVE_PROFILE.id, key), "");
+    const markerKey = projectStorageKey(ACTIVE_PROFILE.id, "cfn-relay-settings-updated-at");
+    if (data.updatedAt) rawSet(markerKey, String(data.updatedAt));
+    rawSet(projectStorageKey(ACTIVE_PROFILE.id, "cfn-project-approved"), false);
+    return true;
+  }
+
+  /** Accept a pult-selected profile without touching any project's local run state. */
+  function applyRelayProjectSelection(data) {
+    if (!data || data.ok !== true || !data.project || !data.secretsMigrated) return false;
+    const profile = normalizeProfile(data.project);
+    if (!validProfile(profile)) return false;
+    const registry = profileRegistry();
+    const index = registry.findIndex((item) => item?.id === profile.id);
+    const next = registry.slice();
+    if (index >= 0) next[index] = profile;
+    else next.push(profile);
+    rawSet(PROFILE_REGISTRY_KEY, next);
+    try { sessionStorage.setItem(PROFILE_SESSION_KEY, profile.id); }
+    catch { return false; }
+    return true;
+  }
+
   const mainEntry = profileMainEntry(ACTIVE_PROFILE);
   Object.assign(C, {
     roles: ACTIVE_PROFILE.roles, missions: ACTIVE_PROFILE.missions, requests: ACTIVE_PROFILE.requests,
@@ -374,6 +444,15 @@
   Object.freeze(C);
   const projectApproved = () => !ACTIVE_PROFILE.invalid && !ACTIVE_PROFILE.legacy &&
     GM_getValue("cfn-project-approved", false) === true;
+  const projectProfileSnapshot = () => {
+    if (ACTIVE_PROFILE.invalid || ACTIVE_PROFILE.legacy) return null;
+    const keys = ["id", "name", "roles", "missions", "requests", "questions", "pageUrl", "questionsUrl", "repo", "branch", "driveFolder", "repos", "roleRepos",
+      "agentProvisionEnabled", "agentProvisionMode", "agentProvisionRepoAllowlist", "agentBootstrapPrompt", "agentProvisionMaxJobs", "agentProvisionDailyMax",
+      "agentBootstrapWaitMs", "agentUrlWaitMs", "agentRenameAttempts", "agentProvisionAutoActivate", "agentProvisionArchiveOld"];
+    const snapshot = Object.fromEntries(keys.filter((key) => ACTIVE_PROFILE[key] !== undefined).map((key) => [key, ACTIVE_PROFILE[key]]));
+    snapshot.ntfyTopic = String(GM_getValue(K.ntfyTopic, "") || "");
+    return snapshot;
+  };
 
   /**
    * Почему вкладка не может работать — тремя словами, а не одним. Прежняя
@@ -481,7 +560,6 @@
     step: "cfn-step",
     // D-006: будильник вкладок стоит рядом с «Шаг» и «Включить».
     wake: "cfn-wake",
-    setup: "cfn-setup",
     stop: "cfn-stop",
     clear: "cfn-clear",
     reset: "cfn-reset",
@@ -804,7 +882,7 @@
 
   const NTFY_BASE = "https://ntfy.sh";
   const SCRIPT_VERSION =
-    (typeof GM_info !== "undefined" && GM_info?.script?.version) || "1.33.1";
+    (typeof GM_info !== "undefined" && GM_info?.script?.version) || "1.34.0";
 
   /** «https://ntfy.sh/topic?x=1» и «topic» одинаково дают topic. */
   function normalizeNtfyTopic(raw) {
@@ -1857,7 +1935,7 @@
     if (log) log.style.display = collapsed ? "none" : "";
     const relayMode = typeof relayControlActive === "function" && relayControlActive();
     const relayConfiguredNow = typeof relayConfigured === "function" && relayConfigured();
-    for (const id of [ui.step, ui.wake, ui.questions, ui.debug, ui.reset, ui.clear, ui.setup]) {
+    for (const id of [ui.step, ui.wake, ui.questions, ui.debug, ui.reset, ui.clear]) {
       const el = document.getElementById(id);
       if (!el) continue;
       const superseded = relayMode && [ui.step, ui.wake].includes(id);
@@ -1914,7 +1992,6 @@
         <button id="${ui.debug}" title="Отладка в консоли браузера (F12)" style="${btnStyle()}">🐞</button>
         <button id="${ui.reset}" title="Снять ход: очередь, ожидание и карточки в Running без хода (журнал и настройки останутся)" style="${btnStyle()}">↺</button>
         <button id="${ui.clear}" title="Очистить журнал; очередь снимается кнопкой ↺" style="${btnStyle()}">🧹</button>
-        <button id="${ui.setup}" title="Notion, Google Drive, GitHub и уведомления" style="${btnStyle()}">⚙ Подключения</button>
         <button id="${ui.stop}" title="Остановить цикл и снять паузу" style="${btnStyle()}">✕</button>
         <button id="${ui.collapse}" title="Свернуть панель" style="${btnStyle()}">▾</button>
       </div>
@@ -1923,7 +2000,6 @@
 
     document.getElementById(ui.collapse).onclick = () => togglePanel();
 
-    document.getElementById(ui.setup).onclick = () => setup(true);
     document.getElementById(ui.reset).onclick = () => {
       // Сброс теперь ходит в Notion: без перехвата отказ сети остался бы
       // необработанным обещанием и молчаливой кнопкой.
@@ -1958,7 +2034,7 @@
     document.getElementById(ui.step).onclick = () => {
       if (typeof projectApproved === "function" && !projectApproved()) {
         log(typeof projectBlockedText === "function" ? projectBlockedText()
-          : "Проект ещё не разрешён к работе: проверьте его в управлении проектами.", true);
+          : "Проект ещё не разрешён к работе: проверьте профиль и подключения в пульте Relay.", true);
         if (typeof noteFeedbackPipelineHeld === "function") noteFeedbackPipelineHeld();
         return;
       }
@@ -1981,7 +2057,7 @@
       // Мастера, и молчать об этом нельзя — иначе кнопка «не работает».
       if (typeof projectApproved === "function" && !projectApproved()) {
         log(typeof projectBlockedText === "function" ? projectBlockedText()
-          : "Проект ещё не разрешён к работе: проверьте его в управлении проектами.", true);
+          : "Проект ещё не разрешён к работе: проверьте профиль и подключения в пульте Relay.", true);
         return;
       }
       if (typeof projectHeld === "function" && projectHeld()) {
@@ -2016,13 +2092,12 @@
     watchQuestions();
     // ADR без записи всё ещё обнаруживается в фоне и попадает в ту же базу.
     watchDecisions();
-    maybeGhDialog();
   }
 
   async function toggleAuto() {
     if (typeof projectApproved === "function" && !projectApproved()) {
       log(typeof projectBlockedText === "function" ? projectBlockedText()
-        : "Проект не разрешён к работе: откройте «Подключения → Управление проектами» и проверьте его.", true);
+        : "Проект не разрешён к работе: откройте пульт Relay и проверьте активный профиль.", true);
       if (typeof noteFeedbackPipelineHeld === "function") noteFeedbackPipelineHeld();
       return;
     }
@@ -2065,8 +2140,9 @@
 
   // ───────────────────────────── подключения ─────────────────────────────
   // D-005: адреса аккаунтов вводить не нужно — почта живёт в поле «Аккаунт»
-  // базы «Роли» (Notion) и читается оттуда. Окно лишь сообщает, откуда брать
-  // адреса; локальной связки «метка → почта» больше нет (D-004 п.1 отменён).
+  // базы «Роли» (Notion) и читается оттуда. Настройка профиля и подключений
+  // принадлежит локальному пульту Relay; здесь остались транспортные функции
+  // и проверки только для чтения при явном допуске проекта.
 
   /** Старые ключи остаются источником истины: обновление не сбрасывает доступ. */
   function connectionSettings() {
@@ -2182,377 +2258,6 @@
     }
   }
 
-  /** Единая точка входа, в том числе старый адрес ?cf-auth-setup=1. */
-  async function setup(force = false) {
-    const url = new URL(location.href);
-    const fromParam = url.searchParams.has("cf-auth-setup");
-    if (!force && !fromParam) return;
-    if (fromParam) {
-      url.searchParams.delete("cf-auth-setup");
-      history.replaceState(null, "", url.toString());
-    }
-    connectionDialog();
-  }
-
-  /**
-   * Секреты не вставляем из хранилища в DOM. Пустое поле означает «не менять»;
-   * удаление — только явным флажком. Проверка использует черновик и не сохраняет его.
-   */
-  function connectionDialog({ focusGithub = false } = {}) {
-    const opened = document.getElementById("cfn-connections");
-    if (opened) {
-      if (focusGithub) {
-        const note = opened.querySelector("#cfn-connections-note");
-        note.textContent = "GitHub запросил доступ: проверьте токен и доступ к репозиторию.";
-        opened.querySelector("#cfn-connection-github")?.focus();
-      }
-      return;
-    }
-    let saved = connectionSettings();
-    let checking = false;
-    let performing = false;
-    const box = document.createElement("div");
-    box.id = "cfn-connections";
-    box.style.cssText = [
-      "position:fixed", "inset:0", "z-index:2147483200", "background:rgba(5,7,12,.72)",
-      "display:flex", "align-items:center", "justify-content:center", "padding:14px", "box-sizing:border-box",
-      "color:#e7eaee", "font:13px/1.5 system-ui,-apple-system,sans-serif", "color-scheme:dark",
-    ].join(";");
-    const field = `${inputStyle()};padding:9px 10px;margin-top:5px;font:13px/1.35 ui-monospace,Menlo,Consolas,monospace`;
-    const card = "border:1px solid #343b48;border-radius:10px;padding:14px;background:#1c2029";
-    const action = `${btnStyle()};font:12px/1.35 system-ui,sans-serif;padding:7px 10px`;
-    const quiet = "font-size:12px;color:#aab4c3;line-height:1.5";
-    box.innerHTML = `
-      <div role="dialog" aria-modal="true" aria-labelledby="cfn-connections-title" tabindex="-1"
-        style="width:min(680px,100%);max-height:calc(100vh - 28px);overflow:auto;background:#151922;border:1px solid #434c5c;border-radius:14px;box-shadow:0 18px 65px rgba(0,0,0,.55)">
-        <header style="position:sticky;top:0;z-index:2;display:flex;align-items:flex-start;gap:14px;padding:16px 20px 12px;background:#151922;border-bottom:1px solid #343b48">
-          <div style="flex:1"><div style="font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:#93a5bf">ScriptCat · Relay</div>
-            <h2 id="cfn-connections-title" style="font-size:20px;line-height:1.2;margin:5px 0 6px;color:#f6f8fb">Подключения</h2>
-            <div style="${quiet}">Notion, Google Drive и GitHub — в одном месте. Сохранённые секреты не показываются.</div></div>
-          <button id="cfn-connections-close" type="button" aria-label="Закрыть" style="${action}">✕</button>
-        </header>
-        <div style="display:grid;gap:10px;padding:0 20px 18px">
-          <div style="${quiet}">Текущий проект: <b id="cfn-connection-project-name"></b>. У каждого проекта свои источники, состояние и доступы. Пока окно открыто, новые шаги в этой вкладке не начинаются; начатый шаг и фоновые сторожа могут продолжаться. Используйте одну вкладку.</div>
-          <div style="${quiet}">Маскировка скрывает секреты на экране, но введённые значения доступны коду страницы и расширениям. Пользуйтесь только доверенной страницей Arena.</div>
-          <button id="cfn-connection-projects" type="button" style="${action};justify-self:start">Управление проектами</button>
-          <button id="cfn-connection-stop-auto" type="button" style="${action};justify-self:start">Остановить автоцикл этой вкладки</button>
-          <section style="${card}" aria-labelledby="cfn-connection-relay-title">
-            <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap"><strong id="cfn-connection-relay-title" style="font-size:15px;color:#fff">Служба Relay</strong><span style="${quiet}">лист «Экземпляры» и адреса агентов</span></div>
-            <div id="cfn-connection-relay-status" role="status" style="${quiet};margin:4px 0 8px"></div>
-            <label for="cfn-connection-relay-url" style="font-weight:600">Адрес службы</label>
-            <input id="cfn-connection-relay-url" type="url" autocomplete="off" spellcheck="false" placeholder="Авто: http://127.0.0.1:8787" style="${field}">
-            <div style="${quiet};margin-top:8px">Обычно адрес подставляется автоматически: http://127.0.0.1:8787. Меняйте его только при нестандартном порте или отдельном сервере. localhost автоматически переводится на IPv4, чтобы избежать выбора недоступного ::1.</div>
-          </section>
-          <section style="${card}" aria-labelledby="cfn-connection-notion-title">
-            <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap"><strong id="cfn-connection-notion-title" style="font-size:15px;color:#fff">Notion</strong><span style="${quiet}">базы и очередь</span></div>
-            <div id="cfn-connection-notion-status" role="status" style="${quiet};margin:4px 0 8px"></div>
-            <label for="cfn-connection-notion" style="font-weight:600">Токен интеграции</label>
-            <input id="cfn-connection-notion" type="password" autocomplete="off" spellcheck="false" style="${field}">
-            <label style="display:block;margin-top:7px;${quiet}"><input id="cfn-connection-notion-remove" type="checkbox"> Удалить сохранённый токен при сохранении</label>
-          </section>
-          <section style="${card}" aria-labelledby="cfn-connection-drive-title">
-            <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap"><strong id="cfn-connection-drive-title" style="font-size:15px;color:#fff">Google Drive</strong><span style="${quiet}">шлюз Apps Script для файлов</span></div>
-            <div id="cfn-connection-drive-status" role="status" style="${quiet};margin:4px 0 8px"></div>
-            <label for="cfn-connection-url" style="font-weight:600">URL веб-приложения /exec</label>
-            <input id="cfn-connection-url" type="url" autocomplete="off" spellcheck="false" placeholder="https://script.google.com/macros/s/…/exec" style="${field}">
-            <label for="cfn-connection-key" style="display:block;margin-top:9px;font-weight:600">Ключ шлюза</label>
-            <input id="cfn-connection-key" type="password" autocomplete="off" spellcheck="false" style="${field}">
-            <label style="display:block;margin-top:7px;${quiet}"><input id="cfn-connection-drive-remove" type="checkbox"> Удалить URL и ключ при сохранении</label>
-            <label id="cfn-connection-trust-wrap" style="display:none;margin-top:7px;color:#ffd479;font-size:12px"><input id="cfn-connection-trust" type="checkbox"> Я доверяю указанному шлюзу: ему будет отправлен ключ, в том числе ранее сохранённый.</label>
-            <div style="${quiet};margin-top:8px">Ключ получает владелец указанного веб-приложения, даже на script.google.com. В старом Relay проверка ping может создать Arena/logs и Arena/payloads или перенести старую папку логов; новому проекту нужен заранее зарегистрированный шлюз.</div>
-          </section>
-          <section style="${card}" aria-labelledby="cfn-connection-github-title">
-            <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap"><strong id="cfn-connection-github-title" style="font-size:15px;color:#fff">GitHub</strong><span style="${quiet}">проверка PR и ADR</span></div>
-            <div id="cfn-connection-github-status" role="status" style="${quiet};margin:4px 0 8px"></div>
-            <div style="${quiet};margin-bottom:8px">Репозиторий: <strong id="cfn-connection-repo" style="color:#e7eaee"></strong>. Для приватного репозитория — токен с чтением Pull requests и Contents.</div>
-            <label for="cfn-connection-github" style="font-weight:600">Токен GitHub <span style="font-weight:400;${quiet}">(для публичного репозитория необязателен)</span></label>
-            <input id="cfn-connection-github" type="password" autocomplete="off" spellcheck="false" style="${field}">
-            <label style="display:block;margin-top:7px;${quiet}"><input id="cfn-connection-github-remove" type="checkbox"> Удалить сохранённый токен при сохранении</label>
-            <button id="cfn-connection-github-open" type="button" style="${action};margin-top:7px">Открыть настройки токенов GitHub ↗</button>
-          </section>
-          <section style="${card}" aria-labelledby="cfn-connection-accounts-title">
-            <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap"><strong id="cfn-connection-accounts-title" style="font-size:15px;color:#fff">Аккаунты Arena</strong><span style="${quiet}">почта — из Notion</span></div>
-            <div style="${quiet};margin:4px 0 8px">Почта каждого аккаунта читается из поля «Аккаунт» базы «Роли»: здесь вводить нечего. Адрес поменяли в Notion — транспорт возьмёт его при следующем чтении «Ролей», в браузере править нечего. Скрипт входит только за вас и аккаунты не переключает — по адресу он проверяет, что вкладка открыта в нужном контейнере.</div>
-          </section>
-          <details style="${card}"><summary style="cursor:pointer;font-weight:600">Восстановление и уведомления</summary>
-            <div style="${quiet};margin:8px 0">Восстановление использует сохранённые настройки и может изменить карточку Notion и журнал Drive. Применяйте на остановленном цикле.</div>
-            <div style="display:flex;gap:7px;flex-wrap:wrap">
-              <button id="cfn-connection-recover" type="button" style="${action}">Вернуть карточку</button>
-              <button id="cfn-connection-adopt" type="button" style="${action}">Взять ответ из чата</button>
-              <button id="cfn-connection-ntfy" type="button" style="${action}">🔔 Настроить уведомления</button>
-            </div>
-          </details>
-          <div style="${quiet}">Пустые поля секретов сохраняют прежние значения. «Проверить всё» проверяет введённое, но не сохраняет; «Сохранить» работает отдельно и не запускает цикл.</div>
-        </div>
-        <footer style="position:sticky;bottom:0;background:#151922;border-top:1px solid #343b48;padding:10px 20px 14px;z-index:1">
-          <div id="cfn-connections-note" role="status" aria-live="polite" style="min-height:20px;font-size:12px;color:#bfe6c4;white-space:pre-wrap"></div>
-          <div style="display:flex;gap:8px;flex-wrap:wrap">
-            <button id="cfn-connections-check" type="button" style="${action};background:#2b4b6f;border-color:#4c77a6;font-weight:600">Проверить всё</button>
-            <button id="cfn-connections-save" type="button" style="${action};background:#285638;border-color:#438a5b;font-weight:600">Сохранить</button>
-          </div>
-        </footer>
-      </div>`;
-    document.body.appendChild(box);
-    const find = (id) => box.querySelector(`#cfn-connection-${id}`);
-    const notionInput = find("notion"), urlInput = find("url"), keyInput = find("key"), githubInput = find("github");
-    const relayInput = find("relay-url");
-    const notionRemove = find("notion-remove"), driveRemove = find("drive-remove"), githubRemove = find("github-remove");
-    const trust = find("trust"), trustWrap = find("trust-wrap");
-    const checkButton = box.querySelector("#cfn-connections-check"), saveButton = box.querySelector("#cfn-connections-save");
-    const note = box.querySelector("#cfn-connections-note");
-    find("repo").textContent = C.repo;
-    find("project-name").textContent = C.projectName || "Relay";
-    urlInput.value = saved.gwUrl;
-    relayInput.value = saved.relayUrl;
-
-    const say = (text, error = false) => {
-      note.textContent = text;
-      note.style.color = error ? "#ffb4ad" : "#bfe6c4";
-    };
-    const status = (name, text, kind = "idle") => {
-      const el = find(`${name}-status`);
-      el.textContent = text;
-      el.style.color = kind === "ok" ? "#a6e3b5" : kind === "warn" ? "#ffd479" : kind === "error" ? "#ffb4ad" : "#aab4c3";
-    };
-    const placeholders = () => {
-      notionInput.placeholder = saved.notion ? "Сохранён · введите новый, чтобы заменить" : "Введите токен интеграции";
-      keyInput.placeholder = saved.gwKey ? "Сохранён · введите новый, чтобы заменить" : "Введите ключ шлюза";
-      githubInput.placeholder = saved.github ? "Сохранён · введите новый, чтобы заменить" : "Токен или пусто для публичного репозитория";
-    };
-    const read = () => ({
-      notion: notionRemove.checked ? "" : notionInput.value.trim() || saved.notion,
-      gwUrl: driveRemove.checked ? "" : urlInput.value.trim(),
-      gwKey: driveRemove.checked ? "" : keyInput.value.trim() || saved.gwKey,
-      github: githubRemove.checked ? "" : githubInput.value.trim() || saved.github,
-      relayUrl: relayInput.value.trim().replace(/\/+$/, ""),
-      relayAuto: saved.relayAuto && relayInput.value.trim().replace(/\/+$/, "") === saved.relayUrl,
-    });
-    const needsTrust = (settings, endpoint = connectionEndpoint(settings.gwUrl)) =>
-      endpoint.ok && Boolean(settings.gwUrl) && (!endpoint.standard ||
-        (settings.gwUrl !== saved.gwUrl && Boolean(settings.gwKey) && settings.gwKey === saved.gwKey));
-    const refreshForm = () => {
-      const settings = read();
-      const endpoint = connectionEndpoint(settings.gwUrl);
-      const locked = checking || performing;
-      trustWrap.style.display = needsTrust(settings, endpoint) ? "block" : "none";
-      notionInput.disabled = locked || notionRemove.checked;
-      relayInput.disabled = locked;
-      urlInput.disabled = locked || driveRemove.checked;
-      keyInput.disabled = locked || driveRemove.checked;
-      githubInput.disabled = locked || githubRemove.checked;
-      for (const element of [notionRemove, driveRemove, githubRemove, trust, checkButton, saveButton,
-        find("recover"), find("adopt"), find("ntfy")]) element.disabled = locked;
-      const stopAuto = find("stop-auto");
-      const auto = autoOn();
-      stopAuto.disabled = locked || !auto;
-      stopAuto.textContent = auto ? "Остановить автоцикл этой вкладки" : "Автоцикл этой вкладки выключен";
-      stopAuto.style.opacity = stopAuto.disabled ? ".6" : "1";
-      stopAuto.style.cursor = stopAuto.disabled ? "default" : "pointer";
-    };
-    const resetStatuses = () => {
-      status("notion", saved.notion ? "Сохранён · ещё не проверен" : "Не настроен");
-      const endpoint = connectionEndpoint(saved.gwUrl);
-      status("drive", !endpoint.ok ? "Сохранён небезопасный или неверный URL. Замените его на HTTPS." :
-        saved.gwUrl && saved.gwKey ? "Сохранён · ещё не проверен" : "Не настроен полностью", endpoint.ok ? "idle" : "error");
-      status("github", saved.github ? "Сохранён · ещё не проверен" : "Без токена · доступ не проверен");
-      status("relay", !saved.relayUrl ? "Не задан · скрипт использует автоадрес"
-        : saved.relayAuto ? `Автоматически · ${saved.relayUrl}`
-          : /^https?:\/\//.test(saved.relayUrl) ? "Задан · проверю связь при сохранении" : "Нужен полный адрес, начиная с http://");
-    };
-    const changed = () => !sameConnections(read(), saved);
-    const close = () => {
-      if (performing) { say("Восстановление ещё выполняется: дождитесь результата.", true); return false; }
-      const messages = [];
-      if (checking) messages.push("Проверка не отменится и может завершиться после закрытия.");
-      if (changed()) messages.push("Несохранённые изменения будут потеряны.");
-      if (messages.length && !confirm(`${messages.join("\n")}\n\nЗакрыть окно?`)) return false;
-      box.remove();
-      document.getElementById(ui.setup)?.focus();
-      return true;
-    };
-    box.querySelector("#cfn-connections-close").onclick = close;
-    box.onkeydown = (event) => {
-      if (event.key === "Escape") { event.preventDefault(); close(); return; }
-      if (event.key !== "Tab") return;
-      const focusable = [...box.querySelectorAll('button, input, select, textarea, a[href], summary, [tabindex]:not([tabindex="-1"])')]
-        .filter((element) => !element.disabled && element.getClientRects().length);
-      const first = focusable[0], last = focusable[focusable.length - 1];
-      if (!first) { event.preventDefault(); box.querySelector('[role="dialog"]')?.focus(); return; }
-      const active = document.activeElement;
-      if (event.shiftKey && (active === first || !focusable.includes(active))) {
-        event.preventDefault(); last.focus();
-      } else if (!event.shiftKey && (active === last || !focusable.includes(active))) {
-        event.preventDefault(); first.focus();
-      }
-    };
-    for (const element of [notionInput, urlInput, keyInput, githubInput, notionRemove, driveRemove, githubRemove, trust]) {
-      const invalidate = (event) => {
-        // Подтверждение привязано к адресу и ключу, а не к следующему вводу.
-        if (event.target === urlInput || event.target === keyInput || event.target === driveRemove) trust.checked = false;
-        resetStatuses();
-        refreshForm();
-        say("Настройки изменены в окне; проверка и сохранение выполняются отдельно.");
-      };
-      element.addEventListener("input", invalidate);
-      element.addEventListener("change", invalidate);
-    }
-
-    checkButton.onclick = async () => {
-      if (checking || performing) return;
-      const settings = read();
-      const endpoint = connectionEndpoint(settings.gwUrl);
-      const driveAllowed = endpoint.ok && (!needsTrust(settings, endpoint) || trust.checked);
-      checking = true;
-      refreshForm();
-      status("notion", "Проверяю токен и источники…");
-      status("github", "Проверяю доступ к репозиторию…");
-      status("drive", driveAllowed ? "Проверяю шлюз…" : endpoint.ok ? "Подтвердите доверие к указанному шлюзу." : endpoint.message, driveAllowed ? "idle" : "error");
-      say("Проверяю введённые данные. Они ещё не сохранены; Drive ping может создать или перенести папки.");
-      const watchdog = setTimeout(() => {
-        say("Один из сервисов не ответил за 25 секунд. Можно закрыть окно; начатая проверка может ещё завершиться, настройки не сохраняются.", true);
-      }, 25000);
-      const show = async (name, probe) => {
-        try {
-          const result = await probe(settings);
-          status(name, connectionProblem(result.text, settings), result.ok ? result.warning ? "warn" : "ok" : "error");
-        } catch (e) {
-          status(name, `Не удалось проверить: ${connectionProblem(e, settings)}`, "error");
-        }
-      };
-      try {
-        await Promise.all([
-          show("notion", probeNotionConnection),
-          ...(driveAllowed ? [show("drive", probeDriveConnection)] : []),
-          show("github", probeGithubConnection),
-        ]);
-        say("Проверка завершена. Результаты выше относятся к текущим полям и ещё не сохраняют их.");
-      } finally {
-        clearTimeout(watchdog);
-        checking = false;
-        refreshForm();
-      }
-    };
-
-    saveButton.onclick = () => {
-      if (checking || performing) return;
-      if (busy || (typeof projectAsyncWork === "number" && projectAsyncWork > 0) || (autoOn() && !isPaused())) {
-        say("Остановите цикл или поставьте его на паузу и дождитесь завершения текущих шагов и фоновых операций перед сохранением.", true);
-        return;
-      }
-      if (!sameConnections(connectionSettings(), saved)) {
-        say("Настройки изменились в другой вкладке. Закройте это окно и откройте заново, чтобы не затереть их.", true);
-        return;
-      }
-      const next = read();
-      const endpoint = connectionEndpoint(next.gwUrl);
-      const driveChanged = next.gwUrl !== saved.gwUrl || next.gwKey !== saved.gwKey;
-      // Старый HTTP-адрес не отправляем на проверку и не разрешаем менять ключ
-      // к нему. Но не блокируем правку другого подключения: ранее сохранённый
-      // адрес остаётся неизменным и показан как небезопасный до его замены.
-      if (!endpoint.ok && driveChanged) { say(endpoint.message, true); return; }
-      // Адрес службы Relay: опечатка здесь молча оставила бы «Экземпляры»
-      // невидимыми, поэтому проверяем форму до сохранения.
-      if (next.relayUrl && !/^https?:\/\/[^\s]+$/.test(next.relayUrl)) {
-        say("Адрес службы Relay должен быть полным: http://localhost:8787 или https://…", true);
-        return;
-      }
-      if (driveChanged && needsTrust(next, endpoint) && !trust.checked) {
-        say("Подтвердите доверие к указанному шлюзу: при работе ему будет отправлен ключ.", true);
-        return;
-      }
-      const liveHandoff = GM_getValue(K.pending, null) || GM_getValue(K.expect, null);
-      if (liveHandoff && (driveChanged || next.notion !== saved.notion) &&
-          !confirm("Есть сохранённая очередь или ожидание. Новые доступы и шлюз должны видеть прежние карточки и файлы, иначе восстановление хода может не получиться. Сохранить изменения?")) {
-        say("Подключения не изменены; очередь и ожидание сохранены.");
-        return;
-      }
-      const updates = [
-        [K.notion, saved.notion, next.notion], [K.gwUrl, saved.gwUrl, next.gwUrl],
-        [K.gwKey, saved.gwKey, next.gwKey], [K.ghToken, saved.github, next.github],
-        ["cfn-relay-url", saved.relayUrl, next.relayUrl],
-      ].filter(([, before, after]) => before !== after);
-      if (!updates.length) { say("Изменений для сохранения нет."); return; }
-      // Допуск привязан к проверенным данным. Меняем доступ — сначала снимаем
-      // допуск нового проекта, включая фоновые сторожа, и проверяем его заново.
-      if (typeof ACTIVE_PROFILE !== "undefined" && !ACTIVE_PROFILE.legacy)
-        updates.unshift(["cfn-project-approved", GM_getValue("cfn-project-approved", false), false]);
-      if (next.notion !== saved.notion) updates.push([K.rolesCache, GM_getValue(K.rolesCache, null), null]);
-      if (next.github !== saved.github) updates.push([K.ghAsk, GM_getValue(K.ghAsk, 0), 0]);
-      const attempted = [];
-      try {
-        for (const [key, before, after] of updates) {
-          attempted.push([key, before]);
-          GM_setValue(key, after);
-        }
-      } catch {
-        let restored = true;
-        for (const [key, before] of attempted.reverse()) {
-          try { GM_setValue(key, before); } catch { restored = false; }
-        }
-        if (!restored && typeof ACTIVE_PROFILE !== "undefined" && !ACTIVE_PROFILE.legacy) {
-          try { GM_setValue("cfn-project-approved", false); } catch { /* проверить вручную */ }
-        }
-        say(restored ? "Не удалось сохранить; прежние значения восстановлены." : "Не удалось полностью сохранить или восстановить настройки. Проверьте их перед запуском.", true);
-        return;
-      }
-      saved = next;
-      notionInput.value = ""; keyInput.value = ""; githubInput.value = ""; urlInput.value = saved.gwUrl;
-      notionRemove.checked = false; driveRemove.checked = false; githubRemove.checked = false; trust.checked = false;
-      placeholders(); resetStatuses(); refreshForm();
-      const needsApproval = typeof ACTIVE_PROFILE !== "undefined" && !ACTIVE_PROFILE.legacy;
-      say(endpoint.ok ? (needsApproval
-        ? "Сохранено. Допуск проекта снят: откройте «Управление проектами» и проверьте подключения и схему заново."
-        : "Сохранено. Для подтверждения доступа запустите проверку; цикл не запускался.") :
-        "Сохранено. Старый URL шлюза остался небезопасным: замените его перед запуском цикла.", !endpoint.ok);
-      log("Подключения сохранены; секреты в журнал не записываются.", false, { skip: true });
-    };
-
-    find("projects").onclick = () => {
-      if (checking || performing) { say("Дождитесь окончания проверки или восстановления.", true); return; }
-      if (changed()) { say("Сначала сохраните или отмените изменения подключений.", true); return; }
-      if (close()) projectsDialog();
-    };
-    find("github-open").onclick = () => window.open("https://github.com/settings/tokens", "_blank", "noopener");
-    find("stop-auto").onclick = () => {
-      if (!autoOn()) return;
-      autoSet(false);
-      setStatus();
-      log("Автоцикл этой вкладки выключен из окна подключений; очередь и ожидание не сняты.", false, { skip: true });
-      say("Автоцикл этой вкладки выключен. Дождитесь окончания начатого шага; очередь и ожидание сохранены.");
-      refreshForm();
-    };
-    const recover = async (operation, label) => {
-      if (checking || performing) return;
-      if (changed()) { say("Сначала сохраните или отмените изменения: восстановление использует сохранённые настройки.", true); return; }
-      if (busy || (autoOn() && !isPaused())) { say("Остановите цикл и дождитесь окончания шага перед восстановлением.", true); return; }
-      performing = true;
-      refreshForm();
-      say(`${label}…`);
-      const watchdog = setTimeout(() => {
-        say("Восстановление долго не завершается. Не запускайте его повторно: проверьте карточку и журнал; при необходимости перезагрузите вкладку.", true);
-      }, 25000);
-      try {
-        const result = await operation();
-        say(connectionProblem(result.text, saved), !result.ok);
-      } catch (e) {
-        say(`${label}: ${connectionProblem(e, saved)}`, true);
-      } finally { clearTimeout(watchdog); performing = false; refreshForm(); }
-    };
-    find("recover").onclick = () => recover(recoverLastClaim, "Проверяю последнюю карточку");
-    find("adopt").onclick = () => recover(adoptPageAnswer, "Читаю ответ из чата");
-    find("ntfy").onclick = () => {
-      if (changed()) { say("Сначала сохраните или отмените изменения подключений.", true); return; }
-      if (close()) ntfyDialog();
-    };
-    placeholders(); resetStatuses(); refreshForm();
-    if (focusGithub) {
-      say("GitHub запросил доступ: проверьте токен и доступ к репозиторию.", true);
-      githubInput.focus();
-    } else {
-      box.querySelector('[role="dialog"]')?.focus();
-    }
-  }
-
   // ───────────────────────────── управление проектами ─────────────────────────────
   // Смена адресов источников у уже работающего профиля не переносит очередь:
   // изменённая копия получает новый UUID и новое пространство состояния.
@@ -2589,7 +2294,7 @@
   }
 
   /** Проверка схемы и ролей только чтением, до включения фоновых сторожей. */
-  async function validateProjectSchema(settings) {
+  async function validateProjectSchema(settings, { readOnly = false } = {}) {
     // Варианты «Функция» живут внутри проверки: проба исполняет ровно этот
     // срез (regression-tests/relay-project-schema-integration.mjs), и помощник,
     // вынесенный наружу, в ней просто не существует.
@@ -2743,6 +2448,8 @@
       const rowFunctions = [...new Set(mapped.map((role) => String(role.fn || "").trim()).filter(Boolean))];
       const fnGap = ensureFunctionOption(schemas["Роли"], rowFunctions);
       const addable = rowFunctions.filter((fn) => fnGap.missing.includes(fn));
+      if (addable.length && readOnly)
+        throw new Error(`«Роли»: не хватает вариантов Функция ${addable.map((fn) => `«${fn}»`).join(", ")}. Проверка из пульта ничего не меняет; исправьте схему Notion и повторите.`);
       if (addable.length) {
         await patchFunctionOptions(schemas["Роли"], addable);
         const fresh = await request("GET", `https://api.notion.com/v1/data_sources/${C.roles}`, headers);
@@ -2781,6 +2488,64 @@
       return { ok: true, text: warnings.length ? `${base} ${warnings.join(" ")}` : base };
     } catch (e) {
       return { ok: false, text: `Схема или роли не прошли проверку: ${connectionProblem(e, settings)}` };
+    }
+  }
+
+  /**
+   * Approval can be initiated from the Relay console. It reuses the exact same
+   * read-only validation as the former Arena dialog; the console's explicit
+   * confirmation is the human authorization. It never starts the auto-cycle.
+   */
+  let relayApprovalBusy = false;
+  async function approveProjectFromRelay(request = {}) {
+    const requestId = String(request.id || "").slice(0, 100);
+    if (!requestId || String(request.projectId || "") !== String(ACTIVE_PROFILE.id || "")) return false;
+    if (relayApprovalBusy || ACTIVE_PROFILE.legacy || ACTIVE_PROFILE.invalid) return false;
+    if (projectApproved()) return true;
+    if (busy || projectAsyncWork > 0) {
+      log("Проверка проекта из пульта отложена: дождитесь завершения текущей операции. Состояние и очередь не изменены.", true);
+      return false;
+    }
+    if (autoOn()) {
+      GM_setValue(K.auto, false);
+      log("Проверка проекта из пульта: локальное автоуправление временно выключено. Очередь и ожидания сохранены.");
+    }
+    relayApprovalBusy = true;
+    const settings = connectionSettings();
+    const profileUnchanged = () => JSON.stringify(resolveProfile(ACTIVE_PROFILE.id)) === JSON.stringify(ACTIVE_PROFILE);
+    try {
+      if (!settings.notion || !settings.gwUrl || !settings.gwKey)
+        throw new Error("Не заданы подключения Notion и Drive. Сохраните их в текущем профиле, затем повторите проверку из пульта.");
+      if (!profileUnchanged()) throw new Error("Профиль изменился в другой вкладке; обновите эту Arena-вкладку и повторите.");
+      log("Пульт запросил проверку проекта. Проверяю Notion, Drive, GitHub и схему только чтением…");
+      const results = await Promise.all([probeNotionConnection(settings), probeDriveConnection(settings), probeGithubConnection(settings)]);
+      if (results.some((result) => !result.ok)) throw new Error(results.map((result) => result.text).join(" "));
+      const schema = await validateProjectSchema(settings, { readOnly: true });
+      if (!schema.ok) throw new Error(schema.text);
+      if (!profileUnchanged() || !sameConnections(settings, connectionSettings()))
+        throw new Error("Профиль или подключения изменились во время проверки; допуск не выдан.");
+      // Approval is not a request to resume the cycle. Keep all queued and
+      // in-flight data untouched and leave automation off until the operator
+      // separately enables it from Relay.
+      GM_setValue("cfn-project-ever-approved", true);
+      GM_setValue("cfn-project-approved", true);
+      if (typeof K !== "undefined") GM_setValue(K.auto, false);
+      watchQuestions(); watchDecisions();
+      const successText = `Проверка пройдена: ${schema.text} Работа разрешена; автоцикл не запущен.`;
+      log(successText, false);
+      if (typeof relayPost === "function") await relayPost({ action: "event", slotId: relayClient?.slotId || "",
+        kind: "state", level: "info", text: successText,
+        data: { projectApprovalResult: true, projectId: ACTIVE_PROFILE.id } });
+      return true;
+    } catch (error) {
+      const failureText = `Проверка из пульта не завершена: ${connectionProblem(error, settings)}. Допуск не изменён.`;
+      log(failureText, true);
+      if (typeof relayPost === "function") await relayPost({ action: "event", slotId: relayClient?.slotId || "",
+        kind: "state", level: "warn", text: failureText,
+        data: { projectApprovalResult: false, projectId: ACTIVE_PROFILE.id } });
+      return false;
+    } finally {
+      relayApprovalBusy = false;
     }
   }
 
@@ -2855,796 +2620,6 @@
       written += 1;
     }
     return written;
-  }
-
-  function projectsDialog() {
-    if (document.getElementById("cfn-projects")) return;
-    const box = document.createElement("div");
-    box.id = "cfn-projects";
-    box.style.cssText = "position:fixed;inset:0;z-index:2147483201;background:rgba(5,7,12,.76);display:flex;align-items:center;justify-content:center;padding:14px;box-sizing:border-box;color:#e7eaee;font:13px/1.5 system-ui;color-scheme:dark";
-    const field = `${inputStyle()};padding:8px;margin-top:4px;font:13px/1.35 ui-monospace,monospace`;
-    const action = `${btnStyle()};font:12px/1.3 system-ui;padding:8px 10px`;
-    box.innerHTML = `
-      <div role="dialog" aria-modal="true" aria-labelledby="cfn-projects-title" tabindex="-1" style="width:min(700px,100%);max-height:calc(100vh - 28px);overflow:auto;background:#151922;border:1px solid #434c5c;border-radius:14px;padding:18px">
-        <div style="display:flex;gap:12px;align-items:start"><div style="flex:1"><h2 id="cfn-projects-title" style="margin:0 0 4px">Проекты</h2>
-          <div style="color:#aab4c3">Текущий проект: <b id="cfn-project-current"></b>. Выбор закрепляется за этой вкладкой. Для одного проекта используйте только одну активную вкладку.</div></div>
-          <button id="cfn-project-close" style="${action}" aria-label="Закрыть">✕</button></div>
-        <label style="display:block;margin-top:14px">Сохранённые профили<select id="cfn-project-list" style="${field}"></select></label>
-        <div style="display:flex;gap:7px;flex-wrap:wrap;margin:10px 0">
-          <button id="cfn-project-switch" style="${action}">Открыть выбранный проект</button>
-          <button id="cfn-project-new" style="${action}">Новый профиль</button>
-          <button id="cfn-project-copy" style="${action}">Создать на основе выбранного</button>
-          <button id="cfn-project-edit" style="${action}">Исправить текущий до первого допуска</button>
-        </div>
-        <div style="display:flex;gap:7px;flex-wrap:wrap;margin:8px 0">
-          <button id="cfn-project-export-config" type="button" style="${action}">Экспортировать конфигурацию</button>
-          <button id="cfn-project-import-config" type="button" style="${action}">Импортировать проект из файла</button>
-          <input id="cfn-project-import-file" type="file" accept="application/json,.json" style="display:none">
-        </div>
-        <div style="color:#aab4c3;font-size:12px;margin-bottom:8px">Импорт сам создаёт профиль — заранее создавать пустой проект не нужно. Переносятся настройки, но не ключи, очередь и состояние автоцикла; подключения сохраните заново и повторно разрешите проект.</div>
-        <div id="cfn-project-info" style="color:#aab4c3;white-space:pre-wrap"></div>
-        <button id="cfn-project-enable" style="${action};margin-top:8px;background:#285638">Проверить подключения и разрешить работу</button>
-        <div style="display:flex;gap:7px;flex-wrap:wrap;margin-top:8px">
-          <button id="cfn-project-migration-preview" style="${action}">Проверить Mission ID карточек</button>
-          <button id="cfn-project-migration-apply" style="${action}">Записать проверенные Mission ID</button>
-          <button id="cfn-project-import" style="${action}">Перенести прежнее локальное состояние</button>
-          <button id="cfn-project-rejected" style="${action}">Посмотреть сохранённые ответы</button>
-        </div>
-        <div style="margin:8px 0;color:#ffd479;font-size:12px">Для нового проекта необходим шлюз 1.6 с отдельным ключом. После разрешения фоновые сторожа вопросов и старых ADR могут создавать записи; сам автоцикл не запускается.</div>
-        <div id="cfn-project-form" style="display:none;border-top:1px solid #343b48;margin-top:14px;padding-top:12px">
-          <h3 id="cfn-project-form-title" style="margin:0 0 6px">Новый профиль</h3>
-          <div style="color:#aab4c3;font-size:12px">Нужны ID именно источников данных Notion, а не ID представлений или баз. Используйте отдельную копию четырёх баз с той же схемой и ролями Coordinator и Reviewer. Доступы сохраняются отдельно в «Подключениях» после переключения.</div>
-          <div style="display:grid;gap:9px;margin-top:10px">
-            <label>Имя проекта<input id="cfn-project-name" style="${field}" maxlength="80"></label>
-            <label>Notion: источник «Роли»<input id="cfn-project-roles" style="${field}" placeholder="UUID источника или ссылка на базу"></label>
-            <label>Notion: источник «Миссии»<input id="cfn-project-missions" style="${field}" placeholder="UUID источника или ссылка на базу"></label>
-            <label>Notion: источник «Запросы»<input id="cfn-project-requests" style="${field}" placeholder="UUID источника или ссылка на базу"></label>
-            <label>Notion: источник «Обратная связь»<input id="cfn-project-questions" style="${field}" placeholder="UUID источника или ссылка на базу"></label>
-            <div style="border:1px solid #343b48;border-radius:8px;padding:10px;color:#aab4c3;font-size:12px">
-              Если у вас ссылки на четыре отдельные базы, вставьте их выше и временно введите токен интеграции: кнопка прочитает ID источников. Токен не сохраняется и после поиска очищается; вводите его только на доверенной странице.
-              <label style="display:block;margin-top:6px">Токен для поиска ID<input id="cfn-project-lookup-notion" type="password" autocomplete="off" style="${field}" placeholder="Токен Notion (не сохраняется)"></label>
-              <button id="cfn-project-resolve" type="button" style="${action};margin-top:7px">Найти ID источников по ссылкам</button>
-            </div>
-            <label>URL регламента проекта в Notion<input id="cfn-project-pageUrl" style="${field}" placeholder="https://…"></label>
-            <label>URL базы «Обратная связь» в Notion<input id="cfn-project-questionsUrl" style="${field}" placeholder="https://…"></label>
-            <label>GitHub репозиторий<input id="cfn-project-repo" style="${field}" placeholder="owner/repository"></label>
-            <label>Базовая ветка<input id="cfn-project-branch" style="${field}" value="main"></label>
-            <label>Папка проекта внутри Arena (латиница)<input id="cfn-project-driveFolder" style="${field}" placeholder="project-folder"></label>
-          </div>
-          <div id="cfn-project-repos" style="border:1px solid #343b48;border-radius:8px;padding:10px;margin-top:14px;display:none">
-            <h4 style="margin:0 0 6px">Репозитории профиля</h4>
-            <div style="color:#aab4c3;font-size:12px">Один профиль может работать с несколькими репозиториями (одна история, очередь и Gateway на профиль, но разные цели выдачи). Ровно один репозиторий — главный: он совпадает с полями «Репозиторий» и «Ветка» выше.</div>
-            <div id="cfn-project-repos-list"></div>
-            <button id="cfn-project-repo-add" type="button" style="${action};margin-top:7px">Добавить репозиторий</button>
-          </div>
-          <div id="cfn-project-routes" style="border:1px solid #343b48;border-radius:8px;padding:10px;margin-top:10px;display:none">
-            <h4 style="margin:0 0 6px">Маршрутизация ролей к репозиториям</h4>
-            <div style="color:#aab4c3;font-size:12px">Каждой роли ставится в соответствие репозиторий, в котором она работает (ID роли — UUID страницы в базе «Роли», а не её имя). Все роли проекта → репозиторий его профиля; отдельный маршрут нужен только для явно принятого внешнего target или полной ссылки на PR. Роли без маршрута работают в репозитории профиля.</div>
-            <div id="cfn-project-routes-list"></div>
-            <button id="cfn-project-route-add" type="button" style="${action};margin-top:7px">Добавить маршрут роли</button>
-            <button id="cfn-project-roles-autofill" type="button" style="${action};margin-top:7px;margin-left:7px">Автозаполнить маршруты ролей</button>
-          </div>
-          <div id="cfn-project-provision" style="border:1px solid #343b48;border-radius:8px;padding:10px;margin-top:10px">
-            <h4 style="margin:0 0 6px">Provisioning Arena-агентов</h4>
-            <div style="color:#aab4c3;font-size:12px">Выключено по умолчанию. Создание/замена агентов выполняется только после одобрения активной админ-роли (Agent Admin=true). Пустой allowlist или пустой bootstrap-пробник блокируют создание. Проектные имена не зашиваются.</div>
-            <label style="display:flex;gap:6px;align-items:center;margin-top:8px"><input id="cfn-project-prov-enabled" type="checkbox"> Включить provisioning</label>
-            <label>Режим<select id="cfn-project-prov-mode" style="${field}"><option value="manual">manual — кнопка «🤖 Агенты»</option><option value="auto">auto — холостой цикл</option></select></label>
-            <label>Allowlist репозиториев (по одному owner/repo на строку)<textarea id="cfn-project-prov-allowlist" style="${field};min-height:54px" placeholder="owner/repository"></textarea></label>
-            <label>Bootstrap-пробник (без внутренних токенов и ссылок)<textarea id="cfn-project-prov-bootstrap" style="${field};min-height:54px" placeholder="Что изображено на картинке test.jpg в репозитории https://github.com/OWNER/test?"></textarea></label>
-            <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
-              <label>Max jobs за запрос<input id="cfn-project-prov-maxjobs" type="number" min="1" max="20" style="${field}"></label>
-              <label>Суточный максимум<input id="cfn-project-prov-dailymax" type="number" min="1" max="100" style="${field}"></label>
-              <label>Ожидание bootstrap, мс<input id="cfn-project-prov-bootstrapwait" type="number" min="1000" style="${field}"></label>
-              <label>Ожидание URL, мс<input id="cfn-project-prov-urlwait" type="number" min="1000" style="${field}"></label>
-              <label>Попытки rename<input id="cfn-project-prov-renameattempts" type="number" min="1" max="10" style="${field}"></label>
-            </div>
-            <label style="display:flex;gap:6px;align-items:center;margin-top:8px"><input id="cfn-project-prov-autoactivate" type="checkbox"> Автоактивация после проверки</label>
-            <label style="display:flex;gap:6px;align-items:center;margin-top:4px"><input id="cfn-project-prov-archiveold" type="checkbox"> Архивировать старого агента при replace</label>
-          </div>
-          <button id="cfn-project-save" style="${action};margin-top:12px;background:#285638">Создать профиль</button>
-        </div>
-        <div id="cfn-project-note" role="status" style="white-space:pre-wrap;color:#bfe6c4;margin-top:12px"></div>
-      </div>`;
-    document.body.appendChild(box);
-    const find = (key) => box.querySelector(`#cfn-project-${key}`);
-    const list = find("list"), note = find("note"), form = find("form");
-    const fields = ["name", "roles", "missions", "requests", "questions", "pageUrl", "questionsUrl", "repo", "branch", "driveFolder"];
-    const say = (message, error = false) => { note.textContent = message; note.style.color = error ? "#ffb4ad" : "#bfe6c4"; };
-    let checking = false;
-    let editingId = "";
-    let migrationPlan = null;
-    // Репозитории и маршруты ролей редактируются отдельными списками; поля
-    // «Репозиторий» и «Ветка» выше дублируют главную запись.
-    let repos = [{ repo: "", branch: "main", main: true }];
-    let routes = []; // {roleId, repo}
-    const reposList = find("repos-list");
-    const routesList = find("routes-list");
-    let openingRevision = JSON.stringify(profileRegistry());
-
-    const escHtml = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c] || c));
-    const ensureMain = () => { if (repos.length && !repos.some((r) => r.main)) repos[0].main = true; };
-    const onlyOneMain = (i) => { repos.forEach((r, k) => { r.main = k === i; }); };
-
-    const renderRepos = () => {
-      reposList.textContent = "";
-      const hint = document.createElement("div");
-      hint.style.cssText = "color:#aab4c3;font-size:12px;margin:0 0 6px";
-      hint.textContent = repos.length ? "Ровно один репозиторий должен быть главным — он совпадает с полями «Репозиторий» и «Ветка» выше." : "Добавьте хотя бы один репозиторий.";
-      reposList.appendChild(hint);
-      for (let i = 0; i < repos.length; i++) {
-        const r = repos[i];
-        const row = document.createElement("div");
-        row.style.cssText = "display:grid;grid-template-columns:1fr 120px auto auto;gap:7px;align-items:center;border:1px solid #343b48;border-radius:7px;padding:7px;margin:6px 0";
-        const inpRepo = document.createElement("input");
-        inpRepo.id = `cfn-repo-${i}`; inpRepo.style.cssText = field; inpRepo.placeholder = "owner/repository"; inpRepo.value = r.repo;
-        inpRepo.oninput = () => { r.repo = inpRepo.value.trim(); };
-        const inpBranch = document.createElement("input");
-        inpBranch.id = `cfn-repo-branch-${i}`; inpBranch.style.cssText = field; inpBranch.placeholder = "main"; inpBranch.value = r.branch;
-        inpBranch.oninput = () => { r.branch = inpBranch.value.trim() || "main"; };
-        const mainLabel = document.createElement("label");
-        mainLabel.style.cssText = "display:flex;align-items:center;gap:5px;cursor:pointer";
-        const mainRadio = document.createElement("input");
-        mainRadio.type = "radio"; mainRadio.name = "cfn-repo-main"; mainRadio.value = i; mainRadio.checked = r.main;
-        mainRadio.onchange = () => { onlyOneMain(i); };
-        mainLabel.appendChild(mainRadio); mainLabel.append(document.createTextNode("Главный"));
-        const removeBtn = document.createElement("button");
-        removeBtn.type = "button"; removeBtn.textContent = "Удалить";
-        removeBtn.style.cssText = `${action};padding:6px 8px;font-size:12px`;
-        removeBtn.onclick = () => { repos.splice(i, 1); ensureMain(); renderRepos(); };
-        row.appendChild(inpRepo); row.appendChild(inpBranch); row.appendChild(mainLabel); row.appendChild(removeBtn);
-        reposList.appendChild(row);
-      }
-    };
-
-    const renderRoutes = () => {
-      routesList.textContent = "";
-      const hint = document.createElement("div");
-      hint.style.cssText = "color:#aab4c3;font-size:12px;margin:0 0 6px";
-      hint.textContent = "ID роли — UUID страницы роли в базе «Роли» (имя столбца «Роль» — заголовок, а не ID). Роли без маршрута работают в главном репозитории.";
-      routesList.appendChild(hint);
-      const repoSelectHtml = (selected) => repos.map((r) => `<option value="${escHtml(r.repo)}" ${r.repo === selected ? "selected" : ""}>${escHtml(r.repo)} (${escHtml(r.branch)})</option>`).join("") || '<option value="">(добавьте репозиторий выше)</option>';
-      for (let i = 0; i < routes.length; i++) {
-        const rt = routes[i];
-        const row = document.createElement("div");
-        row.style.cssText = "display:grid;grid-template-columns:1fr 1fr auto;gap:7px;align-items:center;border:1px solid #343b48;border-radius:7px;padding:7px;margin:6px 0";
-        const inpRole = document.createElement("input");
-        inpRole.id = `cfn-route-role-${i}`; inpRole.style.cssText = field; inpRole.placeholder = "UUID роли"; inpRole.value = rt.roleId;
-        inpRole.oninput = () => { rt.roleId = inpRole.value.trim(); };
-        const selRepo = document.createElement("select");
-        selRepo.id = `cfn-route-repo-${i}`; selRepo.style.cssText = field; selRepo.innerHTML = repoSelectHtml(rt.repo);
-        selRepo.onchange = () => { rt.repo = selRepo.value; };
-        const removeBtn = document.createElement("button");
-        removeBtn.type = "button"; removeBtn.textContent = "Удалить";
-        removeBtn.style.cssText = `${action};padding:6px 8px;font-size:12px`;
-        removeBtn.onclick = () => { routes.splice(i, 1); renderRoutes(); };
-        row.appendChild(inpRole); row.appendChild(selRepo); row.appendChild(removeBtn);
-        routesList.appendChild(row);
-      }
-    };
-
-    const loadProfileUi = (p) => {
-      repos = (Array.isArray(p.repos) && p.repos.length ? p.repos : [{ repo: p.repo || "", branch: p.branch || "main", main: true }])
-        .map((r) => ({ repo: String(r.repo || "").trim(), branch: String(r.branch || "main").trim() || "main", main: Boolean(r.main) }));
-      ensureMain();
-      routes = (Array.isArray(p.roleRepos) ? p.roleRepos : []).map((rt) => ({ roleId: String(rt.roleId || "").trim(), repo: String(rt.repo || "").trim() })).filter((rt) => rt.roleId || rt.repo);
-      renderRepos(); renderRoutes();
-      const prov = normalizeProvisionConfig(p);
-      find("prov-enabled").checked = prov.agentProvisionEnabled;
-      find("prov-mode").value = prov.agentProvisionMode;
-      find("prov-allowlist").value = prov.agentProvisionRepoAllowlist.join("\n");
-      find("prov-bootstrap").value = prov.agentBootstrapPrompt;
-      find("prov-maxjobs").value = prov.agentProvisionMaxJobs;
-      find("prov-dailymax").value = prov.agentProvisionDailyMax;
-      find("prov-bootstrapwait").value = prov.agentBootstrapWaitMs;
-      find("prov-urlwait").value = prov.agentUrlWaitMs;
-      find("prov-renameattempts").value = prov.agentRenameAttempts;
-      find("prov-autoactivate").checked = prov.agentProvisionAutoActivate;
-      find("prov-archiveold").checked = prov.agentProvisionArchiveOld;
-    };
-
-    const saveProfileUi = () => {
-      if (checking) { say("Дождитесь окончания поиска или проверки.", true); return; }
-      const p = { id: editingId || crypto.randomUUID() };
-      for (const field of fields) p[field] = find(field).value.trim();
-      p.driveFolder = p.driveFolder.toLowerCase();
-      p.repos = repos.map((r) => ({ repo: r.repo, branch: r.branch, main: r.main })).filter((r) => r.repo);
-      if (!p.repos.length) p.repos = [{ repo: p.repo || "", branch: p.branch || "main", main: true }];
-      const mains = p.repos.filter((r) => r.main).length;
-      if (mains !== 1) { say("Укажите ровно один главный репозиторий.", true); return; }
-      p.roleRepos = routes.filter((rt) => rt.roleId && rt.repo);
-      Object.assign(p, normalizeProvisionConfig({
-        agentProvisionEnabled: find("prov-enabled").checked,
-        agentProvisionMode: find("prov-mode").value,
-        agentProvisionRepoAllowlist: find("prov-allowlist").value.split(/[\n,]/).map((s) => s.trim()).filter(Boolean),
-        agentBootstrapPrompt: find("prov-bootstrap").value,
-        agentProvisionMaxJobs: find("prov-maxjobs").value,
-        agentProvisionDailyMax: find("prov-dailymax").value,
-        agentBootstrapWaitMs: find("prov-bootstrapwait").value,
-        agentUrlWaitMs: find("prov-urlwait").value,
-        agentRenameAttempts: find("prov-renameattempts").value,
-        agentProvisionAutoActivate: find("prov-autoactivate").checked,
-        agentProvisionArchiveOld: find("prov-archiveold").checked,
-      }));
-      if (p.agentProvisionEnabled && !provisionBootstrapClean(p.agentBootstrapPrompt)) {
-        say("Provisioning включён, но bootstrap-пробник пуст или содержит запрещённые внутренние токены/ссылки.", true); return;
-      }
-      if (!validProfile(p)) {
-        const routeProblem = p.roleRepos.some((route) =>
-          !PROJECT_UUID.test(String(route.roleId || "")) ||
-          !p.repos.some((entry) => String(entry.repo || "").toLowerCase() === String(route.repo || "").toLowerCase()));
-        say(routeProblem
-          ? "Не сохранено: проверьте автозаполненные маршруты ролей. Для каждой роли нужен UUID страницы из базы «Роли», а выбранный owner/repository должен быть в списке репозиториев профиля."
-          : "Проверьте четыре разных UUID источников, HTTPS-ссылки Notion, owner/repository, допустимую ветку и имя папки из латинских букв, цифр, . _ -.", true);
-        return;
-      }
-      const known = [LEGACY_PROFILE, ...profileRegistry().filter((item) => validProfile(item) && item.id !== editingId)];
-      const sourceIds = new Set(known.flatMap((item) => [item.roles, item.missions, item.requests, item.questions]).map((id) => id.toLowerCase()));
-      if ([p.roles, p.missions, p.requests, p.questions].some((id) => sourceIds.has(id.toLowerCase()))) {
-        say("Один из источников уже используется другим профилем. Создайте отдельные копии всех четырёх баз, чтобы не смешать очереди и роли.", true); return;
-      }
-      const usedRepos = new Set(known.filter((item) => !item.legacy).flatMap((item) =>
-        Array.isArray(item.repos) ? item.repos.map((r) => String(r.repo || "").toLowerCase()) : [String(item.repo || "").toLowerCase()]));
-      const clashRepo = p.repos.find((r) => usedRepos.has(String(r.repo).toLowerCase()));
-      if (clashRepo &&
-          !confirm(`Репозиторий ${clashRepo.repo} уже используется другим профилем. Проекты смогут видеть и изменять один репозиторий. Продолжить?`)) return;
-      if (JSON.stringify(profileRegistry()) !== openingRevision ||
-          (editingId && (projectApproved() || GM_getValue("cfn-project-ever-approved", false)))) {
-        say("Профиль или его допуск изменился во время подтверждения. Откройте окно заново.", true); return;
-      }
-      try {
-        if (editingId) {
-          // Сначала ставим удержание, останавливаем автоцикл, затем меняем реестр и перезагружаем вкладку.
-          autoSet(false);
-          sessionStorage.setItem(PROJECT_HOLD_PREFIX + p.id, "1");
-          rawSet(PROFILE_REGISTRY_KEY, profileRegistry().map((item) => item.id === editingId ? p : item));
-          location.reload();
-          return;
-        }
-        rawSet(PROFILE_REGISTRY_KEY, [...profileRegistry(), p]);
-        openingRevision = JSON.stringify(profileRegistry());
-      } catch { say("Не удалось сохранить профиль или перезагрузить вкладку. Проверьте настройки и обновите страницу вручную.", true); return; }
-      form.style.display = "none"; render(p.id);
-      say(`Профиль создан. ID: ${p.id}\nТеперь зарегистрируйте его в шлюзе Drive, откройте этот профиль и сохраните отдельные подключения.`);
-    };
-    const profiles = () => [LEGACY_PROFILE, ...profileRegistry().filter(validProfile)];
-    const chosen = () => profiles().find((p) => p.id === list.value);
-    const render = (selected = ACTIVE_PROFILE.id) => {
-      list.textContent = "";
-      for (const profile of profiles()) {
-        const option = document.createElement("option");
-        option.value = profile.id;
-        option.textContent = profile.name;
-        list.appendChild(option);
-      }
-      list.value = profiles().some((p) => p.id === selected) ? selected : LEGACY_PROFILE_ID;
-      find("current").textContent = ACTIVE_PROFILE.name;
-      const p = chosen();
-      const repos = Array.isArray(p?.repos) && p.repos.length ? p.repos : [{ repo: p.repo || "", branch: p.branch || "main", main: true }];
-      const main = repos.find((r) => r.main) || repos[0];
-      find("info").textContent = p
-        ? `ID: ${p.id}\nРепозитории: ${repos.map((r) => `${r.repo || p.repo} (${r.branch || "main"}${r.main ? ", главный" : ""}`).join("; ") || p.repo}\nМаршрутов ролей: ${Array.isArray(p.roleRepos) ? p.roleRepos.length : 0}\nDrive: ${p.legacy ? "Arena/logs и Arena/payloads (совместимость)" : `Arena/${p.driveFolder}/{logs,payloads}`}`
-        : "Профиль не найден.";
-      find("enable").style.display = !ACTIVE_PROFILE.legacy && !ACTIVE_PROFILE.invalid && !projectApproved() ? "inline-block" : "none";
-      const everApproved = !ACTIVE_PROFILE.legacy && (GM_getValue("cfn-project-ever-approved", false) || projectApproved());
-      find("edit").style.display = !ACTIVE_PROFILE.legacy && !ACTIVE_PROFILE.invalid && !everApproved ? "inline-block" : "none";
-    };
-    const transferProfile = (profile) => ({
-      id: String(profile.id), name: String(profile.name),
-      roles: String(profile.roles), missions: String(profile.missions),
-      requests: String(profile.requests), questions: String(profile.questions),
-      pageUrl: String(profile.pageUrl), questionsUrl: String(profile.questionsUrl),
-      repo: String(profile.repo), branch: String(profile.branch), driveFolder: String(profile.driveFolder),
-      repos: (Array.isArray(profile.repos) ? profile.repos : []).map((entry) => ({
-        repo: String(entry.repo || ""), branch: String(entry.branch || "main"), main: entry.main === true,
-      })),
-      roleRepos: (Array.isArray(profile.roleRepos) ? profile.roleRepos : []).map((route) => ({
-        roleId: String(route.roleId || ""), repo: String(route.repo || ""),
-      })),
-      ...normalizeProvisionConfig(profile),
-    });
-    find("export-config").onclick = () => {
-      const profile = chosen();
-      if (!profile || profile.legacy || !validProfile(profile)) { say("Выберите корректный проект для экспорта.", true); return; }
-      try {
-        const backup = { format: "scriptcat-project-config", version: 1, profile: transferProfile(profile) };
-        const blob = new Blob([JSON.stringify(backup, null, 2) + "\n"], { type: "application/json" });
-        const url = URL.createObjectURL(blob);
-        const anchor = document.createElement("a");
-        anchor.href = url;
-        anchor.download = `scriptcat-${profile.name.replace(/[^A-Za-z0-9._-]+/g, "-")}-${profile.id}.json`;
-        document.body.appendChild(anchor); anchor.click(); anchor.remove();
-        setTimeout(() => URL.revokeObjectURL(url), 1000);
-        say("Конфигурация экспортирована. В файле только метаданные проекта: секреты, подключения и состояние работы не включены.");
-      } catch { say("Не удалось экспортировать конфигурацию проекта.", true); }
-    };
-    find("import-config").onclick = () => {
-      if (checking || autoOn() || busy || projectAsyncWork > 0) {
-        say("Остановите автоцикл и дождитесь завершения текущих операций перед импортом.", true); return;
-      }
-      find("import-file").value = "";
-      find("import-file").click();
-    };
-    find("import-file").onchange = async () => {
-      const file = find("import-file").files?.[0];
-      if (!file) return;
-      if (checking || autoOn() || busy || projectAsyncWork > 0) {
-        say("Остановите автоцикл и дождитесь завершения текущих операций перед импортом.", true); return;
-      }
-      checking = true;
-      try {
-        if (file.size > 128 * 1024) throw new Error("Файл больше 128 КБ; выберите экспорт ScriptCat конфигурации проекта.");
-        const parsed = JSON.parse(await file.text());
-        if (!parsed || parsed.format !== "scriptcat-project-config" || parsed.version !== 1 ||
-            !parsed.profile || typeof parsed.profile !== "object" || Array.isArray(parsed.profile))
-          throw new Error("Формат файла не распознан. Импортируйте экспорт конфигурации ScriptCat.");
-        // Whitelist deliberately excludes connection credentials and runtime state.
-        const profile = transferProfile(parsed.profile);
-        if (!validProfile(profile)) throw new Error("Профиль не прошёл проверку: проверьте UUID, HTTPS-ссылки, репозитории, ветки и папку проекта.");
-        const registry = profileRegistry();
-        if (registry.some((item) => item?.id === profile.id)) throw new Error("Профиль с таким ID уже существует на этом компьютере.");
-        if (JSON.stringify(registry) !== openingRevision) throw new Error("Реестр проектов изменился в другой вкладке. Закройте окно и повторите импорт.");
-        const known = [LEGACY_PROFILE, ...registry.filter(validProfile)];
-        const usedSources = new Set(known.flatMap((item) => [item.roles, item.missions, item.requests, item.questions]).map((id) => String(id || "").toLowerCase()));
-        if ([profile.roles, profile.missions, profile.requests, profile.questions].some((id) => usedSources.has(id.toLowerCase())))
-          throw new Error("Один из источников уже используется другим профилем на этом компьютере.");
-        const usedRepos = new Set(known.filter((item) => !item.legacy).flatMap((item) =>
-          Array.isArray(item.repos) ? item.repos.map((entry) => String(entry.repo || "").toLowerCase()) : [String(item.repo || "").toLowerCase()]));
-        const clash = profile.repos.find((entry) => usedRepos.has(entry.repo.toLowerCase()));
-        if (clash && !confirm(`Репозиторий ${clash.repo} уже используется другим профилем. Продолжить импорт?`)) return;
-        if (JSON.stringify(profileRegistry()) !== openingRevision || autoOn() || busy || projectAsyncWork > 0)
-          throw new Error("Проект или активность изменились во время импорта; операция отменена.");
-        rawSet(PROFILE_REGISTRY_KEY, [...registry, profile]);
-        openingRevision = JSON.stringify(profileRegistry());
-        form.style.display = "none";
-        render(profile.id);
-        say(`Импортирован проект «${profile.name}». Ключи и локальное состояние не импортируются. Откройте проект, заново сохраните подключения и проверьте его перед разрешением работы. Автоцикл выключен.`);
-      } catch (e) { say(`Импорт не выполнен: ${e.message}`, true); }
-      finally { checking = false; find("import-file").value = ""; }
-    };
-    const close = () => {
-      if (checking) { say("Дождитесь завершения проверки проекта.", true); return; }
-      find("lookup-notion").value = "";
-      box.remove();
-      document.getElementById(ui.setup)?.focus();
-    };
-    find("close").onclick = close;
-    box.onkeydown = (event) => {
-      if (event.key === "Escape") { event.preventDefault(); close(); return; }
-      if (event.key !== "Tab") return;
-      const all = [...box.querySelectorAll('button, input, select, [tabindex]:not([tabindex="-1"])')]
-        .filter((el) => !el.disabled && el.getClientRects().length);
-      if (!all.length) return;
-      if (event.shiftKey && (document.activeElement === all[0] || !all.includes(document.activeElement))) { event.preventDefault(); all.at(-1).focus(); }
-      else if (!event.shiftKey && (document.activeElement === all.at(-1) || !all.includes(document.activeElement))) { event.preventDefault(); all[0].focus(); }
-    };
-    list.onchange = () => render(list.value);
-    find("new").onclick = () => {
-      editingId = "";
-      find("save").textContent = "Создать профиль";
-      find("form-title").textContent = "Новый профиль";
-      repos = [{ repo: "", branch: "main", main: true }];
-      routes = [];
-      renderRepos(); renderRoutes();
-      find("repos").style.display = "block";
-      find("routes").style.display = "block";
-      for (const field of fields) find(field).value = field === "branch" ? "main" : "";
-      form.style.display = "block"; say("Заполните настройки. Ничего в сервисах не создаётся автоматически.");
-      find("name").focus();
-    };
-    find("copy").onclick = () => {
-      editingId = "";
-      find("save").textContent = "Создать профиль";
-      find("form-title").textContent = "Новый профиль";
-      const p = chosen(); if (!p) return;
-      for (const field of fields) find(field).value = p[field] || (field === "branch" ? "main" : "");
-      find("name").value = `${p.name} — новая настройка`;
-      loadProfileUi(p);
-      find("repos").style.display = "block";
-      find("routes").style.display = "block";
-      form.style.display = "block";
-      say("Будет создан новый профиль с пустым состоянием и отдельными доступами; старый профиль не изменится.");
-      find("name").focus();
-    };
-    find("edit").onclick = () => {
-      if (ACTIVE_PROFILE.legacy || ACTIVE_PROFILE.invalid || projectApproved() || GM_getValue("cfn-project-ever-approved", false)) {
-        say("Этот профиль уже использовался. Для других источников создайте новый профиль, не перенося очередь автоматически.", true); return;
-      }
-      if (checking || autoOn() || busy || projectAsyncWork > 0) {
-        say("Дождитесь окончания всех начатых операций.", true); return;
-      }
-      editingId = ACTIVE_PROFILE.id;
-      for (const field of fields) find(field).value = ACTIVE_PROFILE[field] || (field === "branch" ? "main" : "");
-      loadProfileUi(ACTIVE_PROFILE);
-      find("repos").style.display = "block";
-      find("routes").style.display = "block";
-      find("save").textContent = "Сохранить исправления и перезагрузить вкладку";
-      find("form-title").textContent = "Исправить текущий профиль";
-      form.style.display = "block";
-      say("Исправляется текущий профиль до первого допуска. Выбранный ID и сохранённые доступы остаются; схема и подключения будут проверены заново.");
-      find("name").focus();
-    };
-    find("resolve").onclick = async () => {
-      if (checking) return;
-      const names = ["roles", "missions", "requests", "questions"];
-      const values = names.map((name) => find(name).value.trim());
-      const ids = values.map(notionDatabaseId);
-      const token = find("lookup-notion").value.trim();
-      if (!token || ids.some((id) => !id) || new Set(ids).size !== 4) {
-        find("lookup-notion").value = "";
-        say("Для поиска введите токен и четыре разные HTTPS-ссылки на базы Notion (не ссылки на представления).", true); return;
-      }
-      checking = true;
-      say("Читаю источники четырёх баз в Notion; ничего не меняю и токен не сохраняю…");
-      try {
-        const headers = { Authorization: `Bearer ${token}`, "Notion-Version": C.notionV, "Content-Type": "application/json" };
-        const sources = [];
-        for (const id of ids) {
-          const database = await request("GET", `https://api.notion.com/v1/databases/${id}`, headers);
-          const list = database?.data_sources;
-          if (!Array.isArray(list) || list.length !== 1 || !PROJECT_UUID.test(String(list[0]?.id || "")))
-            throw new Error("У базы не ровно один доступный источник: укажите ID нужного data source вручную.");
-          sources.push(list[0].id);
-          await new Promise((resolve) => setTimeout(resolve, 350));
-        }
-        if (names.some((name, i) => find(name).value.trim() !== values[i]) || find("lookup-notion").value.trim() !== token) {
-          say("Поля изменились во время поиска: результаты не подставлены, повторите проверку.", true); return;
-        }
-        if (new Set(sources.map((id) => id.toLowerCase())).size !== 4)
-          throw new Error("У четырёх баз должны быть разные источники.");
-        names.forEach((name, i) => { find(name).value = sources[i]; });
-        say("ID четырёх источников найдены и подставлены. Это чтение не проверяет права записи или схему.");
-      } catch (e) {
-        say(`Поиск ID не завершён: ${connectionProblem(e, { notion: token, gwKey: "", github: "" })}`, true);
-      } finally {
-        find("lookup-notion").value = "";
-        checking = false;
-      }
-    };
-    find("save").onclick = saveProfileUi;
-    find("repo-add").onclick = () => {
-      repos.push({ repo: "", branch: "main", main: false });
-      ensureMain();
-      renderRepos();
-    };
-    find("route-add").onclick = () => {
-      routes.push({ roleId: "", repo: "" });
-      renderRoutes();
-    };
-    find("roles-autofill").onclick = async () => {
-      if (checking) { say("Дождитесь окончания операции.", true); return; }
-      checking = true;
-      try {
-        const notionToken = String(GM_getValue(K.notion, "") || "").trim();
-        if (!notionToken) throw new Error("Токен Notion не задан. Укажите его в «Подключениях».");
-        const headers = { Authorization: `Bearer ${notionToken}`, "Notion-Version": C.notionV, "Content-Type": "application/json" };
-        const rows = [];
-        let cursor = "";
-        while (true) {
-          const page = await request("POST", `https://api.notion.com/v1/data_sources/${C.roles}/query`, headers,
-            { page_size: 100, ...(cursor ? { start_cursor: cursor } : {}) }, { retry: false });
-          if (!page || !Array.isArray(page.results) || typeof page.has_more !== "boolean") throw new Error("База «Роли» вернула неполный список.");
-          rows.push(...page.results);
-          if (!page.has_more) break;
-          cursor = String(page.next_cursor || "");
-          if (!cursor) break;
-        }
-        const configuredRepos = (Array.isArray(repos) ? repos : [])
-          .map((entry) => String(entry.repo || "").trim()).filter(Boolean);
-        const defaultOwner = String(find("repo").value || "").trim().split("/")[0];
-        const fullRepo = (value) => {
-          const raw = String(value || "").trim();
-          if (!raw || raw.includes(" ")) return "";
-          if (raw.includes("/")) return raw;
-          const configured = configuredRepos.find((repo) => repo.split("/").at(-1).toLowerCase() === raw.toLowerCase());
-          return configured || (defaultOwner ? `${defaultOwner}/${raw}` : "");
-        };
-        const roles = rows.map((p) => ({
-          // Role routes use the Notion page UUID, never the Agent URL slug.
-          id: String(p.id || "").trim(),
-          name: rt(p.properties["Роль"]),
-          fn: sel(p.properties["Функция"]),
-          status: sel(p.properties["Статус"]),
-          // Role tables often store just a repository slug; qualify it with the
-          // configured owner so it satisfies the profile's owner/repository contract.
-          repo: fullRepo(rt(p.properties["Репозиторий"])),
-        }));
-        const active = roles.filter((r) => r.status === "Активна");
-        if (!active.length) throw new Error("Нет активных ролей в базе «Роли».");
-        const warden = active.find((r) => r.name === "Warden");
-        if (!warden || !warden.repo) throw new Error("Роль Warden не найдена или у неё не указан репозиторий в поле «Репозиторий».");
-        const mainRepo = warden.repo;
-        const uniqueRepos = [];
-        for (const r of active) {
-          if (r.repo && !uniqueRepos.some((u) => u.repo === r.repo)) {
-            uniqueRepos.push({ repo: r.repo, branch: "main", main: r.repo === mainRepo });
-          }
-        }
-        if (!uniqueRepos.some((u) => u.main)) {
-          uniqueRepos[0].main = true;
-        }
-        repos = uniqueRepos;
-        ensureMain();
-        const mainEntry = repos.find((entry) => entry.main) || repos[0];
-        if (mainEntry) {
-          find("repo").value = mainEntry.repo;
-          find("branch").value = mainEntry.branch;
-        }
-        renderRepos();
-        routes = active.map((r) => ({ roleId: r.id, repo: r.repo || mainRepo })).filter((rt) => rt.roleId && rt.repo);
-        renderRoutes();
-        say(`Автозаполнено: главный репозиторий ${mainRepo} (по роли Warden), ${routes.length} маршрутов ролей.`);
-      } catch (e) {
-        say(`Ошибка автозаполнения: ${e.message}`, true);
-      } finally {
-        checking = false;
-      }
-    };
-    find("switch").onclick = () => {
-      const target = chosen();
-      if (!target || target.id === ACTIVE_PROFILE.id) { say("Этот проект уже выбран."); return; }
-      if (checking || autoOn() || busy || projectAsyncWork > 0) {
-        say("Остановите автоцикл и дождитесь окончания всех начатых шагов и фоновых запросов. Затем повторите.", true); return;
-      }
-      const handoff = GM_getValue(K.pending, null) || GM_getValue(K.expect, null);
-      if (!confirm(`Открыть «${target.name}»? Вкладка перезагрузится, автоцикл останется выключенным.${handoff ? "\nУ текущего проекта есть очередь или ожидание: они останутся в его профиле." : ""}\nПри возвращении к проекту ожидающий ход не продолжится без ручного шага.`)) return;
-      try {
-        sessionStorage.removeItem(projectStorageKey(target.id, "cfn-auto-enabled"));
-        sessionStorage.setItem(PROJECT_HOLD_PREFIX + target.id, "1");
-        sessionStorage.setItem(PROFILE_SESSION_KEY, target.id);
-        location.reload();
-      } catch { say("Не удалось сохранить выбор во вкладке; проект не переключён.", true); }
-    };
-    const migrationSafe = () => !ACTIVE_PROFILE.invalid && !ACTIVE_PROFILE.legacy &&
-      !autoOn() && !busy && projectAsyncWork === 0;
-    const migrationSignature = (plan) => JSON.stringify({
-      mapped: plan.mapped.map((item) => [item.row.id, item.row.last_edited_time, item.id, item.mission.last_edited_time, item.label]),
-      existing: plan.existing.map((item) => [item.row.id, item.row.last_edited_time, item.id]),
-      conflicts: plan.conflicts.map((item) => [item.row?.id || "", item.why]), count: plan.count,
-    });
-    find("rejected").onclick = () => {
-      const saved = GM_getValue("cfn-rejected-results-v1", []);
-      if (!Array.isArray(saved) || !saved.length) { say("Сохранённых отклонённых ответов в этом профиле нет."); return; }
-      say("Локальные копии могут содержать данные проекта; не публикуйте их и не отправляйте секреты в чат.\n\n" +
-        saved.map((item) => `${item.at} · ${item.kind} · ${item.ref} · run ${item.runId || "—"} · turn ${item.turnId || "—"}\n${item.raw}`).join("\n\n---\n\n"));
-    };
-    find("migration-preview").onclick = async () => {
-      if (checking || !migrationSafe()) { say("Откройте настроенный профиль, остановите цикл и дождитесь всех операций.", true); return; }
-      checking = true; migrationPlan = null;
-      try {
-        const source = await notion("GET", `data_sources/${C.requests}`);
-        if (source.properties?.["Mission ID"]?.type !== "rich_text")
-          throw new Error("В базе «Запросы» сначала создайте поле Mission ID типа text.");
-        migrationPlan = await inspectMissionMigration();
-        say(formatMissionMigration(migrationPlan), migrationPlan.conflicts.length > 0);
-      } catch (e) { say(`Предпросмотр не выполнен: ${connectionProblem(e, connectionSettings())}`, true); }
-      finally { checking = false; }
-    };
-    find("migration-apply").onclick = async () => {
-      if (checking || !migrationSafe() || !migrationPlan) { say("Сначала остановите цикл и выполните предпросмотр.", true); return; }
-      if (migrationPlan.conflicts.length) { say(formatMissionMigration(migrationPlan) + "\nСначала вручную разберите все строки ПРОВЕРИТЬ и обновите предпросмотр.", true); return; }
-      if (GM_getValue(K.pending, null) || GM_getValue(K.expect, null)) {
-        say("Сохранены незавершённая очередь или ожидание. Сначала разберите их и проверьте чат и журнал; миграция ничего не снимает.", true); return;
-      }
-      if (!migrationPlan.mapped.length) { say("Все карточки уже привязаны; записывать нечего."); return; }
-      if (migrationPlan.mapped.some((item) => !item.row.last_edited_time || !item.mission.last_edited_time)) {
-        say("Notion не вернул время последнего изменения. Без него автоматическую запись не выполняю.", true); return;
-      }
-      if (!confirm(`Записать Mission ID в ${migrationPlan.mapped.length} карточек?\n\nПроверьте ВСЕ строки предпросмотра. Запись только в пустые поля. Остановите другие вкладки и внешние изменения; атомарной блокировки Notion нет.`)) return;
-      checking = true;
-      try {
-        const fresh = await inspectMissionMigration();
-        if (!migrationSafe() || GM_getValue(K.pending, null) || GM_getValue(K.expect, null) ||
-            migrationSignature(fresh) !== migrationSignature(migrationPlan))
-          throw new Error("Данные или состояние цикла изменились после предпросмотра; запись отменена.");
-        const count = await applyMissionMigration(migrationPlan);
-        migrationPlan = null;
-        const verified = await inspectMissionMigration();
-        say(`Записано Mission ID: ${count}. Проверка после записи:\n${formatMissionMigration(verified)}`, verified.conflicts.length > 0 || verified.mapped.length > 0);
-      } catch (e) { migrationPlan = null; say(`Миграция прервана: ${connectionProblem(e, connectionSettings())}\nЧасть строк могла сохраниться. История не удалялась; выполните предпросмотр заново.`, true); }
-      finally { checking = false; }
-    };
-    find("import").onclick = async () => {
-      const target = chosen();
-      if (checking || autoOn() || busy || projectAsyncWork > 0 || !target || target.legacy || !validProfile(target)) {
-        say("Остановите все операции и выберите созданный, ещё не открытый новый профиль.", true); return;
-      }
-      if (target.id === ACTIVE_PROFILE.id) { say("Для переноса выберите ещё не открытый профиль, чтобы не смешать состояния.", true); return; }
-      checking = true;
-      try {
-        const keys = typeof GM_listValues === "function" ? await Promise.resolve(GM_listValues()) : [];
-        if (!Array.isArray(keys)) throw new Error("Менеджер скриптов не вернул список локальных ключей.");
-        const legacy = keys.filter((key) => key.startsWith("cfn-") && key !== PROFILE_REGISTRY_KEY &&
-          !["cfn-project-approved", "cfn-project-ever-approved", "cfn-auto-enabled", "cfn-step-request"].includes(key));
-        if (!legacy.length) throw new Error("Прежнее локальное хранилище не найдено. Возможно, установлена отдельная копия; не удаляйте старый скрипт.");
-        if (keys.some((key) => key.startsWith(`project:${target.id}:`))) throw new Error("В выбранном профиле уже есть локальное состояние; поверх него не копирую.");
-        if (!confirm(`Скопировать ${legacy.length} локальных ключей в «${target.name}»?\n\nПодтвердите, что профиль вручную указывает на ТОТ ЖЕ проект и что все другие вкладки остановлены. Секреты, очередь и ожидания будут скопированы локально; старые ключи останутся. Автозапуск и допуск не переносятся.`)) return;
-        const after = typeof GM_listValues === "function" ? await Promise.resolve(GM_listValues()) : [];
-        if (autoOn() || busy || projectAsyncWork > 0 || after.some((key) => key.startsWith(`project:${target.id}:`)))
-          throw new Error("Состояние изменилось во время подтверждения; копирование отменено.");
-        for (const key of legacy) rawSet(projectStorageKey(target.id, key), rawGet(key, null));
-        rawSet(projectStorageKey(target.id, "cfn-project-approved"), false);
-        say(`Скопировано ключей: ${legacy.length}. Старые ключи сохранены. Откройте профиль, проверьте ожидание и журнал, настройте проектный шлюз и выполните проверку подключений. Автоцикл не запущен.`);
-      } catch (e) { say(`Перенос не выполнен полностью: ${e.message}. Старые ключи не удалены; проверьте новый профиль.`, true); }
-      finally { checking = false; }
-    };
-    find("enable").onclick = async () => {
-      if (checking || ACTIVE_PROFILE.invalid || ACTIVE_PROFILE.legacy) return;
-      if (autoOn() || busy || projectAsyncWork > 0) { say("Сначала остановите цикл и дождитесь завершения операций.", true); return; }
-      const settings = connectionSettings();
-      const profileUnchanged = () => JSON.stringify(resolveProfile(ACTIVE_PROFILE.id)) === JSON.stringify(ACTIVE_PROFILE);
-      if (!profileUnchanged()) { say("Профиль изменён в другой вкладке: обновите страницу и проверьте его заново.", true); return; }
-      if (!settings.notion || !settings.gwUrl || !settings.gwKey) { say("Сначала сохраните Notion и Drive в «Подключениях»; затем вернитесь сюда.", true); return; }
-      checking = true; say("Проверяю сохранённые подключения, проектный шлюз, основные поля Notion и роли…");
-      try {
-        const results = await Promise.all([probeNotionConnection(settings), probeDriveConnection(settings), probeGithubConnection(settings)]);
-        if (results.some((result) => !result.ok)) { say(results.map((result) => result.text).join("\n"), true); return; }
-        const schema = await validateProjectSchema(settings);
-        if (!schema.ok) { say(schema.text, true); return; }
-        if (!profileUnchanged()) { say("Профиль изменён в другой вкладке: обновите страницу и проверьте его заново.", true); return; }
-        if (!sameConnections(settings, connectionSettings())) { say("Подключения изменились в другой вкладке; проверьте проект заново.", true); return; }
-        if (!confirm("Источники, основные поля, роли, ветка и проектный шлюз проверены. Права записи и содержимое старых карточек не проверены.\n\nРазрешить работу? Фоновые сторожа вопросов и предложений могут создавать записи в Notion; автоцикл не запустится.")) return;
-        if (!profileUnchanged()) { say("Профиль изменён во время подтверждения: обновите страницу и проверьте его заново.", true); return; }
-        if (!sameConnections(settings, connectionSettings())) { say("Подключения изменились во время подтверждения; проверьте проект заново.", true); return; }
-        GM_setValue("cfn-project-ever-approved", true);
-        GM_setValue("cfn-project-approved", true);
-        watchQuestions(); watchDecisions(); render();
-        say("Работа проекта разрешена. Автоцикл выключен; запустите его вручную только после проверки схемы и ролей.");
-      } catch (e) { say(`Проверка не завершена: ${connectionProblem(e, settings)}`, true); }
-      finally { checking = false; }
-    };
-    render();
-    find("close").focus();
-  }
-
-  // ───────────────────────────── ntfy-настройка ─────────────────────────────
-  function ntfyDialog() {
-    document.getElementById("cfn-ntfy-dialog")?.remove();
-    const box = document.createElement("div");
-    box.id = "cfn-ntfy-dialog";
-    box.style.cssText = [
-      "position:fixed", "right:14px", "bottom:150px", "z-index:2147483001", "width:380px",
-      "max-height:70vh", "overflow:auto",
-      "background:#15171c", "color:#e7eaee", "border:1px solid #2b2f38", "border-radius:10px",
-      "padding:10px", "font:12px/1.5 ui-monospace,Menlo,Consolas,monospace",
-      "box-shadow:0 10px 30px rgba(0,0,0,.45)",
-    ].join(";");
-    box.innerHTML = `
-      <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">
-        <strong>ntfy</strong>
-        <span style="opacity:.5;font-size:10px">v${SCRIPT_VERSION}</span>
-        <span style="flex:1"></span>
-        <button id="cfn-ntfy-close" title="Закрыть" style="${btnStyle()}">✕</button>
-      </div>
-      <div style="opacity:.7;margin-bottom:8px">Топик на ntfy.sh; пусто — уведомления выключены.<br>
-      Тихие (priority 2): задание отправлено, ответ записан, пауза снята.<br>
-      Громкие (priority 5): только когда цикл остановлен. Громкий тест — тоже только на паузе или при выключенном цикле.</div>
-      <label style="display:block;margin-bottom:6px">Топик или ссылка<br>
-        <input id="cfn-ntfy-topic" placeholder="arena-project-topic" style="${inputStyle()}"></label>
-      <label style="display:block;margin-bottom:6px">Access token (необязательно)<br>
-        <input id="cfn-ntfy-token" type="password" placeholder="tk_…" style="${inputStyle()}"></label>
-      <div style="display:flex;gap:6px;flex-wrap:wrap">
-        <button id="cfn-ntfy-save" style="${btnStyle()}">Сохранить</button>
-        <button id="cfn-ntfy-quiet" style="${btnStyle()}">Тихий тест</button>
-        <button id="cfn-ntfy-loud" style="${btnStyle()}">Громкий тест</button>
-        <button id="cfn-ntfy-health" style="${btnStyle()}">Проверка связи</button>
-        <button id="cfn-ntfy-open" style="${btnStyle()}">Открыть топик</button>
-        <button id="cfn-ntfy-off" style="${btnStyle()}">Выключить</button>
-      </div>
-      <div id="cfn-ntfy-note" style="margin-top:8px;min-height:32px;white-space:pre-wrap;opacity:.9;font-size:11px;line-height:1.45"></div>`;
-    document.body.appendChild(box);
-
-    const topic = box.querySelector("#cfn-ntfy-topic");
-    const token = box.querySelector("#cfn-ntfy-token");
-    const note = box.querySelector("#cfn-ntfy-note");
-    topic.value = String(GM_getValue(K.ntfyTopic, "") || "");
-    token.value = String(GM_getValue(K.ntfyToken, "") || "");
-
-    const say = (text, error = false) => {
-      note.textContent = text;
-      note.style.color = error ? "#ff9a9a" : "#bfe6c4";
-    };
-
-    /** Топик нормализуется: ссылка и «ntfy.sh/имя» тоже принимаются. */
-    const persist = () => {
-      const raw = topic.value.trim();
-      const name = normalizeNtfyTopic(raw);
-      if (!name) {
-        throw new Error(
-          `Топик «${raw || "пусто"}» не подходит: нужно 1–64 символа A–Z, a–z, 0–9, дефис или подчёркивание.`,
-        );
-      }
-      GM_setValue(K.ntfyTopic, name);
-      GM_setValue(K.ntfyToken, token.value.trim());
-      topic.value = name;
-      return name;
-    };
-
-    const test = async (priority, tags, title, label) => {
-      if (Number(priority) >= 4 && !isPaused() && autoOn()) {
-        say("Громкий тест доступен только на паузе или при выключенном автоцикле.", true);
-        return;
-      }
-      say(`Отправляю в https://ntfy.sh/${normalizeNtfyTopic(topic.value) || "…"} …`);
-      // Сторож: если менеджер скриптов не ответил ни успехом, ни ошибкой,
-      // молчания быть не должно — через 25 с диалог сам скажет о зависании.
-      const watchdog = setTimeout(() => {
-        say(
-          `Нет ответа за 25 с. Нажмите «Проверка связи»: если и она молчит — ` +
-            `запрос блокирует менеджер скриптов (проверьте @connect ntfy.sh), а не ntfy.`,
-          true,
-        );
-      }, 25000);
-      try {
-        const name = persist();
-        const result = await ntfyPublish(name, token.value.trim(), {
-          message: `Relay: ${label} (priority ${priority}).`,
-          title,
-          priority,
-          tags,
-        });
-        say(
-          `Отправлено: ${result.via === "gm" ? "ScriptCat" : "fetch"}, HTTP ${result.status}.\n` +
-            `Подписка должна быть на «${name}». Если пуша нет — нажмите «Открыть топик»: сообщение, видимое на странице ntfy.sh, до сервера дошло, значит дело в подписке телефона.`,
-        );
-        log(`ntfy: ${label} отправлен (${result.via}, HTTP ${result.status}).`, false, { skip: true });
-      } catch (e) {
-        say(`Не ушло: ${e.message}`, true);
-        log(`ntfy: ${label} не отправлен — ${e.message}`, true, { skip: true });
-      } finally {
-        clearTimeout(watchdog);
-      }
-    };
-
-    box.querySelector("#cfn-ntfy-save").onclick = () => {
-      try {
-        const name = persist();
-        say(`Сохранено: «${name}». Проверьте тестами.`);
-        log(`ntfy: топик «${name}» сохранён.`, false, { skip: true });
-      } catch (e) {
-        say(e.message, true);
-      }
-    };
-    box.querySelector("#cfn-ntfy-quiet").onclick = () =>
-      test(2, "memo", "Relay: тихий тест", "тихий тест");
-    box.querySelector("#cfn-ntfy-loud").onclick = () =>
-      test(5, "warning,rotating_light", "Relay: громкий тест", "громкий тест");
-    box.querySelector("#cfn-ntfy-health").onclick = async () => {
-      say("Проверяю связь с ntfy.sh…");
-      const lines = await ntfyHealth();
-      say(`Проверка связи:\n${lines.join("\n")}`);
-    };
-    box.querySelector("#cfn-ntfy-open").onclick = () => {
-      const name = normalizeNtfyTopic(topic.value);
-      if (!name) {
-        say("Сначала введите корректный топик.", true);
-        return;
-      }
-      window.open(`https://ntfy.sh/${encodeURIComponent(name)}`, "_blank", "noopener");
-    };
-    box.querySelector("#cfn-ntfy-off").onclick = () => {
-      GM_setValue(K.ntfyTopic, "");
-      GM_setValue(K.ntfyToken, "");
-      topic.value = "";
-      token.value = "";
-      say("ntfy выключен: пуши больше не отправляются.");
-    };
-    box.querySelector("#cfn-ntfy-close").onclick = () => box.remove();
-  }
-
-  function inputStyle() {
-    return "width:100%;box-sizing:border-box;background:#0f1115;color:#e7eaee;border:1px solid #343a46;border-radius:6px;padding:4px 6px;font:12px ui-monospace,Menlo,Consolas,monospace";
-  }
-
-  // ───────────────────────────── GitHub ─────────────────────────────
-  function githubDialog() {
-    connectionDialog({ focusGithub: true });
-  }
-
-  /** Один раз после ложного отказа сами показываем, где взять токен. */
-  function maybeGhDialog() {
-    if (!GM_getValue(K.ghAsk, 0)) return;
-    GM_setValue(K.ghAsk, 0);
-    setTimeout(() => githubDialog(), 400);
   }
 
   // ───────────────────────────── HTTP ─────────────────────────────
@@ -4758,7 +3733,7 @@
         const list = unresolved.map((row) => `${taskTitle(row) || "без названия"} (${row.id})`).join("; ");
         log(`В «${state}» ${unresolved.length} карточек без Mission ID — они не в очереди миссии ` +
           `«${firstLine(wanted, 60)}», и я их не трогаю: ${list}. ` +
-          "Привяжите их через «Управление проектами → Проверить Mission ID карточек».", false,
+          "Проверьте их вручную в Notion: редактор миграции в ScriptCat удалён.", false,
           { tone: "warn", ntfy: "quiet", title: "Relay: карточка без привязки" });
       }
     }
@@ -17051,7 +16026,7 @@
         pause(
           `Приёмка не приняла решение по привязке: в карточках этой миссии нет Mission ID — ${list}. ` +
             "Пока непонятно, входят ли они в миссию, закрывать её нельзя: привяжите карточки " +
-            "«Управление проектами → Проверить Mission ID карточек» и нажмите «Продолжить». " +
+            "проверьте и исправьте их вручную в Notion, затем нажмите «Продолжить». " +
             "Ни одну карточку не скрываю и не меняю; ответ Reviewer не потерян.",
           { kind: "review-unbound", ref: mission.id },
         );
@@ -23646,6 +22621,7 @@ function reviewPullRequest({ files, pr, zone } = {}) {
     lastHoldReportAt: 0,
     lastMarker: { hash: "", at: 0 },
     warned: { hello: "", pull: "", version: "" },
+    projectApprovalRequests: new Set(),
   };
 
   if (typeof window !== "undefined") {
@@ -23798,8 +22774,58 @@ function reviewPullRequest({ files, pr, zone } = {}) {
     const localWaiting = waitingState
       ? `expect:${String(waitingState.kind || "ход")}`
       : pendingState ? "pending" : "";
-    const res = await relayPost({ action: "hello", account: email, expectedSlot, localBusy, localWaiting, path: typeof location !== "undefined" ? location.pathname : "" });
+    const res = await relayPost({
+      action: "hello", account: email, expectedSlot, localBusy, localWaiting,
+      projectId: typeof ACTIVE_PROFILE !== "undefined" ? ACTIVE_PROFILE.id : "",
+      projectName: typeof ACTIVE_PROFILE !== "undefined" ? ACTIVE_PROFILE.name : "",
+      projectProfile: typeof projectProfileSnapshot === "function" ? projectProfileSnapshot() : null,
+      projectConfigUpdatedAt: String(GM_getValue("cfn-relay-settings-updated-at", "") || ""),
+      projectApproved: typeof projectApproved === "function" ? projectApproved() : undefined,
+      projectBlockReason: typeof projectBlockReason === "function" ? projectBlockReason() : "",
+      path: typeof location !== "undefined" ? location.pathname : "",
+    });
     relayClient.helloAt = nowMs;
+    if (res?.projectSelection && !localBusy && !busy && !(Number(projectAsyncWork) > 0) &&
+        typeof applyRelayProjectSelection === "function") {
+      if (applyRelayProjectSelection(res.projectSelection)) {
+        log("Пульт выбрал другой проект. Переключаю только эту вкладку без изменения очереди и ожиданий.");
+        location.reload();
+        return "";
+      }
+      log("Переключение профиля из пульта не выполнено. Проверьте доступность профиля и перезагрузите вкладку вручную.", true);
+    }
+    if (res?.projectSettingsUnavailable && !localBusy && !busy && !(Number(projectAsyncWork) > 0) &&
+        typeof applyRelayProjectSettingsUnavailable === "function") {
+      if (applyRelayProjectSettingsUnavailable(res.projectSettingsUnavailable))
+        log("Подключения удалены в пульте. Допуск снят; локальные очереди и ожидания сохранены.", true);
+    }
+    let settingsRefresh = { applied: false, profileChanged: false, settingsChanged: false };
+    if (res?.projectSettings && !localBusy && !busy && !(Number(projectAsyncWork) > 0) &&
+        typeof applyRelayProjectSettings === "function") {
+      settingsRefresh = applyRelayProjectSettings(res.projectSettings);
+      if (settingsRefresh.profileChanged) {
+        log("Настройки профиля из пульта приняты. Перезагружаю вкладку без изменения очереди и ожиданий.");
+        location.reload();
+        return "";
+      }
+      if (settingsRefresh.settingsChanged) {
+        log("Подключения обновлены из пульта. Допуск сброшен для повторной проверки; очередь и ожидания сохранены.", true);
+      }
+    }
+    const approvalRequest = res?.projectApprovalRequest;
+    if (approvalRequest && approvalRequest.projectId === String(ACTIVE_PROFILE?.id || "") &&
+        approvalRequest.id && !relayClient.projectApprovalRequests.has(approvalRequest.id)) {
+      relayClient.projectApprovalRequests.add(approvalRequest.id);
+      while (relayClient.projectApprovalRequests.size > 20)
+        relayClient.projectApprovalRequests.delete(relayClient.projectApprovalRequests.values().next().value);
+      if (typeof approveProjectFromRelay === "function") {
+        void Promise.resolve(approveProjectFromRelay(approvalRequest)).catch((error) => {
+          log(`Проверка проекта по запросу пульта не завершена: ${String(error?.message || error).slice(0, 180)}.`, true);
+        });
+      } else {
+        log("Получен запрос проверки проекта из пульта, но в этой версии нет проверки профиля. Обновите ScriptCat.", true);
+      }
+    }
     if (res && res.ok && res.slot) {
       relayClient.lastError = "";
       relayClient.lastPresenceAt = nowMs;
@@ -24015,7 +23041,11 @@ function reviewPullRequest({ files, pr, zone } = {}) {
       if (typeof consumeProvision === "function") await consumeProvision();
       return;
     }
-    const res = await relayPost({ action: "pull", slotId });
+    const res = await relayPost({
+      action: "pull", slotId, projectId: ACTIVE_PROFILE?.id || "", projectName: ACTIVE_PROFILE?.name || "",
+      projectApproved: typeof projectApproved === "function" ? projectApproved() : false,
+      projectBlockReason: typeof projectBlockReason === "function" ? projectBlockReason() : "",
+    });
     if (res && (res.cycleMode === "auto" || res.cycleMode === "manual") && typeof autoSet === "function") {
       const wasAuto = typeof autoOn === "function" && autoOn();
       const shouldAuto = res.cycleMode === "auto";
@@ -24416,14 +23446,6 @@ function reviewPullRequest({ files, pr, zone } = {}) {
       if (fromToggle) log("Проект ждёт ручного запуска после переключения.");
       return;
     }
-    if (typeof document !== "undefined" && document.getElementById?.("cfn-projects")) return;
-    // Асинхронное окно не блокирует event loop как прежние prompt. Пока оно
-    // открыто, не начинаем новые шаги со старыми подключениями; уже запущенные
-    // операции и независимые сторожа этим не отменяются.
-    if (typeof document !== "undefined" && document.getElementById?.("cfn-connections")) {
-      if (fromToggle) log("Шаг отложен: завершите настройку или закройте окно подключений.");
-      return;
-    }
     // Фоновая вкладка в журнале не отмечается: Мастер работает в другой
     // вкладке постоянно, и строка «браузер режет таймеры» превращалась в шум.
     // Растянутые ожидания (`patience`) от этого никуда не делись.
@@ -24475,8 +23497,6 @@ function reviewPullRequest({ files, pr, zone } = {}) {
     } catch (e) {
       log(`Самопроверка последнего отказа не удалась: ${e.message}`, true);
     }
-    // Окно могли открыть во время асинхронной самопроверки выше.
-    if (typeof document !== "undefined" && document.getElementById?.("cfn-connections")) return;
     // Provisioning Arena-агентов — отдельный административный контур. Он читает
     // свой request/job/lock до auto/pending-логики и не трогает K.pending/K.expect.
     // Пока запрос или job активен, обычный командный цикл не начинается.
@@ -24529,10 +23549,6 @@ function reviewPullRequest({ files, pr, zone } = {}) {
       if (await handleToolCallLimit()) return;
       // Ошибка на экране важнее любого шага: сначала остановиться.
       if (monitorVisibleErrors()) return;
-      await setup(false);
-      // Если параметр setup открыл окно из тика, выйти через finally и снять
-      // busy: ожидание закрытия здесь заблокировало бы само сохранение.
-      if (typeof document !== "undefined" && document.getElementById?.("cfn-connections")) return;
       // Новая миссия — новый ход: остатки прошлой снимаются до любых решений.
       try {
         if (await syncMissionState()) return;
@@ -25109,7 +24125,7 @@ function reviewPullRequest({ files, pr, zone } = {}) {
           ? "Мешает привязка карточек: в «Запросах» есть карточки без Mission ID " +
             "или с неизвестным состоянием. Пока неясно, чьи они, очередь этой миссии не собрать: " +
             "выдавать и принимать такие карточки нельзя. Привяжите их через " +
-            "«Управление проектами → Проверить Mission ID карточек» и нажмите «Продолжить» — " +
+            "проверьте и исправьте их вручную в Notion, затем нажмите «Продолжить» — " +
             "полученный ответ и сами карточки не потеряны, я их не скрываю и не меняю."
           : /битый id|valid uuid|path failed validation/i.test(raw)
         ? "Notion не принял адрес записи: в нём оказался битый id — обычно это " +
@@ -25220,8 +24236,10 @@ function reviewPullRequest({ files, pr, zone } = {}) {
     migrateState();
     // Автоцикл не наследуется от прошлого запуска браузера: сначала — руками.
     autoForgetPersisted();
+    // Relay owns profile and credential settings. The small Arena panel remains
+    // for executor status/logs and local controls; it has no settings entry point.
     mount();
-    if (ACTIVE_PROFILE.invalid) log("Проект вкладки недоступен. Проверьте sessionStorage и список профилей; Relay автоматически не подставлен.", true);
+    if (ACTIVE_PROFILE.invalid) log("Профиль вкладки недоступен. Откройте Relay и проверьте синхронизацию профиля.", true);
     if (debugOn()) {
       installDebugApi();
       console.info(
@@ -25240,7 +24258,6 @@ function reviewPullRequest({ files, pr, zone } = {}) {
       } else log("Автозапуск по ссылке пропущен: проверьте допуск, удержание и сохранённую паузу.", true);
     }
     setStatus();
-    setup(false);
     setInterval(() => tick(false), C.tickMs);
     // D-026: клиент протокола службы — hello/pull/beat/report. Решений не
     // принимает; без адреса службы молчит и не мешает прежнему циклу.

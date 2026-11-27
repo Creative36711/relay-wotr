@@ -23,17 +23,20 @@ for (const entry of docs) {
   }
 }
 
-const projectUi = read('src/08-projects-ui.js');
-const connectionUi = read('src/07-connections-ui.js');
-for (const label of ['Новый профиль', 'Найти ID источников по ссылкам', 'Создать профиль',
-  'Открыть выбранный проект', 'Проверить подключения и разрешить работу']) {
-  assert.ok(projectUi.includes(label), `кнопка «${label}» есть в UI`);
+const pultHtml = readFileSync(new URL('../../../relay/web/index.html', import.meta.url), 'utf8');
+const pultApp = readFileSync(new URL('../../../relay/web/app.js', import.meta.url), 'utf8');
+for (const [id, label] of [['btn-project-new', 'Новый профиль'], ['btn-project-import', 'Импорт JSON профиля'],
+  ['btn-project-activate', 'Сделать активным'], ['btn-project-save', 'Сохранить профиль и подключения']]) {
+  assert.ok(pultHtml.includes(`id="${id}"`), `кнопка «${label}» есть в Relay pult`);
   assert.ok(guide.includes(label), `кнопка «${label}» описана в руководстве`);
 }
-for (const label of ['Управление проектами', 'Проверить всё', 'Сохранить', 'Ключ шлюза']) {
-  assert.ok(connectionUi.includes(label), `поле или кнопка «${label}» есть в UI`);
-  assert.ok(guide.includes(label), `поле или кнопка «${label}» описана в руководстве`);
+for (const [id, label] of [['project-notion', 'Notion token'], ['project-gw-url', 'Gateway URL'],
+  ['project-gw-key', 'Gateway key'], ['project-github', 'GitHub token'], ['project-ntfy-topic', 'ntfy topic']]) {
+  assert.ok(pultHtml.includes(`id="${id}"`), `поле «${label}» есть в Relay pult`);
+  assert.ok(guide.includes(label), `поле «${label}» описано в руководстве`);
 }
+assert.match(pultApp, /\/api\/projects\/active/);
+assert.doesNotMatch(read('src/07-connections-ui.js'), /function connectionDialog\(/, 'no ScriptCat connection dialog remains');
 const gateway = read('drive-gateway.gs');
 for (const name of ['CF_SETUP_PROJECT_ID', 'CF_SETUP_PROJECT_FOLDER', 'setupProjectGateway', 'CF_GATEWAY_KEY']) {
   assert.ok(gateway.includes(name), `${name} есть в коде шлюза`);

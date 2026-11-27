@@ -159,15 +159,17 @@ const tickBlock = (() => {
     'готовность адресата — по резолвленному адресу');
 }
 
-// ── 5. Настройка видна человеку: без адреса службы пар нет ──────────────────
+// ── 5. Project settings belong to the Relay pult, not ScriptCat UI ─────────
 {
-  const ui = block('function connectionSettings()', 'function connectionProblem(');
-  assert.match(ui, /relayUrl:/, 'адрес службы хранится в подключениях профиля');
-  assert.match(src, /cfn-connection-relay-url/, 'и у него есть поле в окне ⚙');
-  assert.match(src, /Служба Relay/, 'подписанное по-человечески');
-  const save = block('if (!endpoint.ok && driveChanged)', 'const updates = [');
-  assert.match(save, /Адрес службы Relay должен быть полным/, 'опечатку в адресе видно до сохранения');
-  assert.match(src, /\["cfn-relay-url", saved\.relayUrl, next\.relayUrl\]/, 'и он сохраняется вместе с остальными');
+  const pultHtml = readFileSync(new URL('../../../relay/web/index.html', import.meta.url), 'utf8');
+  const pultApp = readFileSync(new URL('../../../relay/web/app.js', import.meta.url), 'utf8');
+  assert.doesNotMatch(src, /cfn-connection-relay-url|function connectionDialog\(/,
+    'legacy ScriptCat settings entry points are absent from the userscript bundle');
+  assert.match(pultHtml, /id="project-gw-url"/, 'Relay pult edits the Gateway URL');
+  assert.match(pultHtml, /id="project-gw-key"/, 'Relay pult owns the project Gateway key input');
+  assert.match(pultHtml, /id="project-ntfy-topic"/, 'Relay pult edits the project notification topic');
+  assert.match(pultApp, /post\("\/api\/projects", \{ profile, secrets, clearSecrets \}\)/,
+    'project configuration and local secrets are saved via the Relay API');
 }
 
 console.log('OK: relay 1.24.1 — адрес агента берётся у пары (роль, слот), а не только из «Ролей»');

@@ -21,7 +21,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const header = '00-header.js';
 const parts = [
   '01-config.js', '02-profiles-core.js', '03-utils.js', '04-notifications.js', '05-debug.js',
-  '06-pause-panel.js', '07-connections-ui.js', '08-projects-ui.js', '09-ntfy-ui.js', '10-github-ui.js',
+  '06-pause-panel.js', '07-connections-ui.js', '08-projects-ui.js',
   '11-http-gateway.js', '12-notion.js',
   // D-015: адрес пары (роль, слот) из службы Relay. Идёт сразу после Notion и
   // до всего, что спрашивает адрес роли: гейт состава, охрана дублей, разбор.

@@ -55,6 +55,7 @@ export function createMemoryState() {
     clients: new Map(), // ScriptCat tab heartbeat and local hold state
     slotMismatches: new Map(), // rate limit incorrect Firefox container/account bindings
     coordinatorTurnRequest: null, // one panel Step waiting for the admin Arena tab
+    projectApprovalRequests: new Map(), // explicit pult request; ScriptCat validates locally before granting
   };
 }
 
@@ -587,7 +588,7 @@ export function createService({
     return run;
   }
 
-  function rememberClient({ slotId = "", tab = "", scriptVersion = "", localPaused = false, localBusy = false, localWaiting = "", source = "hello" } = {}) {
+  function rememberClient({ slotId = "", tab = "", scriptVersion = "", localPaused = false, localBusy = false, localWaiting = "", projectId = "", projectName = "", projectApproved, projectBlockReason = "", source = "hello" } = {}) {
     if (!slotId || !tab) return;
     const clients = memory.clients instanceof Map ? memory.clients : new Map();
     memory.clients = clients;
@@ -599,10 +600,20 @@ export function createService({
     const version = String(scriptVersion || "").trim();
     const paused = Boolean(localPaused);
     const previous = clients.get(key) || {};
-    const changed = !previous.slotId || previous.scriptVersion !== version || previous.localPaused !== paused;
+    const changed = !previous.slotId || previous.scriptVersion !== version || previous.localPaused !== paused ||
+      (typeof projectApproved === "boolean" && (
+        previous.projectApproved !== projectApproved || previous.projectId !== String(projectId || "") ||
+        previous.projectName !== String(projectName || "") || previous.projectBlockReason !== String(projectBlockReason || "")
+      ));
     const next = {
       ...previous, slotId, tab, scriptVersion: version, localPaused: paused,
       localBusy: Boolean(localBusy), localWaiting: String(localWaiting || "").slice(0, 120), seenAt: nowMs,
+      projectId: String(projectId || previous.projectId || "").slice(0, 120),
+      projectName: String(projectName || previous.projectName || "").slice(0, 120),
+      projectApproved: typeof projectApproved === "boolean" ? projectApproved : (previous.projectApproved ?? null),
+      projectBlockReason: typeof projectApproved === "boolean"
+        ? (projectApproved ? "" : String(projectBlockReason || previous.projectBlockReason || "unapproved").slice(0, 240))
+        : String(projectBlockReason || previous.projectBlockReason || "").slice(0, 240),
     };
     if (source === "hello") next.lastHelloAt = nowMs;
     if (source === "pull") next.lastPullAt = nowMs;
@@ -623,7 +634,7 @@ export function createService({
    * контейнера не должно ломать транспорт. Неизвестный аккаунт — честный
    * отказ с подсказкой, какой слот добавить.
    */
-  async function hello({ account = "", tab = "", path = "", scriptVersion = "", localPaused = false, localBusy = false, localWaiting = "", expectedSlot = "" } = {}) {
+  async function hello({ account = "", tab = "", path = "", scriptVersion = "", localPaused = false, localBusy = false, localWaiting = "", expectedSlot = "", projectId = "", projectName = "", projectApproved, projectBlockReason = "" } = {}) {
     const slots = await loadSlots(true);
     const slot = slotByAccount(slots, account);
     if (!slot) {
@@ -653,20 +664,73 @@ export function createService({
     if (memory.slotMismatches instanceof Map) {
       for (const key of memory.slotMismatches.keys()) if (key.startsWith(`${tab}:`)) memory.slotMismatches.delete(key);
     }
-    const clientChanged = rememberClient({ slotId: slot.slotId, tab, scriptVersion, localPaused, localBusy, localWaiting, source: "hello" });
+    const clientChanged = rememberClient({
+      slotId: slot.slotId, tab, scriptVersion, localPaused, localBusy, localWaiting,
+      projectId, projectName, projectApproved, projectBlockReason, source: "hello",
+    });
     if (clientChanged) {
+      const projectStatus = typeof projectApproved === "boolean"
+        ? projectApproved
+          ? `; профиль «${projectName || projectId || "проекта"}» допущен`
+          : `; профиль «${projectName || projectId || "проекта"}» заблокирован (${projectBlockReason || "причина не передана"})`
+        : "";
       await record({
         slot: slot.slotId, account, tab, kind: "state",
-        text: `вкладка ${tab || "?"} опознана как слот ${slot.slotId} (${slot.admin ? "административный" : "рабочий"})`,
-        data: { path, scriptVersion: String(scriptVersion || ""), localPaused: Boolean(localPaused) },
+        level: projectApproved === false ? "warn" : "info",
+        text: `вкладка ${tab || "?"} опознана как слот ${slot.slotId} (${slot.admin ? "административный" : "рабочий"})${projectStatus}`,
+        data: {
+          path, scriptVersion: String(scriptVersion || ""), localPaused: Boolean(localPaused),
+          ...(typeof projectApproved === "boolean" ? {
+            projectId: String(projectId || "").slice(0, 120),
+            projectName: String(projectName || "").slice(0, 120),
+            projectApproved,
+            projectBlockReason: String(projectBlockReason || "").slice(0, 240),
+          } : {}),
+        },
       });
     }
+    const approvalKey = String(projectId || "").toLowerCase();
+    let approval = approvalKey && memory.projectApprovalRequests instanceof Map
+      ? memory.projectApprovalRequests.get(approvalKey)
+      : null;
+    if (projectApproved === true && approval) {
+      memory.projectApprovalRequests.delete(approvalKey);
+      approval = null;
+    }
+    const projectApprovalRequest = approval && now() - approval.at <= 5 * 60_000
+      ? { id: approval.id, projectId: String(projectId), requestedAt: isoNow(now()) }
+      : null;
+    if (approval && !projectApprovalRequest) memory.projectApprovalRequests.delete(approvalKey);
     return {
       ok: true,
       slot: { slotId: slot.slotId, admin: slot.admin, container: slot.container, account: slot.account },
       protocol: PROTOCOL_VERSION,
       requiredScriptVersion: SUPPORTED_SCRIPT_VERSION,
+      ...(projectApprovalRequest ? { projectApprovalRequest } : {}),
     };
+  }
+
+  /** Ask the matching live admin tab to run the existing read-only project checks. */
+  async function requestProjectApproval({ projectId = "" } = {}) {
+    const id = String(projectId || "").trim().toLowerCase();
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id))
+      return { ok: false, why: "Не удалось проверить ID профиля из вкладки." };
+    const slots = await loadSlots();
+    const admins = new Set(slots.filter((item) => item.admin).map((item) => norm(item.slotId)));
+    const client = [...memory.clients.values()].find((item) => admins.has(norm(item.slotId)) &&
+      String(item.projectId || "").toLowerCase() === id && item.projectApproved === false &&
+      item.projectBlockReason === "unapproved" && now() - Number(item.seenAt || 0) <= CLIENT_ACTIVE_MS);
+    if (!client) return { ok: false, why: "Живая админ-вкладка с этим профилем не найдена или причина блокировки другая. Обновите пульт; профиль, очередь и ожидания не изменены." };
+    if (!versionAtLeast(client.scriptVersion, "1.33.2"))
+      return { ok: false, why: `Для проверки из пульта нужен ScriptCat 1.33.2 или новее; сейчас ${client.scriptVersion || "версия неизвестна"}. Обновите вкладку и повторите.` };
+    const requestId = `approval-${now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+    if (!(memory.projectApprovalRequests instanceof Map)) memory.projectApprovalRequests = new Map();
+    memory.projectApprovalRequests.set(id, { id: requestId, at: now() });
+    await record({ slot: client.slotId, tab: client.tab, kind: "ui", level: "warn",
+      text: `пульт запросил проверку и допуск профиля «${client.projectName || id}»`,
+      data: { projectId: id, requestId } });
+    return { ok: true, projectId: id, projectName: client.projectName || id, requestId,
+      why: "Запрос отправлен в открытую админ-вкладку. Она проверит сохранённые подключения и схему только чтением; автоцикл не включается." };
   }
 
   /**
@@ -676,12 +740,14 @@ export function createService({
    * Третье — не ошибка вкладки, а расхождение раскладки: административный
    * контейнер не берёт рабочие роли, и вкладка должна об этом сказать человеку.
    */
-  async function pull({ slotId = "", tab = "", roleHint = "", scriptVersion = "", localPaused = false } = {}) {
+  async function pull({ slotId = "", tab = "", roleHint = "", scriptVersion = "", localPaused = false,
+    projectId = "", projectName = "", projectApproved, projectBlockReason = "" } = {}) {
     const data = await loadAll();
     const slot = slotById(data.slots, slotId);
     if (!slot) return { ok: false, why: `слота ${slotId} нет в таблице` };
     if (!slot.enabled) return idle(`слот ${slotId} выключен`);
-    rememberClient({ slotId, tab, scriptVersion, localPaused, source: "pull" });
+    rememberClient({ slotId, tab, scriptVersion, localPaused, projectId, projectName, projectApproved,
+      projectBlockReason, source: "pull" });
 
     const liveRuns = data.runs.filter(isLiveRun);
 
@@ -703,6 +769,20 @@ export function createService({
         updateRequired: true,
         requiredScriptVersion: SUPPORTED_SCRIPT_VERSION,
       };
+    }
+
+    // Do not hand new work to a tab whose selected project is explicitly
+    // blocked or differs from Relay's active profile. Existing runs are
+    // returned above so they can finish; only new work is held.
+    const client = memory.clients instanceof Map ? memory.clients.get(`${slotId}:${tab}`) : null;
+    if (client?.projectApproved === false) {
+      const why = `профиль «${client.projectName || client.projectId || "проекта"}» не допущен: ${client.projectBlockReason || "нужна проверка настроек проекта"}`;
+      if (memory.coordinatorTurnRequest) {
+        await record({ slot: slot.slotId, account: slot.account, tab, kind: "state", level: "warn",
+          text: `запрос Координатора снят: ${why}`, data: { turnRequestId: memory.coordinatorTurnRequest.id } });
+        clearCoordinatorTurnRequest();
+      }
+      return idle(why);
     }
 
     // Лимит аккаунта проверяется после «своей» выдачи: если работа уже у меня,
@@ -1077,7 +1157,10 @@ export function createService({
     if (data && data.relayClientState === true) {
       rememberClient({
         slotId, tab, scriptVersion, localPaused,
-        localBusy: Boolean(data.localBusy), localWaiting: String(data.localWaiting || ""), source: "state",
+        localBusy: Boolean(data.localBusy), localWaiting: String(data.localWaiting || ""),
+        projectId: String(data.projectId || ""), projectName: String(data.projectName || ""),
+        projectApproved: typeof data.projectApproved === "boolean" ? data.projectApproved : undefined,
+        projectBlockReason: String(data.projectBlockReason || ""), source: "state",
       });
     }
     const row = await record({ slot: slotId, account, tab, kind, level, text, card, runId, durationMs, data });
@@ -1093,6 +1176,19 @@ export function createService({
       const data = await loadAll();
       if (data.settings["cycle.mode"] === "manual" && origin === "auto") {
         return idle("режим ручной: автоцикл выключен");
+      }
+      // A blocked project must be visible and actionable in the control plane,
+      // not discovered only after the panel has created a coordinator request.
+      // Older clients omit this field and retain the previous behavior.
+      const adminIds = new Set(data.slots.filter((slot) => slot.admin).map((slot) => norm(slot.slotId)));
+      const blockedAdmin = [...(memory.clients instanceof Map ? memory.clients.values() : [])]
+        .find((client) => adminIds.has(norm(client.slotId)) && client.projectApproved === false &&
+          now() - Number(client.seenAt || 0) <= CLIENT_ACTIVE_MS);
+      if (blockedAdmin) {
+        const why = `профиль «${blockedAdmin.projectName || blockedAdmin.projectId || "проекта"}» не допущен: ${blockedAdmin.projectBlockReason || "нужна проверка настроек проекта"}`;
+        memory.lastStep = { at: isoNow(now()), count: 0, why, turnRequested: false, turnRequestId: "" };
+        if (origin !== "auto") await record({ kind: "tick", level: "warn", text: `шаг не запущен: ${why}` });
+        return { ok: false, planned: 0, requested: 0, why, plans: [], agentRequests: [], turnRequested: false };
       }
       // Ход завершён (D-025): приёмка приняла миссию — новых выдач нет.
       // Новый цикл открывает маркер Координатора (next не в done) либо
@@ -1681,7 +1777,7 @@ export function createService({
   return {
     handle, hello, pull, beat, report, event, step, pause, resume, setMode, agentReady,
     bootAutoRunner, stopAutoRunner,
-    enqueue, cancel, setup, notionTokenSet, notionNet, rolesToBook, measureBook, snapshot, incidentPackage, loadAll, record, memory, sheetTitles,
+    enqueue, cancel, setup, requestProjectApproval, notionTokenSet, notionNet, rolesToBook, measureBook, snapshot, incidentPackage, loadAll, record, memory, sheetTitles,
     // Только для тестов: эти функции не входят в протокол и не должны
     // вызываться из вкладки. Отдельным объектом, чтобы «наружу» случайно не
     // уехал лишний вход.

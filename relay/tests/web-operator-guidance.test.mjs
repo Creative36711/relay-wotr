@@ -36,6 +36,18 @@ test("unfinished heal + outstanding coordinator request gets clear safe guidance
   assert.match(result.detail, /Не нажимайте «Шаг» повторно/);
 });
 
+test("project permission block is shown before a coordinator request and disables futile Step retries", () => {
+  const result = helpers.operatorGuidance(snapshot({
+    scriptClients: [{ slotId: "admin", projectId: "wotr-1", projectName: "WOTR", projectApproved: false, projectBlockReason: "unapproved" }],
+    turnRequest: { id: "q-blocked", claimed: false },
+  }));
+  assert.equal(result.canStep, false);
+  assert.equal(result.title, "Проект заблокировал запуск");
+  assert.match(result.detail, /WOTR/);
+  assert.match(result.detail, /проверка допуска/);
+  assert.doesNotMatch(result.detail, /q-blocked/);
+});
+
 test("an existing turn request blocks duplicate manual Step even without a local hold", () => {
   const result = helpers.operatorGuidance(snapshot({ turnRequest: { id: "q-existing", claimed: false } }));
   assert.equal(result.canStep, false);
@@ -46,6 +58,21 @@ test("auto mode and manual Step remain available when there is no hold or outsta
   const result = helpers.operatorGuidance(snapshot());
   assert.equal(result.canStep, true);
   assert.match(result.title, /работает автоматически/);
+});
+
+test("support report includes project gate state without exposing connection secrets", () => {
+  const report = helpers.diagnosticReport(snapshot({
+    scriptClients: [{
+      slotId: "admin", projectId: "wotr-1", projectName: "WOTR",
+      projectApproved: false, projectBlockReason: "unapproved", secret: "ntn_sensitive-token",
+    }],
+  }));
+  const payload = JSON.parse(report.slice(report.indexOf("\n") + 1));
+  assert.equal(payload.clients[0].projectApproved, false);
+  assert.equal(payload.clients[0].projectName, "WOTR");
+  assert.equal(payload.clients[0].projectBlockReason, "unapproved");
+  assert.equal("secret" in payload.clients[0], false);
+  assert.doesNotMatch(report, /ntn_sensitive-token/);
 });
 
 test("support report captures coordinator blockers, pult network history and safe local hold details", () => {
@@ -95,4 +122,11 @@ test("operator status and copy-diagnostics control are visible and announced acc
   assert.match(html, /id="operator-card"/);
   assert.match(html, /id="btn-copy-diagnostics"/);
   assert.match(html, /id="action-feedback"[^>]*role="status"[^>]*aria-live="polite"/);
+});
+
+test("Relay pult can request project validation without starting the auto-cycle", () => {
+  assert.match(html, /id="btn-approve-project"/);
+  assert.match(app, /client\.projectBlockReason === "unapproved"/);
+  assert.match(app, /\/api\/project-approval/);
+  assert.match(app, /Автоцикл не включается/);
 });

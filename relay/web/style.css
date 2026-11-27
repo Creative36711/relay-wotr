@@ -52,9 +52,10 @@ button {
 button:hover { border-color: var(--accent); }
 button.primary { background: var(--accent); border-color: var(--accent); color: #0b1017; font-weight: 600; }
 button.ghost { background: transparent; }
+button.danger { border-color: var(--bad); color: #ffadad; }
 button:disabled { opacity: .45; cursor: default; }
 
-input, select {
+input, select, textarea {
   padding: 6px 8px;
   border-radius: 6px;
   border: 1px solid var(--line);
@@ -63,6 +64,22 @@ input, select {
   font-size: 13px;
 }
 input { min-width: 160px; }
+textarea {
+  display: block;
+  width: 100%;
+  min-height: 180px;
+  margin: 5px 0 10px;
+  padding: 9px;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  background: #101216;
+  color: var(--text);
+  font: 12px/1.45 var(--mono);
+  resize: vertical;
+}
+#projects-panel label { display: block; margin: 8px 0 4px; color: #c5cad3; font-size: 12px; }
+.project-secrets { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 8px; margin: 10px 0; }
+.project-secrets input { display: block; width: 100%; margin-top: 4px; }
 
 .muted { color: var(--muted); }
 .hidden { display: none !important; }

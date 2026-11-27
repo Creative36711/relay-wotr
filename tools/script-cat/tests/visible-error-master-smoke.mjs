@@ -215,12 +215,12 @@ const pauseFn = new Function(
 
 // An error is checked before setup and any subsequent dispatch processing.
 const tickStart = source.indexOf('  async function tick(fromToggle = false) {');
-const tickEnd = source.indexOf('      await setup(false);', tickStart);
+const tickEnd = source.indexOf('      try {\n        if (await syncMissionState()) return;', tickStart);
 assert.ok(tickStart > 0 && tickEnd > tickStart, 'tick entry is present');
 const tickBeforeSetup = source.slice(tickStart, tickEnd);
 const captchaCheck = tickBeforeSetup.indexOf('if (captchaDialog()) {');
 const errorCheck = tickBeforeSetup.indexOf('if (monitorVisibleErrors()) return;');
-assert.ok(captchaCheck >= 0 && errorCheck > captchaCheck, 'visible errors are checked after captcha, before setup');
+assert.ok(captchaCheck >= 0 && errorCheck > captchaCheck, 'visible errors are checked after captcha, before mission/dispatch processing');
 assert.ok(errorCheck < tickBeforeSetup.length, 'visible error returns before normal dispatch work');
 const pauseSource = source.slice(pauseStart, pauseEnd);
 assert.doesNotMatch(pauseSource, /patch\(|releaseUndelivered\(|dropHandoff\(/, 'pause helper does not release or rewrite the current dispatch');

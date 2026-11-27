@@ -25,6 +25,7 @@ import { createService } from "./service.mjs";
 import { readiness } from "./setup.mjs";
 import { searchDatabases, createNotionFetch } from "./notion-db.mjs";
 import { createDemoStore } from "./demo-store.mjs";
+import { createProjectConfigStore } from "./project-config.mjs";
 
 const here = fileURLToPath(new URL(".", import.meta.url));
 const WEB_ROOT = join(here, "..", "web");
@@ -87,6 +88,30 @@ const allowOrigin = (response) => {
   response.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
 };
 
+function privateProjectRequest(request, { allowArena = false } = {}) {
+  const origin = String(request.headers.origin || "");
+  const host = String(request.headers.host || "");
+  const remote = String(request.socket.remoteAddress || "");
+  const loopback = remote === "127.0.0.1" || remote === "::1" || remote === "::ffff:127.0.0.1";
+  if (!origin) return loopback;
+  try {
+    const parsed = new URL(origin);
+    const localUi = host && parsed.host === host && ["http:", "https:"].includes(parsed.protocol);
+    const arena = allowArena && ["https://arena.ai", "https://www.arena.ai"].includes(parsed.origin);
+    return Boolean(localUi || arena);
+  } catch { return false; }
+}
+
+function privateCorsHeaders(request) {
+  const origin = String(request.headers.origin || "");
+  return origin ? {
+    "Access-Control-Allow-Origin": origin,
+    "Access-Control-Allow-Headers": "content-type, authorization",
+    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+    Vary: "Origin",
+  } : { "Access-Control-Allow-Origin": "null" };
+}
+
 export function createTransportServer({
   spreadsheetId,
   token = "",
@@ -111,6 +136,8 @@ export function createTransportServer({
   onBridgeChange = null,
   // Куда положить принятый из пульта токен Notion (пусто — только память).
   saveNotionToken = null,
+  projectConfigFile = "",
+  projectConfigStore: suppliedProjectConfigStore = null,
 } = {}) {
   // Демо-режим — не игрушка, а первое знакомство: пульт показывается до того,
   // как заведена книга. Служба при этом та же, меняется только хранилище.
@@ -199,6 +226,7 @@ export function createTransportServer({
   // Токен передаётся явно, а не читается службой из окружения: иначе тесты и
   // вложенные вызовы незаметно ходили бы в настоящий Notion.
   const service = createService({ store, now, log, notionSearch, notionToken, notionDataFetch, saveNotionToken });
+  const projectConfigStore = suppliedProjectConfigStore || createProjectConfigStore({ file: projectConfigFile });
 
   const server = createServer(async (request, response) => {
     allowOrigin(response);
@@ -371,7 +399,62 @@ export function createTransportServer({
       // Протокол вкладки. Отдельный путь, чтобы вкладке не нужно было знать
       // про пульт, а польту — про вкладку.
       if (url.pathname === "/api/agent" && request.method === "POST") {
+        if (!privateProjectRequest(request, { allowArena: true }))
+          return send(response, 403, { ok: false, why: "Протокол ScriptCat разрешён только локальному Relay и вкладкам Arena." });
         const body = await readBody(request);
+        if (body.action === "pull" && body.projectId) {
+          const activeProjectId = await projectConfigStore.activeProjectId();
+          if (activeProjectId && String(body.projectId).toLowerCase() !== String(activeProjectId).toLowerCase()) {
+            body.projectApproved = false;
+            body.projectBlockReason = "inactive-project";
+          }
+        }
+        // First-run migration: seed only the non-secret project metadata from
+        // the already-running client. Never overwrite an owner-edited Relay
+        // profile and never copy GM secrets or runtime queues.
+        if (body.action === "hello" && body.projectProfile && body.projectProfile.id === body.projectId) {
+          try {
+            let existing = await projectConfigStore.get(body.projectId);
+            if (!existing) existing = await projectConfigStore.save({ profile: body.projectProfile, secrets: {} });
+          } catch (error) {
+            log(`профиль проекта не импортирован из Arena-вкладки: ${error.message}`);
+          }
+        }
+        let projectSettings = null;
+        let projectSelection = null;
+        let projectSettingsUnavailable = null;
+        if (body.action === "hello" && body.projectId) {
+          await projectConfigStore.ensureActiveProject(body.projectId);
+          const activeProjectId = await projectConfigStore.activeProjectId();
+          const entry = activeProjectId ? await projectConfigStore.get(activeProjectId) : null;
+          const ready = Boolean(entry?.secrets?.notion && entry?.secrets?.gwUrl && entry?.secrets?.gwKey);
+          if (entry && String(body.projectId).toLowerCase() !== String(activeProjectId).toLowerCase() &&
+              entry.secrets?.notion && entry.secrets?.gwUrl && entry.secrets?.gwKey) {
+            // Relay's selected profile is authoritative. Hold new work on all
+            // tabs until each is idle and has switched to the same profile.
+            body.projectApproved = false;
+            body.projectBlockReason = "inactive-project";
+            projectSelection = {
+              ok: true, project: entry.profile, credentials: entry.secrets,
+              secretsMigrated: true, updatedAt: entry.updatedAt,
+            };
+          } else if (entry && String(body.projectId).toLowerCase() === String(activeProjectId).toLowerCase()) {
+            if (entry.secrets?.notion && entry.secrets?.gwUrl && entry.secrets?.gwKey) {
+              projectSettings = {
+                ok: true, project: entry.profile, credentials: entry.secrets,
+                secretsMigrated: true, updatedAt: entry.updatedAt,
+              };
+              if (String(body.projectConfigUpdatedAt || "") !== String(entry.updatedAt || "")) {
+                body.projectApproved = false;
+                body.projectBlockReason = "unapproved";
+              }
+            } else {
+              body.projectApproved = false;
+              body.projectBlockReason = "credentials-missing";
+              projectSettingsUnavailable = { projectId: entry.profile.id, updatedAt: entry.updatedAt || "" };
+            }
+          }
+        }
         const result = await service.handle(body);
         if (body.action === "pull" && result?.work) {
           await service.record({
@@ -379,7 +462,12 @@ export function createTransportServer({
             text: `вкладка забрала выдачу ${result.work.runId}`, runId: result.work.runId, card: result.work.card,
           }).catch(() => {});
         }
-        return send(response, result.ok === false && result.why?.includes("нет в таблице") ? 404 : 200, result);
+        const responseResult = !body.localBusy
+          ? { ...result, ...(projectSettings ? { projectSettings } : {}), ...(projectSelection ? { projectSelection } : {}),
+              ...(projectSettingsUnavailable ? { projectSettingsUnavailable } : {}) }
+          : result;
+        return send(response, result.ok === false && result.why?.includes("нет в таблице") ? 404 : 200,
+          responseResult, projectSettings || projectSelection || projectSettingsUnavailable ? privateCorsHeaders(request) : {});
       }
 
       if (url.pathname === "/api/snapshot" && request.method === "GET") {
@@ -400,6 +488,63 @@ export function createTransportServer({
       if (url.pathname === "/api/control" && request.method === "POST") {
         const body = await readBody(request);
         return send(response, 200, await service.handle(body));
+      }
+
+      if (url.pathname === "/api/projects" && request.method === "GET") {
+        if (!privateProjectRequest(request))
+          return send(response, 403, { ok: false, why: "Список проектов доступен только локальному пульту." });
+        return send(response, 200, {
+          ok: true, profiles: await projectConfigStore.list(),
+          activeProjectId: await projectConfigStore.activeProjectId(),
+        });
+      }
+
+      if (url.pathname === "/api/projects" && request.method === "POST") {
+        if (!privateProjectRequest(request))
+          return send(response, 403, { ok: false, why: "Настройки проектов можно менять только из локального пульта." });
+        const body = await readBody(request);
+        try {
+          const profile = await projectConfigStore.save({
+            profile: body.profile, secrets: body.secrets, clearSecrets: body.clearSecrets === true,
+          });
+          return send(response, 200, { ok: true, profile }, privateCorsHeaders(request));
+        } catch (error) {
+          return send(response, 400, { ok: false, why: error.message }, privateCorsHeaders(request));
+        }
+      }
+
+      if (url.pathname === "/api/projects/active" && request.method === "POST") {
+        if (!privateProjectRequest(request))
+          return send(response, 403, { ok: false, why: "Переключить активный проект можно только из локального пульта." });
+        const body = await readBody(request);
+        try {
+          const profile = await projectConfigStore.setActiveProject(body.projectId);
+          return send(response, 200, {
+            ok: true, activeProjectId: profile.id,
+            why: `Активен профиль «${profile.name}». Открытые вкладки переключатся после завершения локальной работы; автоцикл не включается.`,
+          }, privateCorsHeaders(request));
+        } catch (error) {
+          return send(response, 400, { ok: false, why: error.message }, privateCorsHeaders(request));
+        }
+      }
+
+      if (url.pathname === "/api/project-approval" && request.method === "POST") {
+        // This grants project work after local credentials are validated in an
+        // Arena tab. Do not expose that capability to arbitrary websites via
+        // the server's otherwise permissive CORS policy.
+        const origin = String(request.headers.origin || "");
+        const host = String(request.headers.host || "");
+        let sameOrigin = false;
+        try {
+          const parsed = new URL(origin);
+          sameOrigin = Boolean(origin && host && parsed.host === host && ["http:", "https:"].includes(parsed.protocol));
+        } catch { /* rejected below */ }
+        const remote = String(request.socket.remoteAddress || "");
+        const loopback = remote === "127.0.0.1" || remote === "::1" || remote === "::ffff:127.0.0.1";
+        if (origin ? !sameOrigin : !loopback)
+          return send(response, 403, { ok: false, why: "Запрос проверки допуска разрешён только с пульта на этом же компьютере." });
+        const body = await readBody(request);
+        return send(response, 200, await service.requestProjectApproval({ projectId: body.projectId }));
       }
 
       // Пульт: статика. Отдаётся и при GET / — человек открывает адрес и
