@@ -788,7 +788,7 @@
         const list = unresolved.map((row) => `${taskTitle(row) || "без названия"} (${row.id})`).join("; ");
         log(`В «${state}» ${unresolved.length} карточек без Mission ID — они не в очереди миссии ` +
           `«${firstLine(wanted, 60)}», и я их не трогаю: ${list}. ` +
-          "Привяжите их через «Управление проектами → Проверить Mission ID карточек».", false,
+          "Проверьте их вручную в Notion: редактор миграции в ScriptCat удалён.", false,
           { tone: "warn", ntfy: "quiet", title: "Relay: карточка без привязки" });
       }
     }

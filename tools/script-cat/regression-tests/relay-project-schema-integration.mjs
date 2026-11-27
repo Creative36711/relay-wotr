@@ -2,8 +2,8 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 const src = readFileSync(new URL('../relay.user.js', import.meta.url), 'utf8');
-const start = src.indexOf('  async function validateProjectSchema(settings) {');
-const end = src.indexOf('  function projectsDialog() {', start);
+const start = src.indexOf('  async function validateProjectSchema(settings, { readOnly = false } = {}) {');
+const end = src.indexOf('  let relayApprovalBusy = false;', start);
 assert(start > 0 && end > start);
 const validator = src.slice(start, end);
 // Независимая минимальная фикстура: вручную сверена со схемой Notion и
@@ -119,6 +119,17 @@ console.log('OK: проверка схемы, select, ролей, домена, 
   assert.match(patches[0].url, /roles$/, 'правится база «Роли»');
   assert.deepEqual(patches[0].body.properties['Функция'].select.options.map((o) => o.name).sort(),
     ['Auditor','Coordinator','Executor','Maintainer','Reviewer'], 'существующие варианты сохранены, добавлен один');
+
+  // Запрос из Relay-пульта обязан быть read-only: если вариант надо добавить,
+  // допуск не выдаётся и никакой PATCH не уходит.
+  currentSchemas = structuredClone(schemas);
+  currentSchemas.roles.properties['Функция'].select.options =
+    currentSchemas.roles.properties['Функция'].select.options.filter((o) => o.name !== 'Maintainer');
+  patches.length = 0;
+  const readOnly = await run(settings, {readOnly:true});
+  assert.equal(readOnly.ok, false);
+  assert.match(readOnly.text, /проверка из пульта ничего не меняет/i);
+  assert.equal(patches.length, 0, 'read-only не исправляет схему');
 
   // Строки нет — варианта не появляется. Maintainer при этом и не требуется:
   // закулисной роли может не быть вовсе, и её вариант «на всякий случай» ломал

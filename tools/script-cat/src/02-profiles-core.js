@@ -169,8 +169,78 @@
   }
   const ACTIVE_PROFILE = Object.freeze(normalizeProfile(resolveProfile(selectedProfileId())));
   const projectStorageKey = (id, key) => `project:${id}:${String(key)}`;
-  GM_getValue = (key, fallback) => rawGet(projectStorageKey(ACTIVE_PROFILE.id, key), fallback);
+  let RELAY_PROJECT_CREDENTIALS = null;
+  const PROJECT_SECRET_FIELDS = {
+    "cfn-notion-token": "notion", "cfn-gw-url": "gwUrl", "cfn-gw-key": "gwKey",
+    "cfn-github-token": "github", "cfn-ntfy-token": "ntfyToken",
+  };
+  GM_getValue = (key, fallback) => {
+    if (String(key) === "cfn-ntfy-topic" && Object.hasOwn(ACTIVE_PROFILE, "ntfyTopic"))
+      return String(ACTIVE_PROFILE.ntfyTopic || "");
+    const field = PROJECT_SECRET_FIELDS[String(key)];
+    if (field && RELAY_PROJECT_CREDENTIALS?.projectId === ACTIVE_PROFILE.id && RELAY_PROJECT_CREDENTIALS.secretsMigrated)
+      return RELAY_PROJECT_CREDENTIALS.credentials?.[field] || fallback;
+    return rawGet(projectStorageKey(ACTIVE_PROFILE.id, key), fallback);
+  };
   GM_setValue = (key, value) => rawSet(projectStorageKey(ACTIVE_PROFILE.id, key), value);
+
+  /** Adopt owner-saved Relay settings only when the local project has no live work. */
+  function applyRelayProjectSettings(data) {
+    if (!data || data.ok !== true || data.project?.id !== ACTIVE_PROFILE.id || data.secretsMigrated !== true)
+      return { applied: false, profileChanged: false, settingsChanged: false };
+    const profile = normalizeProfile(data.project);
+    if (!validProfile(profile)) return { applied: false, profileChanged: false, settingsChanged: false };
+    const registry = profileRegistry();
+    const index = registry.findIndex((item) => item?.id === profile.id);
+    const previous = index >= 0 ? registry[index] : null;
+    const profileChanged = JSON.stringify(normalizeProfile(previous || {})) !== JSON.stringify(profile);
+    if (profileChanged) {
+      const next = registry.slice();
+      if (index >= 0) next[index] = profile;
+      else next.push(profile);
+      rawSet(PROFILE_REGISTRY_KEY, next);
+    }
+    const markerKey = projectStorageKey(profile.id, "cfn-relay-settings-updated-at");
+    const previousUpdatedAt = String(rawGet(markerKey, "") || "");
+    const updatedAt = String(data.updatedAt || "");
+    const settingsChanged = Boolean(updatedAt && previousUpdatedAt !== updatedAt);
+    RELAY_PROJECT_CREDENTIALS = {
+      projectId: profile.id, secretsMigrated: true,
+      credentials: data.credentials && typeof data.credentials === "object" ? { ...data.credentials } : {},
+    };
+    // Remove legacy secret copies only after the Relay file has been read and
+    // validated. Queues, expectations, journals and the profile UUID stay local.
+    for (const key of Object.keys(PROJECT_SECRET_FIELDS)) rawSet(projectStorageKey(profile.id, key), "");
+    if (updatedAt) rawSet(markerKey, updatedAt);
+    if (profileChanged || settingsChanged) rawSet(projectStorageKey(profile.id, "cfn-project-approved"), false);
+    return { applied: true, profileChanged, settingsChanged };
+  }
+  function applyRelayProjectSettingsUnavailable(data) {
+    if (!data || data.projectId !== ACTIVE_PROFILE.id) return false;
+    RELAY_PROJECT_CREDENTIALS = null;
+    for (const key of Object.keys(PROJECT_SECRET_FIELDS)) rawSet(projectStorageKey(ACTIVE_PROFILE.id, key), "");
+    const markerKey = projectStorageKey(ACTIVE_PROFILE.id, "cfn-relay-settings-updated-at");
+    if (data.updatedAt) rawSet(markerKey, String(data.updatedAt));
+    rawSet(projectStorageKey(ACTIVE_PROFILE.id, "cfn-project-approved"), false);
+    return true;
+  }
+
+  /** Accept a pult-selected profile without touching any project's local run state. */
+  function applyRelayProjectSelection(data) {
+    if (!data || data.ok !== true || !data.project || !data.secretsMigrated) return false;
+    const profile = normalizeProfile(data.project);
+    if (!validProfile(profile)) return false;
+    const registry = profileRegistry();
+    const index = registry.findIndex((item) => item?.id === profile.id);
+    const next = registry.slice();
+    if (index >= 0) next[index] = profile;
+    else next.push(profile);
+    rawSet(PROFILE_REGISTRY_KEY, next);
+    try { sessionStorage.setItem(PROFILE_SESSION_KEY, profile.id); }
+    catch { return false; }
+    return true;
+  }
+
   const mainEntry = profileMainEntry(ACTIVE_PROFILE);
   Object.assign(C, {
     roles: ACTIVE_PROFILE.roles, missions: ACTIVE_PROFILE.missions, requests: ACTIVE_PROFILE.requests,
@@ -184,6 +254,15 @@
   Object.freeze(C);
   const projectApproved = () => !ACTIVE_PROFILE.invalid && !ACTIVE_PROFILE.legacy &&
     GM_getValue("cfn-project-approved", false) === true;
+  const projectProfileSnapshot = () => {
+    if (ACTIVE_PROFILE.invalid || ACTIVE_PROFILE.legacy) return null;
+    const keys = ["id", "name", "roles", "missions", "requests", "questions", "pageUrl", "questionsUrl", "repo", "branch", "driveFolder", "repos", "roleRepos",
+      "agentProvisionEnabled", "agentProvisionMode", "agentProvisionRepoAllowlist", "agentBootstrapPrompt", "agentProvisionMaxJobs", "agentProvisionDailyMax",
+      "agentBootstrapWaitMs", "agentUrlWaitMs", "agentRenameAttempts", "agentProvisionAutoActivate", "agentProvisionArchiveOld"];
+    const snapshot = Object.fromEntries(keys.filter((key) => ACTIVE_PROFILE[key] !== undefined).map((key) => [key, ACTIVE_PROFILE[key]]));
+    snapshot.ntfyTopic = String(GM_getValue(K.ntfyTopic, "") || "");
+    return snapshot;
+  };
 
   /**
    * Почему вкладка не может работать — тремя словами, а не одним. Прежняя
@@ -291,7 +370,6 @@
     step: "cfn-step",
     // D-006: будильник вкладок стоит рядом с «Шаг» и «Включить».
     wake: "cfn-wake",
-    setup: "cfn-setup",
     stop: "cfn-stop",
     clear: "cfn-clear",
     reset: "cfn-reset",

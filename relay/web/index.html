@@ -32,6 +32,7 @@
     </div>
   </div>
   <div class="row wrap operator-tools">
+    <button id="btn-approve-project" class="primary hidden" type="button">Проверить и разрешить проект</button>
     <button id="btn-copy-diagnostics" class="ghost">Скопировать диагностику</button>
     <span id="diagnostic-note" class="muted" aria-live="polite">Скопирует состояние и последние события. Перед отправкой просмотрите текст; рабочие детали могут быть личными.</span>
   </div>
@@ -44,6 +45,34 @@
 </details>
 
 <main>
+  <section class="panel" id="projects-panel">
+    <h2>Профили и подключения</h2>
+    <p class="muted">Настройки принадлежат пульту Relay и хранятся в локальном файле с правами только владельца. ScriptCat получает их как закрытый исполнитель. Секреты не показываются после сохранения; пустое поле оставляет прежнее значение.</p>
+    <div class="row wrap">
+      <select id="project-select" aria-label="Проект"><option value="">загрузка профилей…</option></select>
+      <button id="btn-project-new" class="ghost" type="button">Новый профиль</button>
+      <button id="btn-project-import" class="ghost" type="button">Импорт JSON профиля</button>
+      <button id="btn-project-activate" class="ghost hidden" type="button">Сделать активным</button>
+      <input id="project-file" type="file" accept="application/json,.json" hidden>
+      <span id="project-note" class="muted" role="status" aria-live="polite"></span>
+    </div>
+    <label for="project-json">Конфигурация профиля (JSON; экспорт ScriptCat `scriptcat-project-config` тоже принимается)</label>
+    <textarea id="project-json" rows="12" spellcheck="false" autocomplete="off" placeholder="Импортируйте JSON профиля или создайте новый. Секреты сюда не вставляйте."></textarea>
+    <label>ntfy topic (не секрет; пусто — уведомления выключены) <input id="project-ntfy-topic" type="text" maxlength="64" autocomplete="off" placeholder="arena-project-topic"></label>
+    <div class="grid project-secrets">
+      <label>Notion token <input id="project-notion" type="password" autocomplete="new-password" placeholder="оставьте пустым, чтобы сохранить текущий"></label>
+      <label>Drive Gateway URL <input id="project-gw-url" type="url" autocomplete="off" placeholder="https://script.google.com/macros/s/…/exec"></label>
+      <label>Drive Gateway key <input id="project-gw-key" type="password" autocomplete="new-password" placeholder="оставьте пустым, чтобы сохранить текущий"></label>
+      <label>GitHub token (необязательно) <input id="project-github" type="password" autocomplete="new-password" placeholder="оставьте пустым, чтобы сохранить текущий"></label>
+      <label>ntfy token (необязательно) <input id="project-ntfy" type="password" autocomplete="new-password" placeholder="оставьте пустым, чтобы сохранить текущий"></label>
+    </div>
+    <div class="row wrap">
+      <button id="btn-project-save" class="primary" type="button">Сохранить профиль и подключения</button>
+      <button id="btn-project-clear-secrets" class="danger" type="button">Удалить сохранённые секреты…</button>
+      <span class="muted">Изменение профиля приостановит его до повторной проверки. Очередь и ожидания не удаляются.</span>
+    </div>
+  </section>
+
   <section class="panel" id="setup-panel">
     <h2>Настройка</h2>
     <p class="muted" id="setup-hint">Ключи и ID подставляются сами: мастер находит базы в Notion и папку логов в Drive.

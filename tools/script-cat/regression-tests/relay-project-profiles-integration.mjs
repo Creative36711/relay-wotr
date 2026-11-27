@@ -126,7 +126,7 @@ approved = true; await wrapped.refreshQuestions(); await wrapped.refreshDecision
 assert.match(bootSource, /GM_getValue\(K\.step, false\) && !projectHeld\(\)/, 'сохранённый автоматический шаг не снимает hold');
 
 // Из ссылок берётся ID базы из пути, не ID view после '?'; чужой хост не принимается.
-const lookupSource = cut('  /** UUID базы из HTTPS-ссылки Notion;', '  function projectsDialog() {');
+const lookupSource = cut('  /** UUID базы из HTTPS-ссылки Notion;', '  /** Read-only план миграции:');
 const lookupId = new Function('URL', `${lookupSource}\nreturn notionDatabaseId;`)(URL);
 assert.equal(lookupId(`https://www.notion.so/My-Database-${A.id.replace(/-/g,'')}?v=${B.id}`), A.id);
 assert.equal(lookupId(`https://app.notion.com/p/${A.id.replace(/-/g,'')}`), A.id);

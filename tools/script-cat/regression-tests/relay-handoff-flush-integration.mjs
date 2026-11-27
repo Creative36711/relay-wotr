@@ -422,7 +422,7 @@ for (const [why, over] of [
   const pilot = readFileSync(new URL('../src/pilot-transport.js', import.meta.url), 'utf8');
   assert.match(pilot, /flushBeforeNavigate\(\[K\.pilotWait \+ id, K\.pilots, K\.log\]\)\.then\(\(\) => location\.assign\(pilot\.url\)\);/,
     'пилот уходит после подтверждения');
-  assert.equal((src.match(/location\.reload\(\)/g) || []).length, 4, 'число перезагрузок не изменилось');
+  assert.equal((src.match(/location\.reload\(\)/g) || []).length, 4, 'bounded recovery and existing profile-refresh paths remain explicit');
   assert.match(src, /@grant\s+GM\.setValue/, 'менеджеру заявлен promise-вариант записи');
 }
 {

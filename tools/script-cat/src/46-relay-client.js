@@ -39,6 +39,7 @@
     lastHoldReportAt: 0,
     lastMarker: { hash: "", at: 0 },
     warned: { hello: "", pull: "", version: "" },
+    projectApprovalRequests: new Set(),
   };
 
   if (typeof window !== "undefined") {
@@ -191,8 +192,58 @@
     const localWaiting = waitingState
       ? `expect:${String(waitingState.kind || "ход")}`
       : pendingState ? "pending" : "";
-    const res = await relayPost({ action: "hello", account: email, expectedSlot, localBusy, localWaiting, path: typeof location !== "undefined" ? location.pathname : "" });
+    const res = await relayPost({
+      action: "hello", account: email, expectedSlot, localBusy, localWaiting,
+      projectId: typeof ACTIVE_PROFILE !== "undefined" ? ACTIVE_PROFILE.id : "",
+      projectName: typeof ACTIVE_PROFILE !== "undefined" ? ACTIVE_PROFILE.name : "",
+      projectProfile: typeof projectProfileSnapshot === "function" ? projectProfileSnapshot() : null,
+      projectConfigUpdatedAt: String(GM_getValue("cfn-relay-settings-updated-at", "") || ""),
+      projectApproved: typeof projectApproved === "function" ? projectApproved() : undefined,
+      projectBlockReason: typeof projectBlockReason === "function" ? projectBlockReason() : "",
+      path: typeof location !== "undefined" ? location.pathname : "",
+    });
     relayClient.helloAt = nowMs;
+    if (res?.projectSelection && !localBusy && !busy && !(Number(projectAsyncWork) > 0) &&
+        typeof applyRelayProjectSelection === "function") {
+      if (applyRelayProjectSelection(res.projectSelection)) {
+        log("Пульт выбрал другой проект. Переключаю только эту вкладку без изменения очереди и ожиданий.");
+        location.reload();
+        return "";
+      }
+      log("Переключение профиля из пульта не выполнено. Проверьте доступность профиля и перезагрузите вкладку вручную.", true);
+    }
+    if (res?.projectSettingsUnavailable && !localBusy && !busy && !(Number(projectAsyncWork) > 0) &&
+        typeof applyRelayProjectSettingsUnavailable === "function") {
+      if (applyRelayProjectSettingsUnavailable(res.projectSettingsUnavailable))
+        log("Подключения удалены в пульте. Допуск снят; локальные очереди и ожидания сохранены.", true);
+    }
+    let settingsRefresh = { applied: false, profileChanged: false, settingsChanged: false };
+    if (res?.projectSettings && !localBusy && !busy && !(Number(projectAsyncWork) > 0) &&
+        typeof applyRelayProjectSettings === "function") {
+      settingsRefresh = applyRelayProjectSettings(res.projectSettings);
+      if (settingsRefresh.profileChanged) {
+        log("Настройки профиля из пульта приняты. Перезагружаю вкладку без изменения очереди и ожиданий.");
+        location.reload();
+        return "";
+      }
+      if (settingsRefresh.settingsChanged) {
+        log("Подключения обновлены из пульта. Допуск сброшен для повторной проверки; очередь и ожидания сохранены.", true);
+      }
+    }
+    const approvalRequest = res?.projectApprovalRequest;
+    if (approvalRequest && approvalRequest.projectId === String(ACTIVE_PROFILE?.id || "") &&
+        approvalRequest.id && !relayClient.projectApprovalRequests.has(approvalRequest.id)) {
+      relayClient.projectApprovalRequests.add(approvalRequest.id);
+      while (relayClient.projectApprovalRequests.size > 20)
+        relayClient.projectApprovalRequests.delete(relayClient.projectApprovalRequests.values().next().value);
+      if (typeof approveProjectFromRelay === "function") {
+        void Promise.resolve(approveProjectFromRelay(approvalRequest)).catch((error) => {
+          log(`Проверка проекта по запросу пульта не завершена: ${String(error?.message || error).slice(0, 180)}.`, true);
+        });
+      } else {
+        log("Получен запрос проверки проекта из пульта, но в этой версии нет проверки профиля. Обновите ScriptCat.", true);
+      }
+    }
     if (res && res.ok && res.slot) {
       relayClient.lastError = "";
       relayClient.lastPresenceAt = nowMs;
@@ -408,7 +459,11 @@
       if (typeof consumeProvision === "function") await consumeProvision();
       return;
     }
-    const res = await relayPost({ action: "pull", slotId });
+    const res = await relayPost({
+      action: "pull", slotId, projectId: ACTIVE_PROFILE?.id || "", projectName: ACTIVE_PROFILE?.name || "",
+      projectApproved: typeof projectApproved === "function" ? projectApproved() : false,
+      projectBlockReason: typeof projectBlockReason === "function" ? projectBlockReason() : "",
+    });
     if (res && (res.cycleMode === "auto" || res.cycleMode === "manual") && typeof autoSet === "function") {
       const wasAuto = typeof autoOn === "function" && autoOn();
       const shouldAuto = res.cycleMode === "auto";

@@ -671,7 +671,7 @@
     if (log) log.style.display = collapsed ? "none" : "";
     const relayMode = typeof relayControlActive === "function" && relayControlActive();
     const relayConfiguredNow = typeof relayConfigured === "function" && relayConfigured();
-    for (const id of [ui.step, ui.wake, ui.questions, ui.debug, ui.reset, ui.clear, ui.setup]) {
+    for (const id of [ui.step, ui.wake, ui.questions, ui.debug, ui.reset, ui.clear]) {
       const el = document.getElementById(id);
       if (!el) continue;
       const superseded = relayMode && [ui.step, ui.wake].includes(id);
@@ -728,7 +728,6 @@
         <button id="${ui.debug}" title="Отладка в консоли браузера (F12)" style="${btnStyle()}">🐞</button>
         <button id="${ui.reset}" title="Снять ход: очередь, ожидание и карточки в Running без хода (журнал и настройки останутся)" style="${btnStyle()}">↺</button>
         <button id="${ui.clear}" title="Очистить журнал; очередь снимается кнопкой ↺" style="${btnStyle()}">🧹</button>
-        <button id="${ui.setup}" title="Notion, Google Drive, GitHub и уведомления" style="${btnStyle()}">⚙ Подключения</button>
         <button id="${ui.stop}" title="Остановить цикл и снять паузу" style="${btnStyle()}">✕</button>
         <button id="${ui.collapse}" title="Свернуть панель" style="${btnStyle()}">▾</button>
       </div>
@@ -737,7 +736,6 @@
 
     document.getElementById(ui.collapse).onclick = () => togglePanel();
 
-    document.getElementById(ui.setup).onclick = () => setup(true);
     document.getElementById(ui.reset).onclick = () => {
       // Сброс теперь ходит в Notion: без перехвата отказ сети остался бы
       // необработанным обещанием и молчаливой кнопкой.
@@ -772,7 +770,7 @@
     document.getElementById(ui.step).onclick = () => {
       if (typeof projectApproved === "function" && !projectApproved()) {
         log(typeof projectBlockedText === "function" ? projectBlockedText()
-          : "Проект ещё не разрешён к работе: проверьте его в управлении проектами.", true);
+          : "Проект ещё не разрешён к работе: проверьте профиль и подключения в пульте Relay.", true);
         if (typeof noteFeedbackPipelineHeld === "function") noteFeedbackPipelineHeld();
         return;
       }
@@ -795,7 +793,7 @@
       // Мастера, и молчать об этом нельзя — иначе кнопка «не работает».
       if (typeof projectApproved === "function" && !projectApproved()) {
         log(typeof projectBlockedText === "function" ? projectBlockedText()
-          : "Проект ещё не разрешён к работе: проверьте его в управлении проектами.", true);
+          : "Проект ещё не разрешён к работе: проверьте профиль и подключения в пульте Relay.", true);
         return;
       }
       if (typeof projectHeld === "function" && projectHeld()) {
@@ -830,13 +828,12 @@
     watchQuestions();
     // ADR без записи всё ещё обнаруживается в фоне и попадает в ту же базу.
     watchDecisions();
-    maybeGhDialog();
   }
 
   async function toggleAuto() {
     if (typeof projectApproved === "function" && !projectApproved()) {
       log(typeof projectBlockedText === "function" ? projectBlockedText()
-        : "Проект не разрешён к работе: откройте «Подключения → Управление проектами» и проверьте его.", true);
+        : "Проект не разрешён к работе: откройте пульт Relay и проверьте активный профиль.", true);
       if (typeof noteFeedbackPipelineHeld === "function") noteFeedbackPipelineHeld();
       return;
     }

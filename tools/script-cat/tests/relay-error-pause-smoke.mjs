@@ -13,6 +13,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
 const src = readFileSync(new URL('../relay.user.js', import.meta.url), 'utf8');
+const relayClientSrc = readFileSync(new URL('../src/46-relay-client.js', import.meta.url), 'utf8');
 
 // 1. Версия и новый адрес ntfy.
 import { assertUserscriptVersionContract } from '../version-oracle.mjs';
@@ -44,7 +45,7 @@ const tickEnd = src.indexOf('// ────────────────
 const tick = src.slice(tickStart, tickEnd);
 assert.match(tick, /if \(isPaused\(\)\) \{/, 'пауза блокирует тик');
 assert.match(tick, /if \(monitorVisibleErrors\(\)\) return;/, 'ошибка проверяется до любого шага');
-assert.ok(tick.indexOf('monitorVisibleErrors') < tick.indexOf('await setup(false)'), 'проверка ошибки идёт первой');
+assert.ok(!tick.includes('setup(false)'), 'тик не открывает прежнее окно подключений');
 assert.match(tick, /pause\(\s*`Цикл остановлен\. /, 'любое исключение превращается в паузу, а не в тихую запись');
 assert.match(tick, /Технически: \$\{raw\}/, 'техническая строка сохраняется для разбора');
 assert.doesNotMatch(tick, /Ошибка цикла: \$\{e\.message\}/, 'нечитаемой строки «Ошибка цикла: HTTP 400» больше нет');
@@ -137,17 +138,20 @@ assert.equal(classifyNtfy('Цикл остановлен', true, { ntfy: 'loud',
 assert.equal(classifyNtfy('PR не слит, работа продолжается', true, { ntfy: 'loud' })?.priority, '2', 'нельзя сделать громким событие продолжающегося цикла');
 assert.equal(classifyNtfy('Ответ без маркера', true, { ntfy: 'quiet' })?.priority, '2', 'напоминание о маркере не будит ночью');
 
-// 8. Панель: общие подключения ведут к ntfy, без автоперезагрузки страницы.
-assert.match(src, /id="cfn-connection-ntfy"/, 'есть настройка ntfy в общем окне');
-assert.match(src, /find\("ntfy"\)\.onclick[\s\S]*?ntfyDialog\(\)/, 'кнопка открывает прежний диалог ntfy');
-assert.match(src, /function ntfyDialog\(\)/, 'диалог ntfy с тестами');
-assert.match(src, /Тихий тест/, 'тихий тест доступен из панели');
-assert.match(src, /Громкий тест/, 'громкий тест доступен из панели');
+// 8. ScriptCat keeps executor controls, while profile/connection settings live in Relay.
+assert.match(src, /\n\s*mount\(\);/, 'executor status panel remains available');
+assert.doesNotMatch(src, /id="\$\{ui\.setup\}"|setup\(true\)|setup\(false\)/, 'old connection setup entry point is removed');
+assert.doesNotMatch(src, /function connectionDialog\(|function projectsDialog\(|function ntfyDialog\(/, 'old settings dialogs are absent from the bundle');
+assert.doesNotMatch(src, /maybeGhDialog\(\);/, 'old GitHub dialog does not auto-open');
+assert.match(src, /Relay owns profile and credential settings/, 'configuration ownership moved to the pult');
 // Перезагрузки ограничены двумя конкретными recovery-путями: временный
 // отказ Arena «Something went wrong» и неотрисовавшаяся страница адресата.
 const reloadSites = src.split('\n').filter((line) => line.includes('location.reload()'));
-assert.equal(reloadSites.length, 4, 'два recovery-пути, переключение и исправление ещё не допущенного профиля');
-assert.match(src, /if \(checking \|\| autoOn\(\) \|\| busy \|\| projectAsyncWork > 0\)[\s\S]*?location\.reload\(\)/, 'переключение требует остановки и завершения запросов');
+assert.equal(reloadSites.length, 4, 'only bounded recovery and safe existing-profile reloads remain');
+assert.match(relayClientSrc, /res\?\.projectSelection && !localBusy && !busy && !\(Number\(projectAsyncWork\) > 0\)/,
+  'profile switching waits for empty queue, expectation and async work');
+assert.match(relayClientSrc, /applyRelayProjectSelection\(res\.projectSelection\)[\s\S]*?location\.reload\(\)/,
+  'reload follows a validated profile selection');
 const markerMissingStart = src.indexOf('async function markerMissing(');
 const reloadableStart = src.indexOf('const isReloadable = /something went wrong|please try again/i.test(eaten.text || "");', markerMissingStart);
 const reloadableEnd = src.indexOf('        pause(\n          `Arena снова не приняла задание:', reloadableStart);

@@ -114,19 +114,9 @@ const empty = load({
 await assert.rejects(() => empty.ntfyPublish('плохой топик!', '', { message: 'x' }), /топик/i);
 assert.equal(touched, false, 'при битом топике сеть не дёргается');
 
-// 4. Диалог: тест берёт значение из поля (persist до отправки), а результат
-// виден в самом диалоге — успех, HTTP-код или текст исключения.
-const dialog = src.slice(src.indexOf('function ntfyDialog()'), src.indexOf('function inputStyle()'));
-assert.match(dialog, /const test = async/, 'общий обработчик тестов');
-assert.match(dialog, /const name = persist\(\);/, 'тест сохраняет и берёт топик из поля, а не только сохранённый');
-assert.match(dialog, /Отправлено: \$\{result\.via/, 'успех виден в диалоге');
-assert.match(dialog, /Не ушло: \$\{e\.message\}/, 'ошибка видна в диалоге');
-assert.match(dialog, /cfn-ntfy-health/, 'есть «Проверка связи»');
-assert.match(dialog, /cfn-ntfy-open/, 'есть «Открыть топик» — проверить, дошло ли сообщение');
-assert.match(dialog, /const watchdog = setTimeout\(/, 'есть сторож: зависший запрос не молчит');
-assert.match(dialog, /log\(`ntfy: \$\{label\} отправлен/, 'успех теста попадает в журнал');
-assert.match(dialog, /log\(`ntfy: \$\{label\} не отправлен/, 'ошибка теста попадает в журнал');
-assert.ok(!/catch\s*\(\s*\)\s*\{/.test(src), 'нет пустых catch, глотающих ошибку');
+// 4. The ScriptCat ntfy editor was retired; the profile field is now exposed by Relay.
+assert.doesNotMatch(src, /function ntfyDialog\(\)/, 'no old Arena settings dialog ships');
+assert.match(src, /snapshot\.ntfyTopic/, 'the existing non-secret topic is included in first-run profile seeding');
 
 // 5. Обычные пуши используют тот же транспорт с нормализованным топиком.
 const notifyStart = src.indexOf('function notifyNtfy(');
@@ -259,41 +249,6 @@ for (const badRead of [true, false]) {
     console.warn = warn;
   }
   assert.equal(published, 0, 'при недоступном хранилище не пытаемся обойти ограничитель');
-}
-// Реальные обработчики диалога, с минимальным DOM и поддельной сетью.
-{
-  const nodes = new Map();
-  const box = { style: {}, remove() {}, querySelector: (sel) => {
-    if (!nodes.has(sel)) nodes.set(sel, { style: {}, value: '', textContent: '' });
-    return nodes.get(sel);
-  } };
-  const state = { paused: false, running: true };
-  const posts = [];
-  const document = { getElementById: () => null, createElement: () => box, body: { appendChild() {} } };
-  const open = new Function(
-    'document', 'SCRIPT_VERSION', 'btnStyle', 'inputStyle', 'GM_getValue', 'GM_setValue', 'K',
-    'normalizeNtfyTopic', 'isPaused', 'autoOn', 'ntfyPublish', 'log', 'ntfyHealth', 'window', 'setTimeout', 'clearTimeout',
-    `${dialog}\nreturn ntfyDialog;`,
-  )(
-    document, 'test', () => '', () => '', (key) => key === 'topic' ? 'arena-testing' : '', () => {},
-    { ntfyTopic: 'topic', ntfyToken: 'token' }, normalizeNtfyTopic, () => state.paused, () => state.running,
-    async (topic, token, msg) => { posts.push({ topic, token, ...msg }); return { via: 'gm', status: 200 }; },
-    () => {}, async () => [], { open() {} }, () => 1, () => {},
-  );
-  open();
-  await nodes.get('#cfn-ntfy-loud').onclick();
-  assert.equal(posts.length, 0, 'громкий тест не отправляется, пока автоцикл работает');
-  assert.match(nodes.get('#cfn-ntfy-note').textContent, /только на паузе или при выключенном автоцикле/);
-  await nodes.get('#cfn-ntfy-quiet').onclick();
-  assert.equal(posts.at(-1).priority, 2, 'тихий тест доступен и во время работы');
-  state.paused = true;
-  await nodes.get('#cfn-ntfy-loud').onclick();
-  assert.equal(posts.at(-1).priority, 5, 'громкий тест доступен на действительной паузе');
-  state.paused = false;
-  state.running = false;
-  await nodes.get('#cfn-ntfy-loud').onclick();
-  assert.equal(posts.at(-1).priority, 5, 'громкий тест доступен при выключенном автоцикле');
-  assert.equal(posts.length, 3);
 }
 assert.match(src, /cycleStopped: true, title: "Relay: миссия принята"/, 'миссия выключает цикл перед громким событием');
 

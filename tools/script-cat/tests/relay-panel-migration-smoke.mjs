@@ -34,14 +34,16 @@ test("Node Relay: вкладка видима при локальной пауз
   assert.match(web, /разрешение localhost\/127\.0\.0\.1/, "инструкция объясняет одноразовое loopback-разрешение");
 });
 
-test("подключённый виджет убирает дубли Шаг/Все вкладки и ведёт в Node-пульт", () => {
-  assert.match(panel, /const superseded = relayMode && \[ui\.step, ui\.wake\]\.includes\(id\)/);
+test("Arena panel keeps executor controls but exposes no settings editor", async () => {
+  const boot = await readFile(new URL("../src/29-boot.js", import.meta.url), "utf8");
+  assert.match(boot, /mount\(\);/, "executor status/log panel is still available");
+  assert.doesNotMatch(panel, /id="\$\{ui\.setup\}"|setup\(true\)/, "old settings button and handler are removed");
+  assert.doesNotMatch(connections, /function connectionDialog\(|async function setup\(/, "connection editing is removed from ScriptCat");
   assert.match(client, /function relayControlActive\(\)[\s\S]*?lastContactAt/);
   assert.match(header, /@connect\s+localhost/, "userscript grants localhost for the Node Relay bridge");
   assert.match(header, /@connect\s+127\.0\.0\.1/, "userscript grants the IPv4 loopback too");
-  assert.match(instances, /RELAY_DEFAULT_BASE = "http:\/\/127\.0\.0\.1:8787"/, "локальный Relay подключается без ручной настройки URL");
-  assert.match(instances, /localhost\(\?=:\\d\|\\\/\|\$\)[\s\S]*?127\.0\.0\.1/, "localhost нормализуется на IPv4 listener");
-  assert.match(connections, /Обычно адрес подставляется автоматически/);
+  assert.match(instances, /RELAY_DEFAULT_BASE = "http:\/\/127\.0\.0\.1:8787"/, "local Relay defaults to IPv4 loopback");
+  assert.match(instances, /localhost\(\?=:\\d\|\\\/\|\$\)[\s\S]*?127\.0\.0\.1/, "localhost normalizes to the IPv4 listener");
   assert.match(client, /function relayClientStart\(\) \{\s*const run =/);
   assert.doesNotMatch(client.slice(client.indexOf("async function relayClientTick()"), client.indexOf("function relayClientStart()")), /if \(!relayConfigured\(\)\) return/);
   assert.match(panel, /id="\$\{ui\.relay\}"[^>]*>↗ Пульт Relay/);

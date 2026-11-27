@@ -103,6 +103,128 @@ test("пульт ставит карточку в очередь и снимае
   }
 });
 
+test("запрос допуска из пульта требует same-origin и доходит до живой admin-вкладки", async () => {
+  const ctx = await startServer();
+  try {
+    const projectId = "123e4567-e89b-12d3-a456-426614174000";
+    const hello = await (await fetch(`${ctx.base}/api/agent`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ action: "hello", account: "creative36711@gmail.com", tab: "approval-tab", scriptVersion: "1.34.0",
+        projectId, projectName: "WOTR", projectApproved: false, projectBlockReason: "unapproved" }),
+    })).json();
+    assert.equal(hello.ok, true);
+
+    const hostile = await fetch(`${ctx.base}/api/project-approval`, {
+      method: "POST", headers: { origin: "https://evil.example", "content-type": "application/json" },
+      body: JSON.stringify({ projectId }),
+    });
+    assert.equal(hostile.status, 403);
+
+    const response = await fetch(`${ctx.base}/api/project-approval`, {
+      method: "POST", headers: { origin: ctx.base, "content-type": "application/json" },
+      body: JSON.stringify({ projectId }),
+    });
+    const result = await response.json();
+    assert.equal(result.ok, true);
+    const delivered = await ctx.service.hello({ account: "creative36711@gmail.com", tab: "approval-tab", scriptVersion: "1.34.0",
+      projectId, projectName: "WOTR", projectApproved: false, projectBlockReason: "unapproved" });
+    assert.equal(delivered.projectApprovalRequest.id, result.requestId);
+  } finally {
+    await ctx.close();
+  }
+});
+
+test("пульт сохраняет секреты локально; только Arena получает их в ответе hello", async () => {
+  const ctx = await startServer();
+  try {
+    const project = {
+      id: "123e4567-e89b-12d3-a456-426614174000", name: "WOTR",
+      roles: "123e4567-e89b-12d3-a456-426614174001", missions: "123e4567-e89b-12d3-a456-426614174002",
+      requests: "123e4567-e89b-12d3-a456-426614174003", questions: "123e4567-e89b-12d3-a456-426614174004",
+      pageUrl: "https://www.notion.so/workspace/page-123e4567e89b12d3a456426614174005",
+      questionsUrl: "https://www.notion.so/workspace/questions-123e4567e89b12d3a456426614174006",
+      repo: "Creative36711/open-bfme", branch: "main", driveFolder: "wotr",
+      repos: [{ repo: "Creative36711/open-bfme", branch: "main", main: true }], roleRepos: [],
+    };
+    const savedResponse = await fetch(`${ctx.base}/api/projects`, {
+      method: "POST", headers: { origin: ctx.base, "content-type": "application/json" },
+      body: JSON.stringify({ profile: project, secrets: { notion: "ntn_saved_secret", gwUrl: "https://script.google.com/macros/s/deploy/exec", gwKey: "drive_saved_secret" } }),
+    });
+    const saved = await savedResponse.json();
+    assert.equal(saved.ok, true);
+    assert.equal(JSON.stringify(saved).includes("ntn_saved_secret"), false, "pult save response never echoes secrets");
+
+    const helloResponse = await fetch(`${ctx.base}/api/agent`, {
+      method: "POST", headers: { origin: "https://arena.ai", "content-type": "application/json" },
+      body: JSON.stringify({ action: "hello", account: "creative36711@gmail.com", tab: "settings-tab", scriptVersion: "1.34.0",
+        projectId: project.id, projectName: project.name, projectConfigUpdatedAt: "", projectApproved: true,
+        projectBlockReason: "", localBusy: false }),
+    });
+    const hello = await helloResponse.json();
+    assert.equal(hello.projectSettings.credentials.notion, "ntn_saved_secret");
+    assert.equal(hello.projectSettings.credentials.gwKey, "drive_saved_secret");
+    assert.equal(hello.projectSettings.secretsMigrated, true);
+    const client = (await ctx.service.snapshot()).scriptClients.find((item) => item.slotId === "admin");
+    assert.equal(client.projectApproved, false, "central settings change blocks new work before the client synchronizes");
+
+    const hostileAgent = await fetch(`${ctx.base}/api/agent`, {
+      method: "POST", headers: { origin: "https://evil.example", "content-type": "application/json" },
+      body: JSON.stringify({ action: "hello", account: "creative36711@gmail.com", tab: "evil", projectId: project.id }),
+    });
+    assert.equal(hostileAgent.status, 403);
+
+    const nextProject = {
+      ...project, id: "123e4567-e89b-12d3-a456-426614174100", name: "Second project",
+      roles: "123e4567-e89b-12d3-a456-426614174101", missions: "123e4567-e89b-12d3-a456-426614174102",
+      requests: "123e4567-e89b-12d3-a456-426614174103", questions: "123e4567-e89b-12d3-a456-426614174104",
+    };
+    const nextSave = await fetch(`${ctx.base}/api/projects`, {
+      method: "POST", headers: { origin: ctx.base, "content-type": "application/json" },
+      body: JSON.stringify({ profile: nextProject, secrets: {
+        notion: "ntn_second", gwUrl: "https://script.google.com/macros/s/second/exec", gwKey: "second_key",
+      } }),
+    });
+    assert.equal((await nextSave.json()).ok, true);
+    const activate = await fetch(`${ctx.base}/api/projects/active`, {
+      method: "POST", headers: { origin: ctx.base, "content-type": "application/json" },
+      body: JSON.stringify({ projectId: nextProject.id }),
+    });
+    assert.equal((await activate.json()).activeProjectId, nextProject.id);
+    const oldTabHello = await fetch(`${ctx.base}/api/agent`, {
+      method: "POST", headers: { origin: "https://arena.ai", "content-type": "application/json" },
+      body: JSON.stringify({ action: "hello", account: "creative36711@gmail.com", tab: "old-project-tab", scriptVersion: "1.34.0",
+        projectId: project.id, projectName: project.name, localBusy: false }),
+    });
+    const selection = await oldTabHello.json();
+    assert.equal(selection.projectSelection.project.id, nextProject.id);
+    assert.equal(selection.projectSelection.credentials.notion, "ntn_second");
+    assert.equal(selection.projectSettings, undefined, "old profile does not receive itself as active settings");
+    assert.equal((await ctx.service.snapshot()).scriptClients.find((item) => item.tab === "old-project-tab").projectApproved, false,
+      "server blocks old-profile tabs from new work during switch");
+
+    await fetch(`${ctx.base}/api/projects`, {
+      method: "POST", headers: { origin: ctx.base, "content-type": "application/json" },
+      body: JSON.stringify({ profile: nextProject, secrets: {}, clearSecrets: true }),
+    });
+    const clearedHello = await fetch(`${ctx.base}/api/agent`, {
+      method: "POST", headers: { origin: "https://arena.ai", "content-type": "application/json" },
+      body: JSON.stringify({ action: "hello", account: "creative36711@gmail.com", tab: "active-cleared-tab", scriptVersion: "1.34.0",
+        projectId: nextProject.id, projectName: nextProject.name, projectConfigUpdatedAt: "", projectApproved: true, localBusy: false }),
+    });
+    const cleared = await clearedHello.json();
+    assert.equal(cleared.projectSettingsUnavailable.projectId, nextProject.id);
+    assert.equal((await ctx.service.snapshot()).scriptClients.find((item) => item.tab === "active-cleared-tab").projectApproved, false,
+      "clearing local credentials revokes project approval before future work");
+
+    const deniedSwitch = await fetch(`${ctx.base}/api/projects/active`, {
+      method: "POST", headers: { origin: "https://evil.example", "content-type": "application/json" },
+      body: JSON.stringify({ projectId: project.id }),
+    });
+    assert.equal(deniedSwitch.status, 403);
+  } finally { await ctx.close(); }
+});
+
 test("пульт открывается как страница и не зависит от сборки", async () => {
   const ctx = await startServer();
   try {

@@ -442,16 +442,13 @@ const roleRow = (name, extra = {}) => ({
   assert.doesNotMatch(ui, /parseAccountMap\(/, 'разбора «метка = почта» больше нет');
   assert.doesNotMatch(accountsSrc, /accountMap\(/, 'локальной связки в модуле аккаунтов нет');
   assert.match(accountsSrc, /accountMail\(label\)/, 'ожидаемый адрес берётся из поля «Аккаунт» роли');
-  assert.match(ui, /из поля «Аккаунт» базы «Роли»/, 'окно называет источник почты');
-  // Метки владельца — его слова: значение с пробелом законно, потому что оно
-  // уже стоит в Notion, и запрещать его значило бы требовать переименования базы.
-  assert.doesNotMatch(ui, /одним словом без пробелов/, 'значение с пробелом не отвергается');
+  assert.doesNotMatch(ui, /function connectionDialog\(/, 'legacy settings dialog is removed; the pult owns setup');
 }
 
 // ── 11. Оформление выпуска ────────────────────────────────────────────────
 {
   const bundle = readFileSync(join(here, '..', 'relay.user.js'), 'utf8');
-  assert.match(bundle, /^\/\/ @version\s+1\.33\.1\s*$/m, 'выпуск 1.33.1 объявлен');
+  assert.match(bundle, /^\/\/ @version\s+1\.34\.0\s*$/m, 'выпуск 1.34.0 объявлен');
 }
 
 console.log('OK: 1.19.0 (D-005, D-009) — почта аккаунта из Notion, ввода в ⚙ нет; квоты D-004 сохранены: лимит принадлежит аккаунту, админский останавливает цикл, «Статус» не трогается');
