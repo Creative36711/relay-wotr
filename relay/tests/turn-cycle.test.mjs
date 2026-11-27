@@ -92,6 +92,29 @@ test("пустая очередь — планирующий ход Коорди
   assert.ok(!journal.some((text) => /шаг: выдач 0/.test(text)), "старой формулировки «выдач 0» больше нет");
 });
 
+test("кнопка пульта передаёт планирующий ход Coordinator-вкладке, ack можно повторить", async () => {
+  const { service } = makeService();
+  const step = await service.step({ origin: "panel" });
+  assert.equal(step.turnRequested, true);
+  assert.ok(step.turnRequestId);
+
+  const oldClient = await service.pull({ slotId: "admin", tab: "old-admin", scriptVersion: "1.26.0" });
+  assert.equal(oldClient.updateRequired, true, "старая вкладка не получает сигнал/работу");
+  const claimed = await service.pull({ slotId: "admin", tab: "admin-tab", scriptVersion: "1.27.0" });
+  assert.equal(claimed.kind, "turn");
+  assert.equal(claimed.turn, "coordinator");
+  assert.equal(claimed.turnId, step.turnRequestId);
+  const duplicateClaim = await service.pull({ slotId: "admin", tab: "admin-tab", scriptVersion: "1.27.0" });
+  assert.notEqual(duplicateClaim.kind, "turn", "claim жив: повторный poll не запускает тот же план дважды");
+
+  await service.report({ slotId: "admin", tab: "admin-tab", payload: { turnAck: true, turnRequestId: claimed.turnId, retry: true } });
+  assert.equal(service.memory.coordinatorTurnRequest.claimedBy, "", "неуспешный запуск освобождает claim");
+  const retried = await service.pull({ slotId: "admin", tab: "admin-tab", scriptVersion: "1.27.0" });
+  assert.equal(retried.kind, "turn", "вкладка может повторить планирующий ход");
+  await service.report({ slotId: "admin", tab: "admin-tab", payload: { turnAck: true, turnRequestId: retried.turnId } });
+  assert.equal(service.memory.coordinatorTurnRequest, null, "успешный ack закрывает запрос");
+});
+
 test("ход приёмки: шаг ждёт вердикт, а не советует выдачу", async () => {
   const { service } = makeService({ settings: settingsRows({ "cycle.turn": "warden" }) });
   const step = await service.step({ origin: "pulse" });
@@ -113,7 +136,7 @@ test("ход завершён: шаг не выдаёт работу даже п
 const reportWith = async (service, markerRaw) => {
   // Строка очереди → выдача → принятый ответ с маркером хода.
   await service.enqueue({ card: "mission-card", title: "Миссия", role: "Coordinator", fn: "Coordinator", slotId: "admin" });
-  const pulled = await service.pull({ slotId: "admin", tab: "admin-tab" });
+  const pulled = await service.pull({ scriptVersion: "1.27.0",  slotId: "admin", tab: "admin-tab" });
   assert.equal(pulled.ok, true, pulled.why);
   return service.report({
     slotId: "admin",
@@ -135,6 +158,7 @@ test("next: done переводит ход в приёмку", async () => {
   assert.equal(settingsValue(store, "cycle.turn"), "warden");
   const journal = store.objects("events").map((event) => event["Текст"]);
   assert.ok(journal.some((text) => /передана приёмке \(Warden\)/.test(text)));
+  assert.ok(store.objects("queue").some((item) => item["Статус"] === "done"), "принятый ответ закрывает строку очереди");
 });
 
 test("accept завершает цикл, rework возвращает Координатору с кругом", async () => {
@@ -216,7 +240,7 @@ test("выдача не состоялась: run failed, строка в blocke
   const { service, store } = makeService({
     queue: [queueRow({ id: "q-1", card: "mission-card", role: "Technical Artist" })],
   });
-  const pulled = await service.pull({ slotId: "worker-1" });
+  const pulled = await service.pull({ scriptVersion: "1.27.0",  slotId: "worker-1" });
   assert.equal(pulled.ok, true);
   const res = await service.report({
     slotId: "worker-1",

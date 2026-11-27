@@ -1399,10 +1399,24 @@
           );
           return true;
         }
-        const problem = await dispatchTask(card, route.roleName, mission);
-        if (problem === true) {
-          GM_setValue("cfn-dispatch-miss", 0);
-          return true;
+        let problem = "";
+        if (typeof relayConfigured === "function" && relayConfigured() && typeof relayEnqueueTask === "function") {
+          const queued = await relayEnqueueTask(card, route.roleName);
+          if (queued && queued.ok) {
+            GM_setValue("cfn-dispatch-miss", 0);
+            log(`Карточка «${taskTitle(card)}» поставлена в очередь Relay для ${route.roleName}; дальше её выдаст служба подходящему слоту.`);
+            return true;
+          }
+          problem = `Node-служба не приняла карточку: ${queued?.why || "нет ответа"}`;
+        } else {
+          // Совместимость со старой установкой без Node-службы: прежняя прямая
+          // доставка остаётся рабочей, но при подключённой службе обходить её
+          // нельзя — иначе пульт показывал бы пустую очередь и не видел run.
+          problem = await dispatchTask(card, route.roleName, mission);
+          if (problem === true) {
+            GM_setValue("cfn-dispatch-miss", 0);
+            return true;
+          }
         }
         // Выдача не состоялась: названная карточка не в Ready или её не удалось
         // очистить. Это не повод будить Мастера с первого раза — ход остаётся у

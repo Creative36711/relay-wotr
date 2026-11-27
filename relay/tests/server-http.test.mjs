@@ -65,7 +65,7 @@ test("вкладка забирает работу через /api/agent", async
     const pull = await (await fetch(`${ctx.base}/api/agent`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ action: "pull", slotId: "worker-2", tab: "aa11" }),
+      body: JSON.stringify({ action: "pull", slotId: "worker-2", tab: "aa11", scriptVersion: "1.27.0" }),
     })).json();
     assert.equal(pull.ok, true);
     assert.equal(pull.work.card, "c-1");
@@ -89,7 +89,8 @@ test("пульт ставит карточку в очередь и снимае
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ action: "enqueue", card: "c-2", role: "Technical Artist" }),
     })).json();
-    assert.equal(duplicate.ok, false, "одна карточка не ставится в очередь дважды");
+    assert.equal(duplicate.ok, true, "повтор того же enqueue подтверждается идемпотентно");
+    assert.equal(duplicate.duplicate, true);
 
     const cancelled = await (await fetch(`${ctx.base}/api/control`, {
       method: "POST",

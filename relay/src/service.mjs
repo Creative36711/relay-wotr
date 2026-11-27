@@ -23,7 +23,7 @@ import { searchDatabases, fetchRoles, notionTokenFrom, pingNotion, describeNonJs
 import { ACTIONS, CONTROL, PROTOCOL_VERSION, validateRequest, idle, work } from "./protocol.mjs";
 import { SHEETS, rowToObject } from "./schema.mjs";
 import { isoNow, norm, clip } from "./util.mjs";
-import { makeQueueItem, QUEUE } from "./queue.mjs";
+import { makeQueueItem, newQueueId, QUEUE } from "./queue.mjs";
 import {
   parseInstances, instanceFor, instanceToRow, agentDecision, instanceKey,
   instancesOfSlot, AGENT_STATE,
@@ -52,6 +52,8 @@ export function createMemoryState() {
     settingsAt: 0,
     // Токен Notion, введённый в пульте. Пусто — берётся из окружения.
     notionToken: "",
+    clients: new Map(), // ScriptCat tab heartbeat: slot/tab/version, only for update guidance
+    coordinatorTurnRequest: null, // one panel Step waiting for the admin Arena tab
   };
 }
 
@@ -59,6 +61,25 @@ const SLOT_CACHE_MS = 30000;
 
 /** Кеш справочника ролей: настройка, а не данные миссии. */
 const ROLES_CACHE_MS = 60000;
+const SUPPORTED_SCRIPT_VERSION = "1.27.0";
+const TURN_REQUEST_TTL_MS = 15 * 60_000;
+const TURN_REQUEST_CLAIM_MS = 30_000;
+const CLIENT_ACTIVE_MS = 3 * 60_000;
+
+function versionAtLeast(actual, minimum) {
+  const parse = (value) => {
+    const hit = String(value || "").trim().match(/^(\d+)\.(\d+)\.(\d+)(?:[-+].*)?$/);
+    return hit ? hit.slice(1).map(Number) : null;
+  };
+  const a = parse(actual);
+  const b = parse(minimum);
+  if (!a || !b) return false;
+  for (let i = 0; i < 3; i += 1) {
+    if (a[i] > b[i]) return true;
+    if (a[i] < b[i]) return false;
+  }
+  return true;
+}
 
 /**
  * Кеш настроек.
@@ -562,6 +583,22 @@ export function createService({
     return run;
   }
 
+  function rememberClient({ slotId = "", tab = "", scriptVersion = "" } = {}) {
+    if (!slotId || !tab) return;
+    const clients = memory.clients instanceof Map ? memory.clients : new Map();
+    memory.clients = clients;
+    const nowMs = now();
+    for (const [key, client] of clients) {
+      if (nowMs - Number(client.seenAt || 0) > CLIENT_ACTIVE_MS * 3) clients.delete(key);
+    }
+    const key = `${slotId}:${tab}`;
+    clients.set(key, { slotId, tab, scriptVersion: String(scriptVersion || "").trim(), seenAt: nowMs });
+  }
+
+  function clearCoordinatorTurnRequest() {
+    memory.coordinatorTurnRequest = null;
+  }
+
   /**
    * `hello`: вкладка называет себя.
    *
@@ -570,7 +607,7 @@ export function createService({
    * контейнера не должно ломать транспорт. Неизвестный аккаунт — честный
    * отказ с подсказкой, какой слот добавить.
    */
-  async function hello({ account = "", tab = "", path = "" } = {}) {
+  async function hello({ account = "", tab = "", path = "", scriptVersion = "" } = {}) {
     const slots = await loadSlots(true);
     const slot = slotByAccount(slots, account);
     if (!slot) {
@@ -585,15 +622,17 @@ export function createService({
         slots: slots.map((item) => ({ slotId: item.slotId, account: item.account, admin: item.admin })),
       };
     }
+    rememberClient({ slotId: slot.slotId, tab, scriptVersion });
     await record({
       slot: slot.slotId, account, tab, kind: "state",
       text: `вкладка ${tab || "?"} опознана как слот ${slot.slotId} (${slot.admin ? "административный" : "рабочий"})`,
-      data: { path },
+      data: { path, scriptVersion: String(scriptVersion || "") },
     });
     return {
       ok: true,
       slot: { slotId: slot.slotId, admin: slot.admin, container: slot.container, account: slot.account },
       protocol: PROTOCOL_VERSION,
+      requiredScriptVersion: SUPPORTED_SCRIPT_VERSION,
     };
   }
 
@@ -604,11 +643,12 @@ export function createService({
    * Третье — не ошибка вкладки, а расхождение раскладки: административный
    * контейнер не берёт рабочие роли, и вкладка должна об этом сказать человеку.
    */
-  async function pull({ slotId = "", tab = "", roleHint = "" } = {}) {
+  async function pull({ slotId = "", tab = "", roleHint = "", scriptVersion = "" } = {}) {
     const data = await loadAll();
     const slot = slotById(data.slots, slotId);
     if (!slot) return { ok: false, why: `слота ${slotId} нет в таблице` };
     if (!slot.enabled) return idle(`слот ${slotId} выключен`);
+    rememberClient({ slotId, tab, scriptVersion });
 
     const liveRuns = data.runs.filter(isLiveRun);
 
@@ -622,6 +662,14 @@ export function createService({
         role: mine["Роль"], agentUrl: mine["Agent URL"], attempt: mine["Попытка"],
         repeated: true, why: "эта выдача уже открыта для слота",
       });
+    }
+
+    if (!versionAtLeast(scriptVersion, SUPPORTED_SCRIPT_VERSION)) {
+      return {
+        ...idle(`обновите ScriptCat до ${SUPPORTED_SCRIPT_VERSION}: текущая вкладка не сообщает совместимую версию`),
+        updateRequired: true,
+        requiredScriptVersion: SUPPORTED_SCRIPT_VERSION,
+      };
     }
 
     // Лимит аккаунта проверяется после «своей» выдачи: если работа уже у меня,
@@ -638,6 +686,36 @@ export function createService({
     const maxParallel = Number(data.settings["cycle.maxParallel"]) || 1;
     if (liveRuns.length >= maxParallel) {
       return idle(`предел одновременности: уже идёт ${liveRuns.length} из ${maxParallel}`);
+    }
+
+    // Ручной «Шаг» пульта при пустой книге должен запустить не очередную
+    // раздачу (раздавать нечего), а старый проверенный планирующий ход в
+    // Coordinator-tab. Это отдельный control signal: не Notion-карточка и не
+    // Run. Один короткий claim не даёт двум admin-вкладкам отправить два плана.
+    const request = memory.coordinatorTurnRequest;
+    if (slot.admin && request && liveRuns.length === 0) {
+      if (now() - Number(request.createdAt || 0) > TURN_REQUEST_TTL_MS ||
+          String(data.settings["cycle.turn"] || "coordinator") !== "coordinator") {
+        clearCoordinatorTurnRequest();
+      } else if (!data.queue.some((item) => norm(item["Статус"]) === QUEUE.WAITING)) {
+        if (Number(request.claimUntil || 0) <= now()) {
+          request.claimedBy = String(tab || "?");
+          request.claimUntil = now() + TURN_REQUEST_CLAIM_MS;
+          await record({
+            slot: slot.slotId, account: slot.account, tab, kind: "state",
+            text: `вкладка получила планирующий ход Координатора ${request.id}`,
+            data: { turnRequestId: request.id, scriptVersion: String(scriptVersion || "") },
+          });
+          return {
+            ...idle("планирующий ход Координатора"),
+            kind: "turn",
+            turn: "coordinator",
+            turnId: request.id,
+          };
+        }
+      } else {
+        clearCoordinatorTurnRequest();
+      }
     }
 
     // План строится для ЭТОГО слота: вкладка спрашивает работу для своего
@@ -695,7 +773,8 @@ export function createService({
   }
 
   /** `beat`: вкладка жива. Продлевает выдачу и говорит, чего она ждёт. */
-  async function beat({ slotId = "", runId = "", tab = "", waiting = "", silentMs = 0 } = {}) {
+  async function beat({ slotId = "", runId = "", tab = "", waiting = "", silentMs = 0, scriptVersion = "" } = {}) {
+    rememberClient({ slotId, tab, scriptVersion });
     const at = isoNow(now());
     const data = await loadAll();
     const index = data.runs.findIndex((run) => norm(run["Run ID"]) === norm(runId));
@@ -807,9 +886,28 @@ export function createService({
     // служебные ходы, у них нет Run ID в книге. Вкладка присылает текст
     // маркера, служба применяет FSM хода; строгость ниже («выдачи нет») к
     // таким отчётам не относится — нечего путать с потерянной выдачей.
+    if (payload.turnAck) {
+      const request = memory.coordinatorTurnRequest;
+      const matches = request && String(request.id) === String(payload.turnRequestId || "");
+      if (matches && payload.retry) {
+        request.claimedBy = "";
+        request.claimUntil = 0;
+      } else if (matches) clearCoordinatorTurnRequest();
+      await record({
+        slot: slotId, tab, kind: "state",
+        text: payload.noMission
+          ? "планирующий ход не начат: активной миссии в Notion нет"
+          : payload.retry
+            ? "планирующий ход повторится: вкладка пока не создала ожидание"
+            : "планирующий ход принят вкладкой",
+        data: { turnRequestId: String(payload.turnRequestId || ""), noMission: Boolean(payload.noMission), retry: Boolean(payload.retry) },
+      });
+      return { ok: true, turnAck: true, cleared: Boolean(matches && !payload.retry) };
+    }
     if (payload.markerOnly) {
       const decision = parseTurnMarker(payload.markerRaw || "");
       const applied = await applyTurnDecision(decision, { slotId, tab, card: String(payload.markerCard || "") });
+      if (decision?.kind === "coordinator") clearCoordinatorTurnRequest();
       return { ok: true, markerOnly: true, ...applied };
     }
 
@@ -914,6 +1012,19 @@ export function createService({
       runs: data.runs.map((item) => (norm(item["Run ID"]) === runId ? { ...item, "Статус": RUN.SUBMITTED } : item)),
       slotId, runId, status: RUN.SUBMITTED, at,
     });
+    const queueIndex = data.queue.findIndex((item) =>
+      norm(item["Карточка"]) === norm(run["Карточка"]) &&
+      norm(item["Статус"]) === QUEUE.LEASED &&
+      norm(item["Взял слот"]) === norm(slotId));
+    if (queueIndex >= 0) {
+      const queueItem = data.queue[queueIndex];
+      await store.updateRange("queue", queueIndex + 2, [queueToRow({
+        ...queueItem,
+        "Статус": QUEUE.DONE,
+        "Готово в": at,
+        "Комментарий": "ответ принят",
+      })]);
+    }
     await record({
       slot: slotId, tab, kind: "state",
       text: released.freedSlot ? `слот ${slotId} свободен: ход возвращён Координатору` : "слот ещё занят другой выдачей",
@@ -1000,15 +1111,33 @@ export function createService({
       // Правда называется по протоколу: пустая очередь — планирующий ход
       // Координатора, готовая миссия — приёмка, принятая — цикл завершён.
       let why = plan.why;
+      let turnRequested = false;
+      let turnRequestId = "";
       if (!issued.length && !agentRequests.length) {
         const turn = String(data.settings["cycle.turn"] || "coordinator");
         const waiting = data.queue.filter((item) => norm(item["Статус"]) === QUEUE.WAITING).length;
+        const live = data.runs.filter(isLiveRun).length;
         if (turn === "warden") why = "миссия у приёмки (Warden): ждёт accept или rework";
-        else if (!waiting) why = "ход у Координатора: очередь пуста — нужен планирующий ход";
+        else if (!waiting && turn === "coordinator" && origin === "panel" && live === 0) {
+          let request = memory.coordinatorTurnRequest;
+          if (!request || now() - Number(request.createdAt || 0) > TURN_REQUEST_TTL_MS) {
+            request = { id: newQueueId(now()), createdAt: now(), claimedBy: "", claimUntil: 0 };
+            memory.coordinatorTurnRequest = request;
+            await record({
+              kind: "state", text: `пульт запросил планирующий ход Координатора ${request.id}`,
+              data: { turnRequestId: request.id, origin },
+            });
+          }
+          turnRequested = true;
+          turnRequestId = request.id;
+          why = `ход у Координатора: запрос плана ${request.id} ожидает admin-вкладку`;
+        } else if (!waiting && turn === "coordinator") {
+          why = "ход у Координатора: очередь пуста — нажмите «Шаг», чтобы передать планирующий ход вкладке Coordinator";
+        }
       }
 
       memory.lastTick = now();
-      memory.lastStep = { at: isoNow(now()), count: issued.length, why };
+      memory.lastStep = { at: isoNow(now()), count: issued.length, why, turnRequested, turnRequestId };
       await record({
         kind: "tick",
         text: issued.length || agentRequests.length
@@ -1018,6 +1147,7 @@ export function createService({
       });
       return {
         ok: true, planned: issued.length, requested: agentRequests.length,
+        turnRequested, turnRequestId,
         why, plans: issued, agentRequests, summary: data.settings,
       };
     } finally {
@@ -1073,6 +1203,15 @@ export function createService({
       // Подключён ли Notion — для пульта: поле «Токен» показывается только
       // пока справочник не читается, иначе оно приглашает сломать рабочее.
       notion: { ready: Boolean(notionTokenNow()) },
+      requiredScriptVersion: SUPPORTED_SCRIPT_VERSION,
+      scriptClients: [...(memory.clients instanceof Map ? memory.clients.values() : [])]
+        .filter((client) => now() - Number(client.seenAt || 0) <= CLIENT_ACTIVE_MS)
+        .map((client) => ({ ...client, seenAt: isoNow(client.seenAt) })),
+      turnRequest: memory.coordinatorTurnRequest ? {
+        id: memory.coordinatorTurnRequest.id,
+        createdAt: isoNow(memory.coordinatorTurnRequest.createdAt),
+        claimed: Number(memory.coordinatorTurnRequest.claimUntil || 0) > now(),
+      } : null,
       mode: data.settings["cycle.mode"],
       // Ход цикла (D-025): для строки запуска пульта — кто держит очередь
       // решений прямо сейчас. Пусто/координатор — цикл открыт.
@@ -1356,7 +1495,10 @@ export function createService({
       (item) => norm(item["Карточка"]) === norm(cardId) && ["waiting", "blocked", "leased"].includes(norm(item["Статус"])),
     );
     if (duplicate) {
-      return { ok: false, why: `карточка ${cardId} уже в очереди (${duplicate["Статус"]}, строка ${duplicate["ID"]})` };
+      if (norm(duplicate["Роль"]) === norm(role) && norm(duplicate["Вид"]) === norm(kind)) {
+        return { ok: true, duplicate: true, itemId: duplicate["ID"], item: duplicate };
+      }
+      return { ok: false, why: `карточка ${cardId} уже в очереди для роли «${duplicate["Роль"]}" (${duplicate["Статус"]}, строка ${duplicate["ID"]})` };
     }
     if (slotId && !slotById(data.slots, slotId)) {
       return { ok: false, why: `слота ${slotId} нет в таблице` };
@@ -1367,6 +1509,7 @@ export function createService({
       at: isoNow(now()),
     });
     await store.append("queue", [queueToRow(item)]);
+    clearCoordinatorTurnRequest();
     await record({
       slot: item["Слот"], kind: "queue",
       text: `в очередь поставлено: ${item["Заголовок"] || cardId}${item["Роль"] ? ` (${item["Роль"]})` : ""}`,

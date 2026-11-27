@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Relay — передача хода между агентами
 // @namespace    https://arena.ai/
-// @version      1.26.0
+// @version      1.27.0
 // @updateURL    https://raw.githubusercontent.com/Creative36711/relay-wotr/main/tools/script-cat/relay.user.js
 // @downloadURL  https://raw.githubusercontent.com/Creative36711/relay-wotr/main/tools/script-cat/relay.user.js
 // @description  Цикл Координатор → исполнитель → Координатор: агент сам коммитит, пушит и мержит PR; ScriptCat ждёт мерж и нажимает Continue.
@@ -95,7 +95,7 @@
     // D-073: отпечаток сборки вшивает build.mjs (SHA-256 источника). Номер версии
     // говорит «какой выпуск», отпечаток — «какая именно сборка»: без него проверка
     // «работает новая версия, а не прежняя под новым номером» невозможна.
-    buildFingerprint: "3ea045d2e649aa37",
+    buildFingerprint: "8b92a2dfe7a09598",
     repo: "", // для ссылки на PR из номера
     tickMs: 15000,
     mergeGraceMs: 90000, // сколько ждём мерж, прежде чем нажать кнопки за агента
@@ -801,7 +801,7 @@
 
   const NTFY_BASE = "https://ntfy.sh";
   const SCRIPT_VERSION =
-    (typeof GM_info !== "undefined" && GM_info?.script?.version) || "1.26.0";
+    (typeof GM_info !== "undefined" && GM_info?.script?.version) || "1.27.0";
 
   /** «https://ntfy.sh/topic?x=1» и «topic» одинаково дают topic. */
   function normalizeNtfyTopic(raw) {
@@ -16521,10 +16521,24 @@
           );
           return true;
         }
-        const problem = await dispatchTask(card, route.roleName, mission);
-        if (problem === true) {
-          GM_setValue("cfn-dispatch-miss", 0);
-          return true;
+        let problem = "";
+        if (typeof relayConfigured === "function" && relayConfigured() && typeof relayEnqueueTask === "function") {
+          const queued = await relayEnqueueTask(card, route.roleName);
+          if (queued && queued.ok) {
+            GM_setValue("cfn-dispatch-miss", 0);
+            log(`Карточка «${taskTitle(card)}» поставлена в очередь Relay для ${route.roleName}; дальше её выдаст служба подходящему слоту.`);
+            return true;
+          }
+          problem = `Node-служба не приняла карточку: ${queued?.why || "нет ответа"}`;
+        } else {
+          // Совместимость со старой установкой без Node-службы: прежняя прямая
+          // доставка остаётся рабочей, но при подключённой службе обходить её
+          // нельзя — иначе пульт показывал бы пустую очередь и не видел run.
+          problem = await dispatchTask(card, route.roleName, mission);
+          if (problem === true) {
+            GM_setValue("cfn-dispatch-miss", 0);
+            return true;
+          }
         }
         // Выдача не состоялась: названная карточка не в Ready или её не удалось
         // очистить. Это не повод будить Мастера с первого раза — ход остаётся у
@@ -23553,7 +23567,7 @@ function reviewPullRequest({ files, pr, zone } = {}) {
     lastBeatAt: 0,
     lastContactAt: 0,
     lastMarker: { hash: "", at: 0 },
-    warned: { hello: "", pull: "" },
+    warned: { hello: "", pull: "", version: "" },
   };
 
   /** Идентификатор вкладки: один на загрузку страницы, не общий на вкладки. */
@@ -23564,6 +23578,21 @@ function reviewPullRequest({ files, pr, zone } = {}) {
     return relayClient.tab;
   }
 
+  function relayVersionAtLeast(actual, minimum) {
+    const parse = (value) => {
+      const hit = String(value || "").trim().match(/^(\d+)\.(\d+)\.(\d+)(?:[-+].*)?$/);
+      return hit ? hit.slice(1).map(Number) : null;
+    };
+    const a = parse(actual);
+    const b = parse(minimum);
+    if (!a || !b) return false;
+    for (let index = 0; index < 3; index += 1) {
+      if (a[index] > b[index]) return true;
+      if (a[index] < b[index]) return false;
+    }
+    return true;
+  }
+
   /** POST действия в службу. Служба живёт на машине владельца, без неё — тишина. */
   async function relayPost(body) {
     const base = relayBase();
@@ -23572,7 +23601,7 @@ function reviewPullRequest({ files, pr, zone } = {}) {
       const data = await request(
         "POST", `${base}/api/agent`,
         { "Content-Type": "application/json" },
-        JSON.stringify({ ...body, v: 1, tab: relayTabId() }),
+        JSON.stringify({ ...body, scriptVersion: SCRIPT_VERSION, v: 1, tab: relayTabId() }),
         { retry: false },
       );
       if (data && typeof data === "object") relayClient.lastContactAt = Date.now();
@@ -23599,6 +23628,12 @@ function reviewPullRequest({ files, pr, zone } = {}) {
       relayClient.slotId = String(res.slot.slotId || "");
       relayClient.account = email;
       relayClient.admin = Boolean(res.slot.admin);
+      const required = String(res.requiredScriptVersion || "");
+      const mismatch = required && !relayVersionAtLeast(SCRIPT_VERSION, required) ? `${SCRIPT_VERSION} → ${required}` : "";
+      if (mismatch && relayClient.warned.version !== mismatch) {
+        relayClient.warned.version = mismatch;
+        log(`Обновите ScriptCat: установлена версия ${SCRIPT_VERSION}, пульт Relay требует ${required}. Откройте ссылку обновления в пульте.`, true, { ntfy: "quiet" });
+      } else if (!mismatch) relayClient.warned.version = "";
       if (relayClient.warned.hello !== relayClient.slotId) {
         relayClient.warned.hello = relayClient.slotId;
         log(`Служба Relay: вкладка опознана как слот ${relayClient.slotId} (${email}).`);
@@ -23624,6 +23659,28 @@ function reviewPullRequest({ files, pr, zone } = {}) {
       action: "event", slotId, kind: "dispatch", level: "warn", runId: work.runId, card: work.card || "",
       text: `выдача ${work.runId} не состоялась: ${String(why || "").slice(0, 300)}`,
     });
+  }
+
+  /** Передать выбранную Координатором Notion-карточку в очередь Node-службы. */
+  async function relayEnqueueTask(card, roleName) {
+    const cardId = String(card?.id || "").trim();
+    const name = String(roleName || "").trim();
+    if (!relayConfigured()) return { ok: false, why: "служба Relay не подключена" };
+    if (!cardId || !name) return { ok: false, why: "в карточке не хватает ID или роли" };
+    const directory = await roles().catch(() => []);
+    const role = directory.find((item) => String(item.name || "").trim() === name);
+    if (!role || !["Executor", "Auditor"].includes(role.fn)) {
+      return { ok: false, why: `роль «${name}» не является активным исполнителем` };
+    }
+    const result = await relayPost({
+      action: "enqueue",
+      card: cardId,
+      title: typeof taskTitle === "function" ? taskTitle(card) : cardId,
+      role: name,
+      fn: role.fn,
+      note: "план Координатора из очереди Notion",
+    });
+    return result && typeof result === "object" ? result : { ok: false, why: "служба Relay не ответила" };
   }
 
   /**
@@ -23753,6 +23810,28 @@ function reviewPullRequest({ files, pr, zone } = {}) {
         await provisionStartRelayTask({ roleName: res.role, slotId: res.slot || slotId, queueId: res.queueId });
       } else {
         await relayPost({ action: "agent", role: res.role, slotId: res.slot || slotId, queueId: res.queueId, ok: false, note: "ScriptCat provisioning-интеграция отсутствует" });
+      }
+      return;
+    }
+    if (res.kind === "turn" && res.turn === "coordinator") {
+      // Пульт «Шаг» не читает Notion и не может сам начать разговор. Он
+      // передаёт одноразовый сигнал admin-вкладке; дальше используем тот же
+      // coordinatorStep/requestPlan, что и старый ручной цикл. Если открыта
+      // не Coordinator, tick(true) сам перейдёт на неё и сохранит шаг.
+      log("Пульт Relay передал планирующий ход: запускаю Координатора.", false, { ntfy: "quiet" });
+      if (typeof tick === "function") await tick(true);
+      const expectAfter = GM_getValue(K.expect, null);
+      const pendingAfter = GM_getValue(K.pending, null);
+      const navigating = Boolean(GM_getValue(K.step, false));
+      if (!expectAfter && !pendingAfter && !navigating) {
+        const mission = typeof activeMission === "function" ? await activeMission().catch(() => null) : null;
+        await relayPost({
+          action: "report", slotId,
+          payload: {
+            turnAck: true, turnRequestId: res.turnId,
+            noMission: !mission, retry: Boolean(mission),
+          },
+        });
       }
       return;
     }
