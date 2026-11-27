@@ -96,6 +96,15 @@ test("auto mode and manual Step remain available when there is no hold or outsta
   assert.match(result.title, /работает автоматически/);
 });
 
+test("queued card guidance explains Relay slot, quota, provisioning and manual dispatch", () => {
+  const result = helpers.operatorGuidance(snapshot({ counts: { waiting: 1, inFlight: 0, blocked: 0, slots: 4 } }));
+  assert.equal(result.canStep, true);
+  assert.match(result.title, /Работа в очереди/);
+  assert.match(result.detail, /подберёт подходящий слот\/аккаунт с учётом квоты/);
+  assert.match(result.detail, /пары роль×слот ещё нет/);
+  assert.match(result.detail, /в ручном режиме нажмите «Шаг»/);
+});
+
 test("support report includes project gate state without exposing connection secrets", () => {
   const report = helpers.diagnosticReport(snapshot({
     scriptClients: [{
