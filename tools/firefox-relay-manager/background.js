@@ -96,6 +96,17 @@ async function setTabMode(tabId, slotId, mode, active, leader = true) {
   } catch { /* page has not loaded its bridge yet; next poll retries */ }
 }
 
+// `tabs.update({active:true})` selects a tab inside its window but may leave
+// another browser window in front. A coordinator turn must reach a visible,
+// foreground document: Arena can defer composer actions and timers in a
+// background window. Focus the owning window explicitly, then activate the tab.
+async function focusManagedTab(tab) {
+  if (Number.isInteger(tab.windowId)) {
+    await browser.windows.update(tab.windowId, { focused: true });
+  }
+  await browser.tabs.update(tab.id, { active: true });
+}
+
 async function pollRelay() {
   if (polling) return;
   polling = true;
@@ -141,15 +152,20 @@ async function pollRelay() {
           const preferredTabId = busyTabIds[0] || Number(map[slot.slotId]?.tabId || 0);
           const tab = await ensureTab(slot, identity, map, tabs, preferredTabId);
           openManaged += 1;
-          // Новый планирующий ход — Мастер ждёт результата: показываем ему
-          // admin-вкладку, а не прячем её за другими (D-035). Фокус один раз
-          // на id запроса; фоновая вкладка к тому же экономит таймеры ScriptCat.
+          // Новый планирующий ход — Мастер ждёт результата: выводим admin-
+          // вкладку и её окно на передний план (D-035/0.1.2). Фокус один раз
+          // на id запроса, чтобы не перехватывать внимание на каждом опросе.
           if (slot.admin && shot.turnRequest && String(shot.turnRequest.id || "") !== focusedTurnId) {
-            focusedTurnId = String(shot.turnRequest.id);
+            const requestId = String(shot.turnRequest.id || "");
             try {
               const current = await browser.tabs.get(tab.id);
-              if (!current.active) await browser.tabs.update(tab.id, { active: true });
-            } catch { /* вкладка закрылась — следующий опрос откроет заново */ }
+              await focusManagedTab(current);
+              // Ставим отметку только после успешной активации: если Firefox
+              // отклонил focus/update, следующий опрос повторит попытку.
+              focusedTurnId = requestId;
+            } catch (error) {
+              slotErrors.push(`${slot.slotId}: не удалось вывести вкладку Координатора на передний план — ${error.message || error}`);
+            }
           }
           const active = scriptAutoActive(slot, shot);
           for (const candidate of tabs) {

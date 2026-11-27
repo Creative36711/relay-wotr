@@ -1,11 +1,12 @@
 {
   "manifest_version": 2,
   "name": "Relay Container Manager",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Открывает Arena в нужных изолированных контейнерах Firefox и запускает автоцикл Relay.",
   "permissions": [
     "contextualIdentities",
     "tabs",
+    "windows",
     "storage",
     "alarms",
     "http://127.0.0.1:8787/*",
