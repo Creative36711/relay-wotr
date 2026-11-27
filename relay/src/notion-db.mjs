@@ -429,6 +429,18 @@ export function networkDiagnosticVerdict(steps = [], http = {}) {
   return "Обрыв найден на отмеченном шаге. Проверьте сетевой маршрут службы Relay.";
 }
 
+export function deepDiagnosticResult({ steps = [], http = {}, addresses = [], ms = 0 } = {}) {
+  return {
+    ok: steps.every((step) => step.ok === true),
+    steps,
+    http,
+    verdict: networkDiagnosticVerdict(steps, http),
+    picture: networkPicture(steps),
+    addresses,
+    ms,
+  };
+}
+
 export async function deepDiagnose({ token = "", fetchImpl = globalThis.fetch, timeoutMs = 15000, book = null, proxy = currentProxy() } = {}) {
   const steps = [];
   const add = (name, ok, detail) => steps.push({ name, ok, detail });
@@ -549,17 +561,7 @@ export async function deepDiagnose({ token = "", fetchImpl = globalThis.fetch, t
   }
 
   // 6. Вывод: что делать. Один пункт, а не список вариантов.
-  const verdict = networkDiagnosticVerdict(steps, http);
-
-  return {
-    ok: failed.length === 0,
-    steps,
-    http,
-    verdict,
-    picture: networkPicture(steps),
-    addresses,
-    ms: Date.now() - started,
-  };
+  return deepDiagnosticResult({ steps, http, addresses, ms: Date.now() - started });
 }
 
 /** Картинка из ASCII: где именно обрыв. */
