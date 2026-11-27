@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Relay — передача хода между агентами
 // @namespace    https://arena.ai/
-// @version      1.35.0
+// @version      1.35.1
 // @updateURL    https://raw.githubusercontent.com/Creative36711/relay-wotr/main/tools/script-cat/relay.user.js
 // @downloadURL  https://raw.githubusercontent.com/Creative36711/relay-wotr/main/tools/script-cat/relay.user.js
 // @description  Цикл Координатор → исполнитель → Координатор: агент сам коммитит, пушит и мержит PR; ScriptCat ждёт мерж и нажимает Continue.
@@ -97,7 +97,7 @@
     // D-073: отпечаток сборки вшивает build.mjs (SHA-256 источника). Номер версии
     // говорит «какой выпуск», отпечаток — «какая именно сборка»: без него проверка
     // «работает новая версия, а не прежняя под новым номером» невозможна.
-    buildFingerprint: "20a230826f7f8c3e",
+    buildFingerprint: "7d11bd436f699590",
     repo: "", // для ссылки на PR из номера
     tickMs: 15000,
     mergeGraceMs: 90000, // сколько ждём мерж, прежде чем нажать кнопки за агента
@@ -461,6 +461,8 @@
   Object.freeze(C);
   const projectApproved = () => !ACTIVE_PROFILE.invalid && !ACTIVE_PROFILE.legacy &&
     GM_getValue("cfn-project-approved", false) === true;
+  const projectCredentialsReady = () => ACTIVE_PROFILE.invalid || ACTIVE_PROFILE.legacy || Boolean(
+    GM_getValue("cfn-notion-token", "") && GM_getValue("cfn-gw-url", "") && GM_getValue("cfn-gw-key", ""));
   const projectProfileSnapshot = () => {
     if (ACTIVE_PROFILE.invalid || ACTIVE_PROFILE.legacy) return null;
     const keys = ["id", "name", "roles", "missions", "requests", "questions", "pageUrl", "questionsUrl", "repo", "branch", "driveFolder", "repos", "roleRepos",
@@ -898,7 +900,7 @@
 
   const NTFY_BASE = "https://ntfy.sh";
   const SCRIPT_VERSION =
-    (typeof GM_info !== "undefined" && GM_info?.script?.version) || "1.35.0";
+    (typeof GM_info !== "undefined" && GM_info?.script?.version) || "1.35.1";
 
   /** «https://ntfy.sh/topic?x=1» и «topic» одинаково дают topic. */
   function normalizeNtfyTopic(raw) {
@@ -22994,6 +22996,14 @@ function reviewPullRequest({ files, pr, zone } = {}) {
       }
       return;
     }
+    if (GM_getValue(K.step, false) && projectApproved() &&
+        typeof projectCredentialsReady === "function" && projectCredentialsReady() &&
+        !projectHeld() && !busy && !GM_getValue(K.pending, null) && !GM_getValue(K.expect, null)) {
+      GM_setValue(K.step, false);
+      log("Подключения синхронизированы; выполняю сохранённый отложенный шаг.");
+      if (typeof tick === "function") await tick(true);
+      return;
+    }
     const pending = GM_getValue(K.pending, null);
     const waiting = GM_getValue(K.expect, null);
     if (pending || waiting) {
@@ -23083,12 +23093,19 @@ function reviewPullRequest({ files, pr, zone } = {}) {
       const pendingAfter = GM_getValue(K.pending, null);
       const navigating = Boolean(GM_getValue(K.step, false));
       if (!expectAfter && !pendingAfter && !navigating) {
-        const mission = typeof activeMission === "function" ? await activeMission().catch(() => null) : null;
+        let mission = null;
+        let missionError = "";
+        if (typeof activeMission === "function") {
+          try { mission = await activeMission(); }
+          catch (error) { missionError = String((error && error.message) || error || "Notion не ответил").slice(0, 240); }
+        }
         await relayPost({
           action: "report", slotId,
           payload: {
             turnAck: true, turnRequestId: res.turnId,
-            noMission: !mission, retry: Boolean(mission),
+            noMission: !mission && !missionError,
+            retry: Boolean(mission || missionError),
+            ...(missionError ? { missionError } : {}),
           },
         });
       }
@@ -23111,8 +23128,16 @@ function reviewPullRequest({ files, pr, zone } = {}) {
           }
         });
     };
-    setTimeout(run, 5000);
-    setInterval(run, RELAY_CLIENT_TICK_MS);
+    // Synchronize Relay-owned credentials before the boot routine can consume
+    // a deferred manual step on a freshly navigated Coordinator page.
+    const initialSync = Promise.resolve().then(() => relayIdentity({ force: true })).catch((error) => {
+      const detail = String((error && error.message) || error || "ошибка начального hello").slice(0, 180);
+      log(`Служба Relay: начальная синхронизация не завершена — ${detail}.`, true, { ntfy: "quiet" });
+      return "";
+    }).finally(() => {
+      setTimeout(run, 5000);
+      setInterval(run, RELAY_CLIENT_TICK_MS);
+    });
     // Вкладка уходит — выдача не должна остаться без присмотра.
     window.addEventListener("pagehide", () => {
       const waiting = GM_getValue(K.expect, null);
@@ -23120,6 +23145,7 @@ function reviewPullRequest({ files, pr, zone } = {}) {
         relayPost({ action: "bye", slotId: relayClient.slotId, runId: String(waiting.runId) }).catch(() => {});
       }
     });
+    return initialSync;
   }
 
   // ───────────────────────────── цикл ─────────────────────────────
@@ -23431,6 +23457,10 @@ function reviewPullRequest({ files, pr, zone } = {}) {
           : "Проект ещё не разрешён к работе: проверьте его в управлении проектами.", true);
         if (typeof noteFeedbackPipelineHeld === "function") noteFeedbackPipelineHeld();
       }
+      return;
+    }
+    if (typeof projectCredentialsReady === "function" && !projectCredentialsReady()) {
+      if (fromToggle) log("Шаг не начат: Relay ещё не синхронизировал сохранённые Notion/Drive credentials. Повторю после подключения; вводить уже сохранённые значения не нужно.", true);
       return;
     }
     // Допуск есть — очередь обратной связи обязана жить, даже если панель
@@ -24228,7 +24258,7 @@ function reviewPullRequest({ files, pr, zone } = {}) {
   flushPollJournal = (...args) => trackProjectTask(originalProjectPollFlush(...args));
 
   entries = (GM_getValue(K.log, []) || []).slice(-C.maxLog);
-  const boot = () => {
+  const boot = async () => {
     migrateState();
     // Автоцикл не наследуется от прошлого запуска браузера: сначала — руками.
     autoForgetPersisted();
@@ -24254,10 +24284,12 @@ function reviewPullRequest({ files, pr, zone } = {}) {
       } else log("Автозапуск по ссылке пропущен: проверьте допуск, удержание и сохранённую паузу.", true);
     }
     setStatus();
+    // Сначала hello должен принять локальные настройки проекта из Relay.
+    // Только после этого разрешаем отложенный K.step: иначе новая Arena-страница
+    // успевает запустить Coordinator до того, как её profile-scoped Notion token
+    // восстановлен в памяти вкладки.
+    if (typeof relayClientStart === "function") await relayClientStart();
     setInterval(() => tick(false), C.tickMs);
-    // D-026: клиент протокола службы — hello/pull/beat/report. Решений не
-    // принимает; без адреса службы молчит и не мешает прежнему циклу.
-    if (typeof relayClientStart === "function") relayClientStart();
     // D-073: пульс для сторожа вне браузера. Сторож — отдельный процесс: он
     // видит, что пульс кончился, хотя браузер жив, и зовёт Мастера. Раз в
     // `heartbeatMs` (10 минут), а не каждый тик: это квота, а не диагностика хода.
@@ -24275,10 +24307,14 @@ function reviewPullRequest({ files, pr, zone } = {}) {
       if (document.visibilityState === "visible") tick(false);
     });
     if (GM_getValue(K.step, false) && !projectHeld()) {
-      GM_setValue(K.step, false);
-      log("Открыл страницу роли — выполняю отложенный шаг.");
-      tick(true);
-      return;
+      if (projectApproved() && typeof projectCredentialsReady === "function" && !projectCredentialsReady()) {
+        log("Отложенный шаг сохранён: жду синхронизации Notion/Drive credentials из Relay.", true);
+      } else {
+        GM_setValue(K.step, false);
+        log("Открыл страницу роли — выполняю отложенный шаг.");
+        tick(true);
+        return;
+      }
     }
     tick(false);
   };

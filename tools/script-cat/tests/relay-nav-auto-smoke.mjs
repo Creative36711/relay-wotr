@@ -42,7 +42,7 @@ const forgetStart = src.indexOf('  function autoForgetPersisted() {');
 const forget = src.slice(forgetStart, src.indexOf('\n  }\n', forgetStart) + 4);
 assert.match(forget, /GM_setValue\(K\.auto, false\)/, 'старый флаг сброшен');
 assert.match(forget, /Автоцикл прошлой сессии снят/, 'Мастер увидит, почему цикл стоит');
-assert.match(src, /const boot = \(\) => \{\s*migrateState\(\);\s*\/\/[^\n]*\n\s*autoForgetPersisted\(\);/s, 'сброс до первого шага');
+assert.match(src, /const boot = async \(\) => \{\s*migrateState\(\);\s*\/\/[^\n]*\n\s*autoForgetPersisted\(\);/s, 'сброс до первого шага');
 
 // 1.3. Ни один автопуть не включает цикл сам.
 assert.doesNotMatch(src, /GM_setValue\(K\.auto, true\)/, 'автоцикл не включается через хранилище');

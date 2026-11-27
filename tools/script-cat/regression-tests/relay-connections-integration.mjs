@@ -2,9 +2,10 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
 const read = (path) => readFile(new URL(path, import.meta.url), "utf8");
-const [connections, projectCore, profileCore, boot, client, html, app] = await Promise.all([
+const [connections, projectCore, profileCore, cycle, boot, client, html, app] = await Promise.all([
   read("../src/07-connections-ui.js"), read("../src/08-projects-ui.js"), read("../src/02-profiles-core.js"),
-  read("../src/29-boot.js"), read("../src/46-relay-client.js"), read("../../../relay/web/index.html"), read("../../../relay/web/app.js"),
+  read("../src/28-cycle.js"), read("../src/29-boot.js"), read("../src/46-relay-client.js"),
+  read("../../../relay/web/index.html"), read("../../../relay/web/app.js"),
 ]);
 assert.match(connections, /function connectionSettings\(\)/, "executor retains a project-scoped settings reader");
 assert.match(connections, /async function probeNotionConnection\(settings\)/);
@@ -15,6 +16,14 @@ assert.match(projectCore, /async function validateProjectSchema\(settings, \{ re
 assert.match(projectCore, /async function approveProjectFromRelay\(/, "pult approval still reuses read-only checks");
 assert.doesNotMatch(projectCore, /function projectsDialog\(/, "old ScriptCat profile editor is removed");
 assert.match(boot, /\n\s*mount\(\);/, "executor status and local-control panel remains mounted");
+assert.match(boot, /await relayClientStart\(\)/, "startup waits for the first Relay hello before consuming a deferred step");
+assert.match(client, /relayIdentity\(\{ force: true \}\)/, "initial hello fetches Relay-owned settings before startup work");
+assert.match(profileCore, /const projectCredentialsReady = \(\) =>[\s\S]*?cfn-notion-token[\s\S]*?cfn-gw-url[\s\S]*?cfn-gw-key/,
+  "approved work still waits until migrated project credentials exist in this tab");
+assert.match(cycle, /projectCredentialsReady\(\)/, "Coordinator cannot race credential hydration on navigation");
+assert.match(boot, /Отложенный шаг сохранён/, "failed initial hello does not discard the pending explicit Step");
+assert.match(client, /Подключения синхронизированы; выполняю сохранённый отложенный шаг/, "saved Step resumes after a later successful settings sync");
+assert.match(client, /missionError/, "Notion read failures during Coordinator startup remain actionable and retryable");
 assert.doesNotMatch(boot, /\n\s*setup\(false\);/, "legacy connection setup does not run at startup");
 for (const id of ["project-notion", "project-gw-url", "project-gw-key", "project-github", "project-ntfy", "project-ntfy-topic"])
   assert.match(html, new RegExp(`id="${id}"`), `Relay pult owns ${id}`);

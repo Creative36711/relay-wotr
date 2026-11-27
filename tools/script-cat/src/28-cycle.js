@@ -309,6 +309,10 @@
       }
       return;
     }
+    if (typeof projectCredentialsReady === "function" && !projectCredentialsReady()) {
+      if (fromToggle) log("Шаг не начат: Relay ещё не синхронизировал сохранённые Notion/Drive credentials. Повторю после подключения; вводить уже сохранённые значения не нужно.", true);
+      return;
+    }
     // Допуск есть — очередь обратной связи обязана жить, даже если панель
     // монтировалась раньше, чем работа была разрешена (внешний D-023).
     if (typeof armFeedbackWatch === "function") armFeedbackWatch();

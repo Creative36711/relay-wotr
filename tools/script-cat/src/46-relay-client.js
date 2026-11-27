@@ -438,6 +438,14 @@
       }
       return;
     }
+    if (GM_getValue(K.step, false) && projectApproved() &&
+        typeof projectCredentialsReady === "function" && projectCredentialsReady() &&
+        !projectHeld() && !busy && !GM_getValue(K.pending, null) && !GM_getValue(K.expect, null)) {
+      GM_setValue(K.step, false);
+      log("Подключения синхронизированы; выполняю сохранённый отложенный шаг.");
+      if (typeof tick === "function") await tick(true);
+      return;
+    }
     const pending = GM_getValue(K.pending, null);
     const waiting = GM_getValue(K.expect, null);
     if (pending || waiting) {
@@ -527,12 +535,19 @@
       const pendingAfter = GM_getValue(K.pending, null);
       const navigating = Boolean(GM_getValue(K.step, false));
       if (!expectAfter && !pendingAfter && !navigating) {
-        const mission = typeof activeMission === "function" ? await activeMission().catch(() => null) : null;
+        let mission = null;
+        let missionError = "";
+        if (typeof activeMission === "function") {
+          try { mission = await activeMission(); }
+          catch (error) { missionError = String((error && error.message) || error || "Notion не ответил").slice(0, 240); }
+        }
         await relayPost({
           action: "report", slotId,
           payload: {
             turnAck: true, turnRequestId: res.turnId,
-            noMission: !mission, retry: Boolean(mission),
+            noMission: !mission && !missionError,
+            retry: Boolean(mission || missionError),
+            ...(missionError ? { missionError } : {}),
           },
         });
       }
@@ -555,8 +570,16 @@
           }
         });
     };
-    setTimeout(run, 5000);
-    setInterval(run, RELAY_CLIENT_TICK_MS);
+    // Synchronize Relay-owned credentials before the boot routine can consume
+    // a deferred manual step on a freshly navigated Coordinator page.
+    const initialSync = Promise.resolve().then(() => relayIdentity({ force: true })).catch((error) => {
+      const detail = String((error && error.message) || error || "ошибка начального hello").slice(0, 180);
+      log(`Служба Relay: начальная синхронизация не завершена — ${detail}.`, true, { ntfy: "quiet" });
+      return "";
+    }).finally(() => {
+      setTimeout(run, 5000);
+      setInterval(run, RELAY_CLIENT_TICK_MS);
+    });
     // Вкладка уходит — выдача не должна остаться без присмотра.
     window.addEventListener("pagehide", () => {
       const waiting = GM_getValue(K.expect, null);
@@ -564,4 +587,5 @@
         relayPost({ action: "bye", slotId: relayClient.slotId, runId: String(waiting.runId) }).catch(() => {});
       }
     });
+    return initialSync;
   }

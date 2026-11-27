@@ -14,7 +14,7 @@
   flushPollJournal = (...args) => trackProjectTask(originalProjectPollFlush(...args));
 
   entries = (GM_getValue(K.log, []) || []).slice(-C.maxLog);
-  const boot = () => {
+  const boot = async () => {
     migrateState();
     // Автоцикл не наследуется от прошлого запуска браузера: сначала — руками.
     autoForgetPersisted();
@@ -40,10 +40,12 @@
       } else log("Автозапуск по ссылке пропущен: проверьте допуск, удержание и сохранённую паузу.", true);
     }
     setStatus();
+    // Сначала hello должен принять локальные настройки проекта из Relay.
+    // Только после этого разрешаем отложенный K.step: иначе новая Arena-страница
+    // успевает запустить Coordinator до того, как её profile-scoped Notion token
+    // восстановлен в памяти вкладки.
+    if (typeof relayClientStart === "function") await relayClientStart();
     setInterval(() => tick(false), C.tickMs);
-    // D-026: клиент протокола службы — hello/pull/beat/report. Решений не
-    // принимает; без адреса службы молчит и не мешает прежнему циклу.
-    if (typeof relayClientStart === "function") relayClientStart();
     // D-073: пульс для сторожа вне браузера. Сторож — отдельный процесс: он
     // видит, что пульс кончился, хотя браузер жив, и зовёт Мастера. Раз в
     // `heartbeatMs` (10 минут), а не каждый тик: это квота, а не диагностика хода.
@@ -61,10 +63,14 @@
       if (document.visibilityState === "visible") tick(false);
     });
     if (GM_getValue(K.step, false) && !projectHeld()) {
-      GM_setValue(K.step, false);
-      log("Открыл страницу роли — выполняю отложенный шаг.");
-      tick(true);
-      return;
+      if (projectApproved() && typeof projectCredentialsReady === "function" && !projectCredentialsReady()) {
+        log("Отложенный шаг сохранён: жду синхронизации Notion/Drive credentials из Relay.", true);
+      } else {
+        GM_setValue(K.step, false);
+        log("Открыл страницу роли — выполняю отложенный шаг.");
+        tick(true);
+        return;
+      }
     }
     tick(false);
   };
