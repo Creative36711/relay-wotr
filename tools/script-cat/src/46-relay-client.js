@@ -138,6 +138,12 @@
           ...body,
           scriptVersion: SCRIPT_VERSION,
           localPaused: typeof isPaused === "function" ? isPaused() : false,
+          // D-037: пульт и отчёт саппорта должны видеть, ПОЧЕМУ вкладка на
+          // паузе, а не только факт паузы — иначе после сброса хода кнопка
+          // «Шаг» мертва без единой объяснимой строки.
+          localPauseReason: typeof isPaused === "function" && isPaused() && typeof GM_getValue === "function"
+            ? String(GM_getValue(K.paused, "") || "").replace(/\s+/g, " ").slice(0, 160)
+            : "",
           v: 1,
           tab: relayTabId(),
         }),

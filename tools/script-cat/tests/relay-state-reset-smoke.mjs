@@ -115,6 +115,22 @@ const real = { ...ghost, sentAt: 2, verified: true };
   assert.equal(store.get('cfn-state-v'), '1.4.74', 'метка версии на месте');
 }
 
+// ── 4б. D-037: ↺ снимает и локальную паузу ─────────────────────────────
+// После сброса «Нажмите Шаг» должно быть правдой: локальная пауза
+// (в том числе восстановительная после обновления) оставляла кнопку
+// «Шаг» мёртвой — пульт видел localPaused и запрещал шаг.
+{
+  const { api, store, logs } = make({
+    'cfn-paused': 'Обновление 1.35.3 → 1.35.4: сохранены «Coordinator», plan. Проверьте доставку.',
+    'cfn-pause-context': { kind: 'update-recovery', ref: '', runId: '', turnId: '' },
+    'cfn-expect': real,
+  });
+  api.resetState();
+  assert.equal(store.get('cfn-paused'), '', 'локальная пауза снята');
+  assert.equal(store.get('cfn-pause-context'), null, 'контекст паузы очищен');
+  assert.ok(logs.some((line) => /Локальная пауза снята/.test(String(line.t || ''))), 'снятие паузы видно в журнале');
+}
+
 // ── 5. Диалог: отказ ничего не чистит ───────────────────────────────────────
 {
   const { api, store } = make({ 'cfn-pending': { roleId: 'coord', text: 'ЗАДАНИЕ', at: 1 } });

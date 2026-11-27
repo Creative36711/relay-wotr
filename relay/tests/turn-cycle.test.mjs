@@ -207,16 +207,24 @@ test("пульт не отправляет команду проверки в с
 
 test("hello остаётся видимым пульту при локальной паузе и отражает её снятие", async () => {
   const { service } = makeService();
-  await service.hello({ account: "creative36711@gmail.com", tab: "admin-paused", scriptVersion: "1.34.1", localPaused: true });
+  await service.hello({
+    account: "creative36711@gmail.com", tab: "admin-paused", scriptVersion: "1.34.1",
+    localPaused: true, localPauseReason: "Обновление 1.35.3 → 1.35.4: сохранены «Coordinator», plan.",
+  });
   let snapshot = await service.snapshot();
   let admin = snapshot.scriptClients.find((client) => client.slotId === "admin");
   assert.equal(admin.localPaused, true);
   assert.equal(admin.scriptVersion, "1.34.1");
+  assert.equal(admin.localPauseReason, "Обновление 1.35.3 → 1.35.4: сохранены «Coordinator», plan.");
 
-  await service.hello({ account: "creative36711@gmail.com", tab: "admin-paused", scriptVersion: "1.34.1", localPaused: false });
+  await service.hello({
+    account: "creative36711@gmail.com", tab: "admin-paused", scriptVersion: "1.34.1",
+    localPaused: false, localPauseReason: "Обновление 1.35.3 → 1.35.4: сохранены «Coordinator», plan.",
+  });
   snapshot = await service.snapshot();
   admin = snapshot.scriptClients.find((client) => client.slotId === "admin");
   assert.equal(admin.localPaused, false);
+  assert.equal(admin.localPauseReason, "", "снятая пауза не тащит старую причину");
 });
 
 test("снимок пульта передаёт локальную занятость, чтобы менеджер не закрыл вкладку с незавершённым шагом", async () => {

@@ -261,7 +261,11 @@ function operatorGuidance(shot) {
   };
   if (pausedAdmin) return {
     tone: "warn", mark: "Ⅱ", title: "Админская вкладка на локальной паузе ScriptCat",
-    detail: "Relay видит вкладку, но она не забирает команды. Состояние сохранено; скопируйте диагностику, если не знаете причину паузы.",
+    detail: `Relay видит вкладку, но она не забирает команды. Снимите паузу: виджет → «Обслуживание» → «Снять локальную паузу…» ` +
+      `либо нажмите ↺ в виджете (снимает ход и паузу вместе). ` +
+      (pausedAdmin.localPauseReason
+        ? `Причина из ScriptCat: «${redactDiagnosticText(String(pausedAdmin.localPauseReason).slice(0, 200))}». `
+        : "Причина не передана (вкладка на старой версии скрипта); скопируйте диагностику."),
     canStep: false,
   };
   if (Number(shot.counts?.waiting || 0) > 0) return {
@@ -406,6 +410,7 @@ function diagnosticReport(shot, bannerEntries = []) {
       clients: (shot.scriptClients || []).map((client) => ({
         slotId: client.slotId, scriptVersion: client.scriptVersion,
         localPaused: Boolean(client.localPaused), localBusy: Boolean(client.localBusy),
+        localPauseReason: client.localPauseReason ? redactDiagnosticText(String(client.localPauseReason).slice(0, 200)) : "",
         localWaiting: client.localWaiting || "", seenAt: client.seenAt || "",
         lastHelloAt: client.lastHelloAt || "", lastPullAt: client.lastPullAt || "", lastBeatAt: client.lastBeatAt || "",
         ...(client.projectId ? { projectId: redactDiagnosticText(String(client.projectId).slice(0, 120)) } : {}),
@@ -662,6 +667,7 @@ function renderScriptCatStatus(shot) {
   const adminClients = clients.filter((client) => adminSlots.has(client.slotId));
   const outdated = clients.filter((client) => !versionAtLeast(client.scriptVersion, required));
   const pausedAdmin = adminClients.some((client) => client.localPaused);
+  const pausedCause = adminClients.find((client) => client.localPaused)?.localPauseReason || "";
   const latestAdminPull = Math.max(0, ...adminClients.map((client) => Date.parse(client.lastPullAt || "") || 0));
   const adminPolledRecently = latestAdminPull > 0 && Date.now() - latestAdminPull <= 30000;
   if (shot.turnRequest && adminClients.some((client) => client.localBusy || client.localWaiting)) {
@@ -679,7 +685,10 @@ function renderScriptCatStatus(shot) {
     ));
   } else if (pausedAdmin) {
     node.append(document.createTextNode(
-      `Административная вкладка обнаружена (ScriptCat ${adminClients.map((client) => client.scriptVersion).join(", ")}), но локальная пауза ScriptCat блокирует получение команд. Раскройте виджет → «Обслуживание» → «Снять локальную паузу…»; основной режим работы выбирайте в пульте. `,
+      `Административная вкладка обнаружена (ScriptCat ${adminClients.map((client) => client.scriptVersion).join(", ")}), но локальная пауза ScriptCat блокирует получение команд. Раскройте виджет → «Обслуживание» → «Снять локальную паузу…» ` +
+        `либо нажмите ↺ в виджете (снимает ход и паузу вместе). ` +
+        (pausedCause ? `Причина из ScriptCat: «${redactDiagnosticText(String(pausedCause).slice(0, 200))}». ` : "") +
+        `Основной режим работы выбирайте в пульте. `,
     ));
   } else if (shot.turnRequest && adminClients.length && !adminPolledRecently) {
     node.append(document.createTextNode(
