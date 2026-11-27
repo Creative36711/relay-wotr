@@ -11,6 +11,7 @@ let latestSnapshot = null;
 // Один планирующий ход — одно привлечение admin-вкладки: пока id запроса
 // тот же, фокус не воруем (D-035).
 let focusedTurnId = "";
+let focusedPlanTabId = 0;
 
 const norm = (value) => String(value || "").trim().toLocaleLowerCase();
 const isArena = (url) => /^https:\/\/(?:www\.)?arena\.ai\//i.test(String(url || ""));
@@ -152,20 +153,33 @@ async function pollRelay() {
           const preferredTabId = busyTabIds[0] || Number(map[slot.slotId]?.tabId || 0);
           const tab = await ensureTab(slot, identity, map, tabs, preferredTabId);
           openManaged += 1;
-          // Новый планирующий ход — Мастер ждёт результата: выводим admin-
-          // вкладку и её окно на передний план (D-035/0.1.2). Фокус один раз
-          // на id запроса, чтобы не перехватывать внимание на каждом опросе.
-          if (slot.admin && shot.turnRequest && String(shot.turnRequest.id || "") !== focusedTurnId) {
-            const requestId = String(shot.turnRequest.id || "");
+          // Активируем Admin и при новом запросе, и если Relay уже ACK-нул
+          // его, но ScriptCat всё ещё держит expect:plan. Второй случай важен
+          // при обновлении менеджера/перезапуске: turnRequest уже снят, однако
+          // ответ Координатора ещё должен быть обработан в Arena.
+          const planWait = slot.admin
+            ? busyClients.find((client) => client.localWaiting === "expect:plan")
+            : null;
+          const requestId = String(shot.turnRequest?.id || "");
+          const needsTurnFocus = Boolean(slot.admin && requestId && requestId !== focusedTurnId);
+          const needsPlanFocus = Boolean(slot.admin && !requestId && planWait && focusedPlanTabId !== tab.id);
+          if (needsTurnFocus || needsPlanFocus) {
             try {
               const current = await browser.tabs.get(tab.id);
               await focusManagedTab(current);
-              // Ставим отметку только после успешной активации: если Firefox
-              // отклонил focus/update, следующий опрос повторит попытку.
-              focusedTurnId = requestId;
+              // Фиксируем только успешный фокус: при отказе Firefox следующий
+              // опрос попробует снова. Не фокусируем дважды на transition
+              // turnRequest → expect:plan в одной и той же вкладке.
+              focusedPlanTabId = tab.id;
+              focusedTurnId = requestId || `plan:${slot.slotId}:${tab.id}`;
             } catch (error) {
               slotErrors.push(`${slot.slotId}: не удалось вывести вкладку Координатора на передний план — ${error.message || error}`);
             }
+          } else if (slot.admin && !requestId && !planWait) {
+            // Следующий план, даже в той же вкладке, должен снова получить
+            // один focus после завершения нынешнего ожидания.
+            focusedTurnId = "";
+            focusedPlanTabId = 0;
           }
           const active = scriptAutoActive(slot, shot);
           for (const candidate of tabs) {
