@@ -135,6 +135,38 @@ test("запрос допуска из пульта требует same-origin �
   }
 });
 
+test("hello переносит уже сохранённые локальные credentials в новый профиль Relay", async () => {
+  const ctx = await startServer();
+  try {
+    const project = {
+      id: "123e4567-e89b-12d3-a456-426614174000", name: "WOTR",
+      roles: "123e4567-e89b-12d3-a456-426614174001", missions: "123e4567-e89b-12d3-a456-426614174002",
+      requests: "123e4567-e89b-12d3-a456-426614174003", questions: "123e4567-e89b-12d3-a456-426614174004",
+      pageUrl: "https://www.notion.so/workspace/page-123e4567e89b12d3a456426614174005",
+      questionsUrl: "https://www.notion.so/workspace/questions-123e4567e89b12d3a456426614174006",
+      repo: "Creative36711/open-bfme", branch: "main", driveFolder: "wotr",
+      repos: [{ repo: "Creative36711/open-bfme", branch: "main", main: true }], roleRepos: [],
+    };
+    const response = await fetch(`${ctx.base}/api/agent`, {
+      method: "POST", headers: { origin: "https://arena.ai", "content-type": "application/json" },
+      body: JSON.stringify({ action: "hello", account: "creative36711@gmail.com", tab: "migration-tab",
+        projectId: project.id, projectProfile: project, projectCredentials: {
+          notion: "ntn_existing_local", gwUrl: "https://script.google.com/macros/s/deploy/exec", gwKey: "existing_gateway_key",
+        }, localBusy: false }),
+    });
+    const hello = await response.json();
+    assert.equal(hello.projectSettings.credentials.notion, "ntn_existing_local");
+    assert.equal(hello.projectSettings.credentials.gwUrl, "https://script.google.com/macros/s/deploy/exec");
+    assert.equal(hello.projectSettings.credentials.gwKey, "existing_gateway_key");
+    assert.equal(hello.projectSettingsUnavailable, undefined);
+    const saved = await (await fetch(`${ctx.base}/api/projects`, { headers: { origin: ctx.base } })).json();
+    assert.equal(saved.profiles[0].secretStatus.notion, true);
+    assert.equal(saved.profiles[0].secretStatus.gwKey, true);
+  } finally {
+    await ctx.close();
+  }
+});
+
 test("пульт сохраняет секреты локально; только Arena получает их в ответе hello", async () => {
   const ctx = await startServer();
   try {
