@@ -136,32 +136,93 @@ function redactDiagnosticText(value) {
     .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, "[EMAIL REDACTED]");
 }
 
-function diagnosticReport(shot) {
-  const events = (shot.events || []).slice(0, 15).reverse().map((event) => ({
-    at: event.at, slot: event.slot || "", kind: event.kind || "", level: event.level || "",
-    text: redactDiagnosticText(String(event.text || "").slice(0, 500)),
+function safeDiagnosticEventData(value) {
+  let data = value;
+  if (typeof data === "string") {
+    try { data = JSON.parse(data); } catch { return null; }
+  }
+  if (!data || typeof data !== "object" || data.relayClientState !== true) return null;
+  const cleanState = (item) => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) return null;
+    const clean = {};
+    for (const key of ["kind", "roleId", "roleName", "roleFn", "turnId", "runId", "ref"]) {
+      if (typeof item[key] === "string" && item[key].trim()) clean[key] = redactDiagnosticText(item[key].trim().slice(0, 120));
+    }
+    for (const key of ["at", "sentAt", "tries"]) {
+      const number = Number(item[key]);
+      if (Number.isFinite(number) && number > 0) clean[key] = number;
+    }
+    for (const key of ["verified", "undelivered", "captcha"]) {
+      if (typeof item[key] === "boolean") clean[key] = item[key];
+    }
+    if (item.heal && typeof item.heal === "object") {
+      const heal = {};
+      for (const key of ["kind", "runId"]) {
+        if (typeof item.heal[key] === "string" && item.heal[key].trim()) heal[key] = redactDiagnosticText(item.heal[key].trim().slice(0, 120));
+      }
+      if (Object.keys(heal).length) clean.heal = heal;
+    }
+    return clean;
+  };
+  const localState = data.localState && typeof data.localState === "object"
+    ? { expect: cleanState(data.localState.expect), pending: cleanState(data.localState.pending) }
+    : null;
+  return {
+    relayClientState: true,
+    localBusy: Boolean(data.localBusy),
+    localWaiting: String(data.localWaiting || "").slice(0, 120),
+    ...(localState ? { localState } : {}),
+  };
+}
+
+function diagnosticReport(shot, bannerEntries = []) {
+  const grouped = new Map();
+  for (const event of [...(shot.events || [])].sort((a, b) => String(a.at).localeCompare(String(b.at)))) {
+    const data = safeDiagnosticEventData(event.data);
+    const item = {
+      at: event.at || "", slot: event.slot || "", kind: event.kind || "", level: event.level || "",
+      text: redactDiagnosticText(String(event.text || "").slice(0, 500)),
+      ...(data ? { data } : {}),
+    };
+    const key = JSON.stringify([item.slot, item.kind, item.level, item.text, item.data || null]);
+    const previous = grouped.get(key);
+    if (previous) {
+      previous.lastAt = item.at;
+      previous.repeatCount += 1;
+    } else grouped.set(key, { ...item, firstAt: item.at, lastAt: item.at, repeatCount: 1 });
+  }
+  const events = [...grouped.values()]
+    .sort((a, b) => String(a.lastAt).localeCompare(String(b.lastAt)))
+    .slice(-40);
+  const banners = (Array.isArray(bannerEntries) ? bannerEntries : []).slice(-20).map((entry) => ({
+    at: Number(entry.at) ? new Date(Number(entry.at)).toISOString() : "",
+    count: Number(entry.count) || 1,
+    text: redactDiagnosticText(String(entry.text || "").slice(0, 500)),
   }));
   return [
-    "Relay support report (review before sharing; access tokens and account emails are redacted)",
+    "Relay support report (review before sharing; access tokens and account emails are redacted; local prompt text is never included)",
     JSON.stringify({
       capturedAt: new Date().toISOString(),
       relayVersion: shot.version || "unknown",
       mode: shot.mode || "unknown",
       paused: Boolean(shot.paused),
       pauseReason: redactDiagnosticText(shot.pauseReason || ""),
+      cycle: shot.cycle || null,
+      lastStep: shot.lastStep || null,
       counts: shot.counts || {},
       turnRequest: shot.turnRequest || null,
       clients: (shot.scriptClients || []).map((client) => ({
         slotId: client.slotId, scriptVersion: client.scriptVersion,
         localPaused: Boolean(client.localPaused), localBusy: Boolean(client.localBusy),
         localWaiting: client.localWaiting || "", seenAt: client.seenAt || "",
-        lastPullAt: client.lastPullAt || "", lastBeatAt: client.lastBeatAt || "",
+        lastHelloAt: client.lastHelloAt || "", lastPullAt: client.lastPullAt || "", lastBeatAt: client.lastBeatAt || "",
       })),
       slots: (shot.slots || []).map((slot) => ({
         slotId: slot.slotId, admin: Boolean(slot.admin), container: slot.container || "",
         state: slot.state || "", activeRuns: (slot.runs || []).length,
       })),
       recentEvents: events,
+      pultHistory: banners,
     }, null, 2),
   ].join("\n");
 }
@@ -477,7 +538,7 @@ async function refresh() {
     // «Служба не отвечает» — неправда, когда служба отвечает и говорит, что
     // не дотянулась до книги: человек перезапускает процесс, а дело в сети.
     banner(error.network
-      ? `${error.message}\nСлужба работает; не проходит запрос наружу. Нажмите «Диагностика» в настройке.`
+      ? `${error.message}\nСлужба работает; не проходит запрос наружу. Нажмите «Проверить сеть» в настройке.`
       : `Служба не отвечает: ${error.message}\nПроверьте, что процесс запущен и что таблица состояния доступна.`);
   }
 }
@@ -712,7 +773,7 @@ async function copyDiagnostics() {
     note.textContent = "Пока нет снимка Relay. Нажмите «Обновить» и повторите.";
     return;
   }
-  const report = diagnosticReport(snapshot);
+  const report = diagnosticReport(snapshot, loadBannerHistory());
   try {
     if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(report);
     else throw new Error("clipboard API unavailable");
@@ -731,7 +792,7 @@ async function copyDiagnostics() {
       return;
     }
   }
-  note.textContent = "Диагностика скопирована. Просмотрите и вставьте сюда; токены и почта скрыты, но тексты событий могут содержать рабочие детали.";
+  note.textContent = "Диагностика скопирована. Вставьте её сюда: локальные промпты не включаются; токены и почта маскируются. Проверьте события перед отправкой.";
   announceAction("Диагностика скопирована в буфер обмена. Вставьте её в сообщение агенту.", "ok");
 }
 

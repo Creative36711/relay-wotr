@@ -97,6 +97,32 @@
     return true;
   }
 
+  /** Только поля для диагностики: промпты, текст и URL никогда не уходят в Relay. */
+  function relayLocalStateSummary(value) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+    const out = {};
+    for (const key of ["kind", "roleId", "roleName", "roleFn", "turnId", "runId", "ref"]) {
+      const item = value[key];
+      if (typeof item === "string" && item.trim()) out[key] = item.trim().slice(0, 120);
+    }
+    for (const key of ["at", "sentAt", "tries"]) {
+      const item = Number(value[key]);
+      if (Number.isFinite(item) && item > 0) out[key] = item;
+    }
+    for (const key of ["verified", "undelivered", "captcha"]) {
+      if (typeof value[key] === "boolean") out[key] = value[key];
+    }
+    if (value.heal && typeof value.heal === "object") {
+      const heal = {};
+      for (const key of ["kind", "runId"]) {
+        const item = value.heal[key];
+        if (typeof item === "string" && item.trim()) heal[key] = item.trim().slice(0, 120);
+      }
+      if (Object.keys(heal).length) out.heal = heal;
+    }
+    return out;
+  }
+
   /** POST действия в службу. Служба живёт на машине владельца, без неё — тишина. */
   async function relayPost(body) {
     const base = relayBase();
@@ -360,7 +386,15 @@
         if (relayClient.admin) log(text, true, { ntfy: "quiet" });
         await relayPost({
           action: "event", slotId, kind: "state", level: relayClient.admin ? "warn" : "info", text,
-          data: { relayClientState: true, localBusy: true, localWaiting: holdKey },
+          data: {
+            relayClientState: true,
+            localBusy: true,
+            localWaiting: holdKey,
+            localState: {
+              expect: relayLocalStateSummary(waiting),
+              pending: relayLocalStateSummary(pending),
+            },
+          },
         });
       }
       if (waiting) await relayBeat(slotId, waiting);

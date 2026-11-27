@@ -383,7 +383,53 @@ export async function pingNotion({ fetchImpl = globalThis.fetch, timeoutMs = 150
  * Картинка из ASCII не украшение: она показывает, на каком шаге обрыв — на
  * пунктире, который обрывается. Это быстрее любого текста.
  */
-export async function deepDiagnose({ token = "", fetchImpl = globalThis.fetch, timeoutMs = 15000, book = null } = {}) {
+export function tcpFamilyDiagnostic(addresses = [], family, probe = null) {
+  const target = addresses.find((item) => item.family === family);
+  if (!target) {
+    return { ok: true, detail: "DNS не вернул адрес для этого семейства; пропускаю проверку" };
+  }
+  if (!probe) return { ok: false, detail: `${target.address}: проверка не выполнена` };
+  return {
+    ok: Boolean(probe.ok),
+    detail: probe.ok ? `${target.address} за ${probe.ms} мс` : `${target.address}: ${probe.why}`,
+  };
+}
+
+export function networkDiagnosticVerdict(steps = [], http = {}) {
+  const failed = steps.filter((step) => !step.ok).map((step) => step.name);
+  const passed = (name) => steps.find((step) => step.name === name)?.ok === true;
+  if (failed.length === 0) {
+    return "Все проверенные звенья проходят: служба видит Notion. Если проверка токена всё равно отказывает — проверьте сам токен и доступ интеграции.";
+  }
+  if (failed.includes("Подмена сертификата")) {
+    return "Сертификат подменён: между службой и Notion стоит антивирус или прокси. Отключите проверку HTTPS в антивирусе.";
+  }
+  if (http.substituted) {
+    return `Ответил не Notion (${http.substituted.why}). Это фильтр по домену: правило в VPN-клиенте или у провайдера.`;
+  }
+  if (failed.includes("Прокси Node")) {
+    return "Прокси задан, но не применяется Node. Включите прокси для Relay (--use-env-proxy) или уберите неверную настройку прокси.";
+  }
+  if (failed.includes("TLS")) {
+    return "TCP проходит, TLS рвётся: соединение до Notion не устанавливается. Проверьте HTTPS-фильтрацию в антивирусе и маршрут notion.com в VPN.";
+  }
+  const why = String(http.why || "");
+  if (failed.includes("Ответ Notion") && /UND_ERR_CONNECT_TIMEOUT|ETIMEDOUT|ETIMEOUT/i.test(why) && passed("TCP IPv4") && passed("TLS")) {
+    return `DNS, TCP IPv4 и TLS до Notion проходят, но отдельный HTTPS-запрос Node завершился таймаутом (${why}). Это не ошибка токена и не общий запрет TCP: проверьте маршрут api.notion.com в VPN и применяется ли прокси Node.`;
+  }
+  if (failed.some((name) => name.startsWith("TCP"))) {
+    return "TCP-подключение к доступному адресу Notion не установилось. Проверьте маршрут api.notion.com в VPN или сетевом фильтре.";
+  }
+  if (failed.includes("DNS")) {
+    return "DNS не разрешил имя api.notion.com: проверьте DNS или настройку защищённого DNS в VPN.";
+  }
+  if (failed.includes("Ответ Notion")) {
+    return `HTTPS-запрос к Notion не прошёл (${why || "ответ не получен"}), хотя базовые проверки соединения завершились. Проверьте маршрут api.notion.com в VPN.`;
+  }
+  return "Обрыв найден на отмеченном шаге. Проверьте сетевой маршрут службы Relay.";
+}
+
+export async function deepDiagnose({ token = "", fetchImpl = globalThis.fetch, timeoutMs = 15000, book = null, proxy = currentProxy() } = {}) {
   const steps = [];
   const add = (name, ok, detail) => steps.push({ name, ok, detail });
   const started = Date.now();
@@ -402,7 +448,11 @@ export async function deepDiagnose({ token = "", fetchImpl = globalThis.fetch, t
   // 2. TCP до каждого семейства
   for (const family of [4, 6]) {
     const target = addresses.find((item) => item.family === family);
-    if (!target) { add(`TCP IPv${family}`, false, "адреса нет"); continue; }
+    if (!target) {
+      const result = tcpFamilyDiagnostic(addresses, family);
+      add(`TCP IPv${family}`, result.ok, result.detail);
+      continue;
+    }
     const probe = await new Promise((resolve) => {
       const socket = connect({ host: target.address, port: 443, timeout: 5000 });
       const at = Date.now();
@@ -410,7 +460,8 @@ export async function deepDiagnose({ token = "", fetchImpl = globalThis.fetch, t
       socket.once("timeout", () => { socket.destroy(); resolve({ ok: false, why: "таймаут 5 с" }); });
       socket.once("error", (error) => resolve({ ok: false, why: error.code || "ошибка" }));
     });
-    add(`TCP IPv${family}`, probe.ok, probe.ok ? `${target.address} за ${probe.ms} мс` : `${target.address}: ${probe.why}`);
+    const result = tcpFamilyDiagnostic(addresses, family, probe);
+    add(`TCP IPv${family}`, result.ok, result.detail);
   }
 
   // 3. TLS: с кем именно установлено соединение.
@@ -444,7 +495,19 @@ export async function deepDiagnose({ token = "", fetchImpl = globalThis.fetch, t
     }
   }
 
-  // 4. Настоящий запрос, с телом ответа.
+  // 4. Путь fetch может отличаться от raw TCP/TLS проб: Node может применять
+  // системный HTTPS_PROXY или идти напрямую. Адрес прокси не выводим — в нём
+  // могут быть логин и пароль.
+  const proxyConfigured = Boolean(proxy?.url);
+  const proxyUsed = Boolean(proxy?.used);
+  add("Прокси Node", !proxyConfigured || proxyUsed,
+    !proxyConfigured
+      ? "прокси не задан; Node идёт напрямую"
+      : proxyUsed
+        ? "прокси задан и применяется (адрес скрыт)"
+        : "прокси задан, но Node его не применяет; нужен --use-env-proxy");
+
+  // 5. Настоящий запрос, с телом ответа.
   let http = { ok: false, why: "не выполнялся" };
   try {
     const response = await fetchImpl(`${API}/users/me`, {
@@ -485,19 +548,8 @@ export async function deepDiagnose({ token = "", fetchImpl = globalThis.fetch, t
     }
   }
 
-  // 5. Вывод: что делать. Один пункт, а не список вариантов.
-  const failed = steps.filter((step) => !step.ok).map((step) => step.name);
-  const verdict = failed.length === 0
-    ? "Всё звенья проходят: служба видит Notion. Если проверка токена всё равно отказывает — дело в самом токене или в доступе интеграции."
-    : failed.includes("Подмена сертификата")
-      ? "Сертификат подменён: между службой и Notion стоит антивирус или прокси. Отключите проверку HTTPS в антивирусе."
-      : http.substituted
-        ? `Ответил не Notion (${http.substituted.why}). Это фильтр по домену: правило в VPN-клиенте или провайдер.`
-        : failed.includes("TLS")
-          ? "TCP проходит, TLS рвётся: соединение до Notion не устанавливается. Это правило в VPN-клиенте (HAPP/Xray) для домена notion.com."
-          : failed.some((name) => name.startsWith("TCP"))
-            ? "TCP не проходит: сеть не пускает к api.notion.com. Проверьте режим VPN."
-            : "DNS не разрешает имя: смените DNS или выключите «защищённый DNS» в VPN.";
+  // 6. Вывод: что делать. Один пункт, а не список вариантов.
+  const verdict = networkDiagnosticVerdict(steps, http);
 
   return {
     ok: failed.length === 0,
