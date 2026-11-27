@@ -43,7 +43,9 @@
   }
 
   function relayConnectionLabel() {
-    if (!relayConfigured()) return "Node Relay не настроен";
+    if (!relayConfigured()) {
+      return `Node Relay: авто-поиск 127.0.0.1:8787${relayClient.lastError ? ` · ${relayClient.lastError}` : ""}`;
+    }
     if (!relayClient.slotId) {
       const state = relayClient.lastContactAt ? "не зарегистрирован" : "нет связи";
       return `Node Relay: ${state}${relayClient.lastError ? ` · ${relayClient.lastError}` : ""}`;
@@ -95,6 +97,7 @@
       );
       if (data && typeof data === "object") {
         relayClient.lastContactAt = Date.now();
+        relayContactAt = relayClient.lastContactAt;
         relayClient.lastError = "";
       } else {
         relayClient.lastError = "служба Relay вернула ответ в неизвестном формате";
@@ -282,7 +285,8 @@
 
   /** Тик клиента: опознание → работа или удар сердца. Никаких решений. */
   async function relayClientTick() {
-    if (!relayConfigured()) return;
+    // Даже без ручной настройки пробуем стандартный IPv4 loopback. После первого
+    // ответа службы relayConfigured() становится true; никакой ввод URL не нужен.
     // Объявляем вкладку службе даже при локальной паузе. Иначе пульт видит
     // «административный клиент не найден» и не может объяснить, что именно
     // мешает команде. Пауза по-прежнему запрещает брать работу/turn.
@@ -359,7 +363,6 @@
 
   /** Запуск клиента из загрузки: первый вопрос — через паузу, дальше по таймеру. */
   function relayClientStart() {
-    if (!relayConfigured()) return;
     const run = () => {
       Promise.resolve()
         .then(() => relayClientTick())

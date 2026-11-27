@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Relay — передача хода между агентами
 // @namespace    https://arena.ai/
-// @version      1.29.0
+// @version      1.30.0
 // @updateURL    https://raw.githubusercontent.com/Creative36711/relay-wotr/main/tools/script-cat/relay.user.js
 // @downloadURL  https://raw.githubusercontent.com/Creative36711/relay-wotr/main/tools/script-cat/relay.user.js
 // @description  Цикл Координатор → исполнитель → Координатор: агент сам коммитит, пушит и мержит PR; ScriptCat ждёт мерж и нажимает Continue.
@@ -97,7 +97,7 @@
     // D-073: отпечаток сборки вшивает build.mjs (SHA-256 источника). Номер версии
     // говорит «какой выпуск», отпечаток — «какая именно сборка»: без него проверка
     // «работает новая версия, а не прежняя под новым номером» невозможна.
-    buildFingerprint: "1993ba24887fcc11",
+    buildFingerprint: "77369b39e2ac0687",
     repo: "", // для ссылки на PR из номера
     tickMs: 15000,
     mergeGraceMs: 90000, // сколько ждём мерж, прежде чем нажать кнопки за агента
@@ -804,7 +804,7 @@
 
   const NTFY_BASE = "https://ntfy.sh";
   const SCRIPT_VERSION =
-    (typeof GM_info !== "undefined" && GM_info?.script?.version) || "1.29.0";
+    (typeof GM_info !== "undefined" && GM_info?.script?.version) || "1.30.0";
 
   /** «https://ntfy.sh/topic?x=1» и «topic» одинаково дают topic. */
   function normalizeNtfyTopic(raw) {
@@ -2043,9 +2043,12 @@
       gwUrl: String(GM_getValue(K.gwUrl, "") || "").trim(),
       gwKey: String(GM_getValue(K.gwKey, "") || "").trim(),
       github: String(GM_getValue(K.ghToken, "") || "").trim(),
-      // D-015: адрес службы Relay — не секрет и не шлюз Drive. Без него скрипт
-      // не видит лист «Экземпляры» и не может назвать адрес пары (роль, слот).
-      relayUrl: String(GM_getValue("cfn-relay-url", "") || "").trim().replace(/\/+$/, ""),
+      // D-030: обычный локальный Relay подхватывается автоматически; поле
+      // остаётся только для нестандартного порта/хоста.
+      relayUrl: typeof relayBase === "function"
+        ? relayBase()
+        : String(GM_getValue("cfn-relay-url", "") || "http://127.0.0.1:8787").trim().replace(/\/+$/, ""),
+      relayAuto: !String(GM_getValue("cfn-relay-url", "") || "").trim(),
     };
   }
 
@@ -2205,8 +2208,8 @@
             <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap"><strong id="cfn-connection-relay-title" style="font-size:15px;color:#fff">Служба Relay</strong><span style="${quiet}">лист «Экземпляры» и адреса агентов</span></div>
             <div id="cfn-connection-relay-status" role="status" style="${quiet};margin:4px 0 8px"></div>
             <label for="cfn-connection-relay-url" style="font-weight:600">Адрес службы</label>
-            <input id="cfn-connection-relay-url" type="url" autocomplete="off" spellcheck="false" placeholder="http://localhost:8787" style="${field}">
-            <div style="${quiet};margin-top:8px">Адрес, который печатает транспорт при запуске. По нему скрипт читает «Экземпляры»: рабочее место агента — пара (роль, слот), а не поле «Agent URL» в «Ролях». Пусто — скрипт работает по старым правилам и адрес у неадминских ролей не найдёт.</div>
+            <input id="cfn-connection-relay-url" type="url" autocomplete="off" spellcheck="false" placeholder="Авто: http://127.0.0.1:8787" style="${field}">
+            <div style="${quiet};margin-top:8px">Обычно адрес подставляется автоматически: http://127.0.0.1:8787. Меняйте его только при нестандартном порте или отдельном сервере. localhost автоматически переводится на IPv4, чтобы избежать выбора недоступного ::1.</div>
           </section>
           <section style="${card}" aria-labelledby="cfn-connection-notion-title">
             <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap"><strong id="cfn-connection-notion-title" style="font-size:15px;color:#fff">Notion</strong><span style="${quiet}">базы и очередь</span></div>
@@ -2290,6 +2293,7 @@
       gwKey: driveRemove.checked ? "" : keyInput.value.trim() || saved.gwKey,
       github: githubRemove.checked ? "" : githubInput.value.trim() || saved.github,
       relayUrl: relayInput.value.trim().replace(/\/+$/, ""),
+      relayAuto: saved.relayAuto && relayInput.value.trim().replace(/\/+$/, "") === saved.relayUrl,
     });
     const needsTrust = (settings, endpoint = connectionEndpoint(settings.gwUrl)) =>
       endpoint.ok && Boolean(settings.gwUrl) && (!endpoint.standard ||
@@ -2319,8 +2323,9 @@
       status("drive", !endpoint.ok ? "Сохранён небезопасный или неверный URL. Замените его на HTTPS." :
         saved.gwUrl && saved.gwKey ? "Сохранён · ещё не проверен" : "Не настроен полностью", endpoint.ok ? "idle" : "error");
       status("github", saved.github ? "Сохранён · ещё не проверен" : "Без токена · доступ не проверен");
-      status("relay", !saved.relayUrl ? "Не задан · адреса пар не читаются"
-        : /^https?:\/\//.test(saved.relayUrl) ? "Задан · проверю связь при сохранении" : "Нужен полный адрес, начиная с http://");
+      status("relay", !saved.relayUrl ? "Не задан · скрипт использует автоадрес"
+        : saved.relayAuto ? `Автоматически · ${saved.relayUrl}`
+          : /^https?:\/\//.test(saved.relayUrl) ? "Задан · проверю связь при сохранении" : "Нужен полный адрес, начиная с http://");
     };
     const changed = () => !sameConnections(read(), saved);
     const close = () => {
@@ -4767,14 +4772,29 @@
    * `http://` разрешён нарочно: служба живёт на машине владельца, и HTTPS для
    * localhost — самообман, а не защита.
    */
-  function relayBase() {
+  const RELAY_DEFAULT_BASE = "http://127.0.0.1:8787";
+
+  function relayStoredBase() {
     const raw = String(GM_getValue("cfn-relay-url", "") || "").trim().replace(/\/+$/, "");
-    if (!raw) return "";
-    if (!/^https?:\/\/[^\s/]+/i.test(raw)) return "";
-    return raw;
+    return /^https?:\/\/[^\s/]+/i.test(raw) ? raw : "";
   }
 
-  const relayConfigured = () => Boolean(relayBase());
+  function relayBase() {
+    const raw = relayStoredBase() || RELAY_DEFAULT_BASE;
+    // Node binds 0.0.0.0 (IPv4). `localhost` can resolve to ::1 first in
+    // Firefox, where that IPv4-only listener is unreachable. Canonicalize the
+    // standard local alias to the explicitly permitted IPv4 loopback.
+    return raw.replace(/^(https?:\/\/)localhost(?=:\d|\/|$)/i, (_match, scheme) => `${scheme}127.0.0.1`);
+  }
+
+  // Shared, initialized before boot (29-boot can run before 46-relay-client).
+  let relayContactAt = 0;
+
+  // Empty setting means auto-discover the standard local service. Other legacy
+  // paths only switch to Relay mode after an explicit URL or a recent response.
+  const relayConfigured = () => Boolean(
+    relayStoredBase() || (relayContactAt && Date.now() - relayContactAt <= 180000),
+  );
 
   /**
    * Снимок состояния из службы.
@@ -23598,7 +23618,9 @@ function reviewPullRequest({ files, pr, zone } = {}) {
   }
 
   function relayConnectionLabel() {
-    if (!relayConfigured()) return "Node Relay не настроен";
+    if (!relayConfigured()) {
+      return `Node Relay: авто-поиск 127.0.0.1:8787${relayClient.lastError ? ` · ${relayClient.lastError}` : ""}`;
+    }
     if (!relayClient.slotId) {
       const state = relayClient.lastContactAt ? "не зарегистрирован" : "нет связи";
       return `Node Relay: ${state}${relayClient.lastError ? ` · ${relayClient.lastError}` : ""}`;
@@ -23650,6 +23672,7 @@ function reviewPullRequest({ files, pr, zone } = {}) {
       );
       if (data && typeof data === "object") {
         relayClient.lastContactAt = Date.now();
+        relayContactAt = relayClient.lastContactAt;
         relayClient.lastError = "";
       } else {
         relayClient.lastError = "служба Relay вернула ответ в неизвестном формате";
@@ -23837,7 +23860,8 @@ function reviewPullRequest({ files, pr, zone } = {}) {
 
   /** Тик клиента: опознание → работа или удар сердца. Никаких решений. */
   async function relayClientTick() {
-    if (!relayConfigured()) return;
+    // Даже без ручной настройки пробуем стандартный IPv4 loopback. После первого
+    // ответа службы relayConfigured() становится true; никакой ввод URL не нужен.
     // Объявляем вкладку службе даже при локальной паузе. Иначе пульт видит
     // «административный клиент не найден» и не может объяснить, что именно
     // мешает команде. Пауза по-прежнему запрещает брать работу/turn.
@@ -23914,7 +23938,6 @@ function reviewPullRequest({ files, pr, zone } = {}) {
 
   /** Запуск клиента из загрузки: первый вопрос — через паузу, дальше по таймеру. */
   function relayClientStart() {
-    if (!relayConfigured()) return;
     const run = () => {
       Promise.resolve()
         .then(() => relayClientTick())

@@ -27,14 +27,29 @@
    * `http://` разрешён нарочно: служба живёт на машине владельца, и HTTPS для
    * localhost — самообман, а не защита.
    */
-  function relayBase() {
+  const RELAY_DEFAULT_BASE = "http://127.0.0.1:8787";
+
+  function relayStoredBase() {
     const raw = String(GM_getValue("cfn-relay-url", "") || "").trim().replace(/\/+$/, "");
-    if (!raw) return "";
-    if (!/^https?:\/\/[^\s/]+/i.test(raw)) return "";
-    return raw;
+    return /^https?:\/\/[^\s/]+/i.test(raw) ? raw : "";
   }
 
-  const relayConfigured = () => Boolean(relayBase());
+  function relayBase() {
+    const raw = relayStoredBase() || RELAY_DEFAULT_BASE;
+    // Node binds 0.0.0.0 (IPv4). `localhost` can resolve to ::1 first in
+    // Firefox, where that IPv4-only listener is unreachable. Canonicalize the
+    // standard local alias to the explicitly permitted IPv4 loopback.
+    return raw.replace(/^(https?:\/\/)localhost(?=:\d|\/|$)/i, (_match, scheme) => `${scheme}127.0.0.1`);
+  }
+
+  // Shared, initialized before boot (29-boot can run before 46-relay-client).
+  let relayContactAt = 0;
+
+  // Empty setting means auto-discover the standard local service. Other legacy
+  // paths only switch to Relay mode after an explicit URL or a recent response.
+  const relayConfigured = () => Boolean(
+    relayStoredBase() || (relayContactAt && Date.now() - relayContactAt <= 180000),
+  );
 
   /**
    * Снимок состояния из службы.

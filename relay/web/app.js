@@ -171,7 +171,7 @@ function renderHeader(shot) {
         ? "Административная вкладка связана, но ScriptCat на локальной паузе. Снимите её в виджете ScriptCat; запрос останется в очереди."
         : adminClients.length
           ? "Административная вкладка на связи. Жду её следующего опроса Relay (обычно до 15 секунд)."
-          : `Запрос ждёт подключённую административную вкладку. В ScriptCat → Подключения укажите ${location.origin} и разрешите localhost в менеджере скриптов; затем перезагрузите Arena под админским аккаунтом.`);
+          : `Запрос ждёт административную вкладку. ScriptCat автоматически подключается к http://127.0.0.1:8787; проверьте разрешение localhost/127.0.0.1 в менеджере скриптов и перезагрузите Arena под admin.`);
   } else banner("");
 }
 
@@ -202,7 +202,7 @@ function renderScriptCatStatus(shot) {
   const pausedAdmin = adminClients.some((client) => client.localPaused);
   if (!adminClients.length) {
     node.append(document.createTextNode(
-      `Пульт не получил сигнал ни от одной вкладки админского слота. В ScriptCat → Подключения укажите ${location.origin}; после установки разрешите localhost в менеджере скриптов, затем перезагрузите Arena под аккаунтом admin. `,
+      `Пульт не получил сигнал от админской вкладки. Адрес Relay подставляется автоматически (http://127.0.0.1:8787): не вводите его вручную. Проверьте одноразовое разрешение localhost/127.0.0.1 в ScriptCat и перезагрузите Arena под admin. `,
     ));
   } else if (outdated.length) {
     const versions = [...new Set(outdated.map((client) => `${client.slotId}: ${client.scriptVersion || "версия не сообщается"}`))];
