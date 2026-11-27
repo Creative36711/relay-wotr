@@ -16,7 +16,8 @@ import { planOne, planBatch, releaseAndRequeue } from "./dispatch.mjs";
 import { accountState, slotGate, limitMark } from "./accounts.mjs";
 import { parseEvents, makeEvent, incidentWindow } from "./events.mjs";
 import { buildIncidentPackage } from "./incident.mjs";
-import { parseSettings } from "./settings.mjs";
+import { parseSettings, SETTINGS, coerceSetting } from "./settings.mjs";
+import { parseTurnMarker } from "./markers.mjs";
 import { planSetup, applySetup } from "./setup.mjs";
 import { searchDatabases, fetchRoles, notionTokenFrom, pingNotion, describeNonJson } from "./notion-db.mjs";
 import { ACTIONS, CONTROL, PROTOCOL_VERSION, validateRequest, idle, work } from "./protocol.mjs";
@@ -123,6 +124,25 @@ export function createService({
     memory.settingsCache = values;
     memory.settingsAt = now();
     return values;
+  }
+
+  /**
+   * Запись одной настройки: лист «Настройки», строка по ключу.
+   *
+   * Нужна ходу цикла (D-025): `cycle.turn`/`cycle.round` — состояние, которое
+   * обязано пережить перезапуск, но читается так же, как обычная настройка.
+   * Кэш сбрасывается сразу: следующий шаг обязан видеть свежий ход.
+   */
+  async function writeSetting(key, value) {
+    const spec = SETTINGS[key];
+    const coerced = spec ? coerceSetting(key, value) : String(value ?? "").trim();
+    const { rows } = await store.read("settings");
+    const index = rows.findIndex((row) => String(row?.[0] ?? "").trim() === key);
+    const cells = [key, String(coerced), spec?.type || "text", spec?.group || "basic", String(spec?.default ?? ""), spec?.description || ""];
+    if (index >= 0) await store.updateRange("settings", index + 2, [cells]);
+    else await store.append("settings", [cells]);
+    memory.settingsCache = null;
+    return String(coerced);
   }
 
   /**
@@ -800,6 +820,43 @@ export function createService({
       text: released.freedSlot ? `слот ${slotId} свободен: ход возвращён Координатору` : "слот ещё занят другой выдачей",
       runId,
     });
+
+    // Ход цикла (D-025): принятый ответ может нести решение хода.
+    // Служба исполняет протокол вкладки, а не переписывает его:
+    //   next: "done"  → миссия готова, ход приёмке (Warden);
+    //   verdict accept → миссия принята, цикл завершён;
+    //   verdict rework → возврат Координатору, круг +1; четвёртый — пауза:
+    //                    лимит доработок три, как во вкладке;
+    //   verdict master → пауза: без владельца не продолжить.
+    const decision = parseTurnMarker(payload.markerRaw || "");
+    if (decision?.kind === "coordinator") {
+      if (decision.next === "done") {
+        await writeSetting("cycle.turn", "warden");
+        await record({ slot: slotId, tab, kind: "state", text: "ход: миссия готова — передана приёмке (Warden)", runId, card: run?.["Карточка"] || "" });
+      } else if (String((await loadSettings())["cycle.turn"] || "coordinator") !== "coordinator") {
+        // Новый план после завершения/приёмки: ход снова у Координатора.
+        await writeSetting("cycle.turn", "coordinator");
+        await record({ slot: slotId, tab, kind: "state", text: `ход: план Координатора (next: ${clip(decision.next, 40)}) — цикл открыт`, runId, card: run?.["Карточка"] || "" });
+      }
+    } else if (decision?.kind === "review") {
+      const settingsNow = await loadSettings();
+      if (decision.verdict === "accept") {
+        await writeSetting("cycle.turn", "done");
+        await record({ slot: slotId, tab, kind: "state", text: "приёмка: миссия принята — цикл завершён", runId, card: run?.["Карточка"] || "" });
+      } else if (decision.verdict === "rework") {
+        const round = (Number(settingsNow["cycle.round"]) || 0) + 1;
+        await writeSetting("cycle.round", round);
+        await writeSetting("cycle.turn", "coordinator");
+        if (round > 3) {
+          await pause({ reason: `приёмка: возврат №${round} — лимит доработок (3), нужен Мастер` });
+        } else {
+          await record({ slot: slotId, tab, kind: "state", level: "warn", text: `приёмка: возврат (круг ${round}) — ход Координатору`, runId, card: run?.["Карточка"] || "" });
+        }
+      } else if (decision.verdict === "master") {
+        await pause({ reason: "приёмка: master — без владельца не продолжить" });
+      }
+    }
+
     return { ok: true, runId, freedSlot: released.freedSlot, busySlots: released.busySlots };
   }
 
@@ -818,6 +875,16 @@ export function createService({
       const data = await loadAll();
       if (data.settings["cycle.mode"] === "manual" && origin === "auto") {
         return idle("режим ручной: автоцикл выключен");
+      }
+      // Ход завершён (D-025): приёмка приняла миссию — новых выдач нет.
+      // Новый цикл открывает маркер Координатора (next не в done) либо
+      // человек в листе «Настройки» (cycle.turn).
+      if (data.settings["cycle.turn"] === "done") {
+        const why = "цикл завершён: миссия принята приёмкой";
+        memory.lastTick = now();
+        memory.lastStep = { at: isoNow(now()), count: 0, why };
+        await record({ kind: "tick", text: `шаг: ${why}` });
+        return { ok: true, planned: 0, requested: 0, why, plans: [], agentRequests: [], summary: data.settings };
       }
       const limits = limitsFromEvents(data.events);
       const plan = planBatch({
@@ -861,16 +928,29 @@ export function createService({
         issued.push({ itemId: replan.item["ID"], card: replan.item["Карточка"], slot: replan.slot.slotId, runId: run["Run ID"] });
       }
 
+      // Ход цикла (D-025): когда выдавать нечего, «выдач 0» — не вся правда.
+      // Правда называется по протоколу: пустая очередь — планирующий ход
+      // Координатора, готовая миссия — приёмка, принятая — цикл завершён.
+      let why = plan.why;
+      if (!issued.length && !agentRequests.length) {
+        const turn = String(data.settings["cycle.turn"] || "coordinator");
+        const waiting = data.queue.filter((item) => norm(item["Статус"]) === QUEUE.WAITING).length;
+        if (turn === "warden") why = "миссия у приёмки (Warden): ждёт accept или rework";
+        else if (!waiting) why = "ход у Координатора: очередь пуста — нужен планирующий ход";
+      }
+
       memory.lastTick = now();
-      memory.lastStep = { at: isoNow(now()), count: issued.length, why: plan.why };
+      memory.lastStep = { at: isoNow(now()), count: issued.length, why };
       await record({
         kind: "tick",
-        text: `шаг: выдач ${issued.length}${agentRequests.length ? `, заданий на агента ${agentRequests.length}` : ""} (${plan.why})`,
+        text: issued.length || agentRequests.length
+          ? `шаг: выдач ${issued.length}${agentRequests.length ? `, заданий на агента ${agentRequests.length}` : ""} (${plan.why})`
+          : `шаг: ${why}`,
         data: { issued, requested: agentRequests },
       });
       return {
         ok: true, planned: issued.length, requested: agentRequests.length,
-        why: plan.why, plans: issued, agentRequests, summary: data.settings,
+        why, plans: issued, agentRequests, summary: data.settings,
       };
     } finally {
       release(owner);
@@ -926,6 +1006,12 @@ export function createService({
       // пока справочник не читается, иначе оно приглашает сломать рабочее.
       notion: { ready: Boolean(notionTokenNow()) },
       mode: data.settings["cycle.mode"],
+      // Ход цикла (D-025): для строки запуска пульта — кто держит очередь
+      // решений прямо сейчас. Пусто/координатор — цикл открыт.
+      cycle: {
+        turn: data.settings["cycle.turn"] || "coordinator",
+        round: Number(data.settings["cycle.round"]) || 0,
+      },
       paused: memory.paused,
       pauseReason: memory.pauseReason,
       lastStep: memory.lastStep,
@@ -1218,6 +1304,12 @@ export function createService({
       text: `в очередь поставлено: ${item["Заголовок"] || cardId}${item["Роль"] ? ` (${item["Роль"]})` : ""}`,
       card: cardId,
     });
+    // Ход завершён, а человек ставит работу — цикл открыт заново (D-025):
+    // иначе «В очередь» молча упёрся бы в «цикл завершён» на следующем шаге.
+    if (String(data.settings["cycle.turn"] || "coordinator") === "done") {
+      await writeSetting("cycle.turn", "coordinator");
+      await record({ kind: "state", text: "новая работа: ход возвращён Координатору (цикл после приёмки открыт заново)", card: cardId });
+    }
     return { ok: true, itemId: item["ID"], item };
   }
 

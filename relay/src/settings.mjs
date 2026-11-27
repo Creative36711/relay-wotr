@@ -37,6 +37,13 @@ export const SETTINGS = {
   "cycle.maxPerRole": { group: "advanced", type: "number", default: 1, min: 1, max: 8 },
   "cycle.slotIdleMs": { group: "advanced", type: "number", default: 180000, min: 60000 },
   "cycle.tickMs": { group: "advanced", type: "number", default: 5000, min: 1000 },
+  // Ход цикла (D-025): кто держит очередь решений. `coordinator` — рабочий и
+  // планирующий ходы, `warden` — приёмка (next: "done" от Координатора),
+  // `done` — миссия принята, цикл стоит. Пишется службой по маркерам.
+  "cycle.turn": { group: "basic", type: "enum", values: ["coordinator", "warden", "done"], default: "coordinator" },
+  // Круг доработок приёмки: счётчик возвратов. Лимит — 3, как во вкладке:
+  // четвёртый возврат будит Мастера (пауза с причиной).
+  "cycle.round": { group: "advanced", type: "number", default: 0, min: 0, max: 99 },
 
   "net.gmTimeoutMs": { group: "advanced", type: "number", default: 45000, min: 5000 },
   "net.notionTimeoutMs": { group: "advanced", type: "number", default: 8000, min: 2000 },
