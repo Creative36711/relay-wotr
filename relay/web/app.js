@@ -20,7 +20,20 @@ const post = async (path, body) => {
 let snapshot = null;
 let busy = false;
 
-const fmtTime = (iso) => (iso || "").replace("T", " ").replace("Z", "").slice(0, 19);
+const fmtTime = (iso) => {
+  const date = new Date(iso || "");
+  if (Number.isNaN(date.getTime())) return String(iso || "");
+  const parts = Object.fromEntries(new Intl.DateTimeFormat("ru-RU", {
+    timeZone: "Europe/Moscow",
+    day: "2-digit",
+    month: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(date).map((part) => [part.type, part.value]));
+  return `${parts.day}.${parts.month} ${parts.hour}:${parts.minute}:${parts.second} МСК`;
+};
 const shortId = (id) => String(id || "").slice(0, 10);
 
 function banner(text) {
@@ -119,7 +132,7 @@ function renderEvents(shot) {
     const tone = plain.tone || (event.level === "error" ? "error" : event.level === "warn" ? "warn" : event.kind === "ui" ? "ui" : "");
     row.className = tone;
     const where = [event.slot, event.tab ? `#${event.tab}` : ""].filter(Boolean).join(" ");
-    row.textContent = `${fmtTime(event.at).slice(11)} ${where ? `[${where}] ` : ""}${plain.text}`;
+    row.textContent = `${fmtTime(event.at)} ${where ? `[${where}] ` : ""}${plain.text}`;
     host.append(row);
   }
 }
@@ -158,7 +171,7 @@ function renderHeader(shot) {
         ? "Административная вкладка связана, но ScriptCat на локальной паузе. Снимите её в виджете ScriptCat; запрос останется в очереди."
         : adminClients.length
           ? "Административная вкладка на связи. Жду её следующего опроса Relay (обычно до 15 секунд)."
-          : "Запрос ждёт подключённую административную вкладку. Проверьте в ScriptCat → Подключения адрес этого Relay, затем перезагрузите Arena под админским аккаунтом.");
+          : `Запрос ждёт подключённую административную вкладку. В ScriptCat → Подключения укажите ${location.origin} и разрешите localhost в менеджере скриптов; затем перезагрузите Arena под админским аккаунтом.`);
   } else banner("");
 }
 
@@ -189,7 +202,7 @@ function renderScriptCatStatus(shot) {
   const pausedAdmin = adminClients.some((client) => client.localPaused);
   if (!adminClients.length) {
     node.append(document.createTextNode(
-      `Пульт пока не получил сигнал ни от одной вкладки админского слота. Проверьте, что в ScriptCat → Подключения сохранён адрес именно этого Relay, и перезагрузите Arena под аккаунтом административного слота. `,
+      `Пульт не получил сигнал ни от одной вкладки админского слота. В ScriptCat → Подключения укажите ${location.origin}; после установки разрешите localhost в менеджере скриптов, затем перезагрузите Arena под аккаунтом admin. `,
     ));
   } else if (outdated.length) {
     const versions = [...new Set(outdated.map((client) => `${client.slotId}: ${client.scriptVersion || "версия не сообщается"}`))];

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Relay — передача хода между агентами
 // @namespace    https://arena.ai/
-// @version      1.28.0
+// @version      1.29.0
 // @updateURL    https://raw.githubusercontent.com/Creative36711/relay-wotr/main/tools/script-cat/relay.user.js
 // @downloadURL  https://raw.githubusercontent.com/Creative36711/relay-wotr/main/tools/script-cat/relay.user.js
 // @description  Цикл Координатор → исполнитель → Координатор: агент сам коммитит, пушит и мержит PR; ScriptCat ждёт мерж и нажимает Continue.
@@ -18,6 +18,8 @@
 // @connect      script.googleusercontent.com
 // @connect      ntfy.sh
 // @connect      api.github.com
+// @connect      localhost
+// @connect      127.0.0.1
 // ==/UserScript==
 
 /**
@@ -95,7 +97,7 @@
     // D-073: отпечаток сборки вшивает build.mjs (SHA-256 источника). Номер версии
     // говорит «какой выпуск», отпечаток — «какая именно сборка»: без него проверка
     // «работает новая версия, а не прежняя под новым номером» невозможна.
-    buildFingerprint: "22def64cfae338bf",
+    buildFingerprint: "1993ba24887fcc11",
     repo: "", // для ссылки на PR из номера
     tickMs: 15000,
     mergeGraceMs: 90000, // сколько ждём мерж, прежде чем нажать кнопки за агента
@@ -802,7 +804,7 @@
 
   const NTFY_BASE = "https://ntfy.sh";
   const SCRIPT_VERSION =
-    (typeof GM_info !== "undefined" && GM_info?.script?.version) || "1.28.0";
+    (typeof GM_info !== "undefined" && GM_info?.script?.version) || "1.29.0";
 
   /** «https://ntfy.sh/topic?x=1» и «topic» одинаково дают topic. */
   function normalizeNtfyTopic(raw) {
@@ -23585,6 +23587,7 @@ function reviewPullRequest({ files, pr, zone } = {}) {
     helloAt: 0,
     lastBeatAt: 0,
     lastContactAt: 0,
+    lastError: "",
     lastPresenceAt: 0,
     lastMarker: { hash: "", at: 0 },
     warned: { hello: "", pull: "", version: "" },
@@ -23596,9 +23599,12 @@ function reviewPullRequest({ files, pr, zone } = {}) {
 
   function relayConnectionLabel() {
     if (!relayConfigured()) return "Node Relay не настроен";
-    if (!relayClient.slotId) return "Node Relay: нет связи";
+    if (!relayClient.slotId) {
+      const state = relayClient.lastContactAt ? "не зарегистрирован" : "нет связи";
+      return `Node Relay: ${state}${relayClient.lastError ? ` · ${relayClient.lastError}` : ""}`;
+    }
     const localPaused = typeof isPaused === "function" && isPaused();
-    if (!relayControlActive()) return `Node Relay: нет сигнала (${relayClient.slotId})`;
+    if (!relayControlActive()) return `Node Relay: нет сигнала (${relayClient.slotId})${relayClient.lastError ? ` · ${relayClient.lastError}` : ""}`;
     return `Node Relay: ${relayClient.slotId}${localPaused ? " · ScriptCat на паузе" : " · подключён"}`;
   }
 
@@ -23642,9 +23648,15 @@ function reviewPullRequest({ files, pr, zone } = {}) {
         }),
         { retry: false },
       );
-      if (data && typeof data === "object") relayClient.lastContactAt = Date.now();
+      if (data && typeof data === "object") {
+        relayClient.lastContactAt = Date.now();
+        relayClient.lastError = "";
+      } else {
+        relayClient.lastError = "служба Relay вернула ответ в неизвестном формате";
+      }
       return data;
-    } catch {
+    } catch (error) {
+      relayClient.lastError = String((error && error.message) || error || "ошибка связи").slice(0, 140);
       return null;
     }
   }
@@ -23658,11 +23670,21 @@ function reviewPullRequest({ files, pr, zone } = {}) {
     const read = typeof readAccountEmail === "function"
       ? await readAccountEmail({ expand: false }).catch(() => null)
       : null;
-    const email = String((read && read.email) || (typeof accountSeen === "function" ? accountSeen().email : "") || "").trim();
-    if (!email) return "";
+    // Do not fall back to accountSeen(): GM storage is shared by tabs, so a
+    // worker container could inherit the last email read in the admin tab
+    // (or vice versa) and register itself as the wrong slot.
+    const email = String((read && read.email) || "").trim();
+    if (!email) {
+      const reason = read?.why === "icon-collapsed"
+        ? "подпись аккаунта скрыта свернутой панелью Arena"
+        : "почта текущей вкладки Arena не прочитана";
+      relayClient.lastError = reason;
+      return "";
+    }
     const res = await relayPost({ action: "hello", account: email, path: typeof location !== "undefined" ? location.pathname : "" });
     relayClient.helloAt = nowMs;
     if (res && res.ok && res.slot) {
+      relayClient.lastError = "";
       relayClient.lastPresenceAt = nowMs;
       relayClient.slotId = String(res.slot.slotId || "");
       relayClient.account = email;
@@ -23681,6 +23703,7 @@ function reviewPullRequest({ files, pr, zone } = {}) {
     }
     if (res && res.ok === false) {
       const why = String(res.why || "аккаунт не привязан к слоту");
+      relayClient.lastError = why;
       if (relayClient.warned.hello !== why) {
         relayClient.warned.hello = why;
         log(`Служба Relay: ${why}.`, true, { ntfy: "quiet" });
@@ -23819,6 +23842,7 @@ function reviewPullRequest({ files, pr, zone } = {}) {
     // «административный клиент не найден» и не может объяснить, что именно
     // мешает команде. Пауза по-прежнему запрещает брать работу/turn.
     const slotId = await relayIdentity().catch(() => "");
+    if (typeof setStatus === "function") setStatus();
     if (!slotId) return;
     const paused = typeof isPaused === "function" && isPaused();
     if (paused) {
@@ -23827,7 +23851,6 @@ function reviewPullRequest({ files, pr, zone } = {}) {
       if (Date.now() - Number(relayClient.lastPresenceAt || 0) >= 60000) {
         await relayIdentity({ force: true }).catch(() => "");
       }
-      if (typeof setStatus === "function") setStatus();
       return;
     }
     const pending = GM_getValue(K.pending, null);

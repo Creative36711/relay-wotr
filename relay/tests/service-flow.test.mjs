@@ -56,8 +56,8 @@ test("две вкладки получают работу одновременн
       queueRow({ id: "q-2", card: "c-2", role: "Godot World Engineer", at: "2026-11-26T10:01:00Z" }),
     ],
   });
-  const first = await service.pull({ scriptVersion: "1.28.0", slotId: "worker-1", tab: "aa11" });
-  const second = await service.pull({ scriptVersion: "1.28.0", slotId: "worker-2", tab: "bb22" });
+  const first = await service.pull({ scriptVersion: "1.29.0", slotId: "worker-1", tab: "aa11" });
+  const second = await service.pull({ scriptVersion: "1.29.0", slotId: "worker-2", tab: "bb22" });
   assert.equal(first.ok, true);
   assert.equal(second.ok, true);
   assert.notEqual(first.work.card, second.work.card, "одна карточка не должна уйти дважды");
@@ -68,8 +68,8 @@ test("повторный pull возвращает ту же выдачу, а н
   const { service, store } = makeService({
     queue: [queueRow({ id: "q-1", role: "Technical Artist" })],
   });
-  const first = await service.pull({ scriptVersion: "1.28.0", slotId: "worker-1", tab: "aa11" });
-  const again = await service.pull({ scriptVersion: "1.28.0", slotId: "worker-1", tab: "aa11" });
+  const first = await service.pull({ scriptVersion: "1.29.0", slotId: "worker-1", tab: "aa11" });
+  const again = await service.pull({ scriptVersion: "1.29.0", slotId: "worker-1", tab: "aa11" });
   assert.equal(again.work.runId, first.work.runId);
   assert.equal(again.work.repeated, true);
   assert.equal(store.objects("runs").length, 1);
@@ -82,8 +82,8 @@ test("отчёт освобождает слот и возвращает ход,
       queueRow({ id: "q-2", card: "c-2", role: "Godot World Engineer", at: "2026-11-26T10:01:00Z" }),
     ],
   });
-  const first = await service.pull({ scriptVersion: "1.28.0", slotId: "worker-1" });
-  const second = await service.pull({ scriptVersion: "1.28.0", slotId: "worker-2" });
+  const first = await service.pull({ scriptVersion: "1.29.0", slotId: "worker-1" });
+  const second = await service.pull({ scriptVersion: "1.29.0", slotId: "worker-2" });
   const report = await service.report({
     slotId: "worker-1",
     payload: { runId: first.work.runId, markerRunId: first.work.runId, markerCard: first.work.card, answer: "готово" },
@@ -101,7 +101,7 @@ test("чужой run id в маркере — не потеря хода, а р�
   const { service } = makeService({
     queue: [queueRow({ id: "q-1", card: "c-1", role: "Technical Artist" })],
   });
-  const pulled = await service.pull({ scriptVersion: "1.28.0", slotId: "worker-1" });
+  const pulled = await service.pull({ scriptVersion: "1.29.0", slotId: "worker-1" });
   const report = await service.report({
     slotId: "worker-1",
     payload: { runId: pulled.work.runId, markerRunId: "r-00000000000000-deadbeef", markerCard: "c-1" },
@@ -117,7 +117,7 @@ test("закрытая выдача не принимает ответ повт�
   const { service } = makeService({
     queue: [queueRow({ id: "q-1", card: "c-1" })],
   });
-  const pulled = await service.pull({ scriptVersion: "1.28.0", slotId: "worker-1" });
+  const pulled = await service.pull({ scriptVersion: "1.29.0", slotId: "worker-1" });
   await service.report({ slotId: "worker-1", payload: { runId: pulled.work.runId, markerRunId: pulled.work.runId } });
   const second = await service.beat({ slotId: "worker-1", runId: pulled.work.runId });
   assert.equal(second.ok, false);
@@ -166,7 +166,7 @@ test("снимок показывает слоты, очередь и живые
   const { service } = makeService({
     queue: [queueRow({ id: "q-1", role: "Technical Artist" })],
   });
-  await service.pull({ scriptVersion: "1.28.0", slotId: "worker-1" });
+  await service.pull({ scriptVersion: "1.29.0", slotId: "worker-1" });
   const shot = await service.snapshot();
   assert.equal(shot.slots.length, 4);
   assert.equal(shot.counts.inFlight, 1);
@@ -177,7 +177,7 @@ test("снимок показывает слоты, очередь и живые
 
 test("удар с молчанием короче стража не засоряет журнал", async () => {
   const { service, store } = makeService({ queue: [queueRow({ id: "q-1" })] });
-  const pulled = await service.pull({ scriptVersion: "1.28.0", slotId: "worker-1" });
+  const pulled = await service.pull({ scriptVersion: "1.29.0", slotId: "worker-1" });
   await service.beat({ slotId: "worker-1", runId: pulled.work.runId, silentMs: 30000 });
   const guard = store.objects("events").filter((event) => event["Вид"] === "guard");
   assert.equal(guard.length, 0, "30 секунд — это не инцидент");
@@ -220,13 +220,13 @@ test("вкладка не обходит предел одновременнос
       queueRow({ id: "q-3", card: "c-3", role: "Tactical Bridge Engineer", at: "2026-11-26T10:02:00Z" }),
     ],
   });
-  const first = await service.pull({ scriptVersion: "1.28.0", slotId: "worker-1" });
-  const second = await service.pull({ scriptVersion: "1.28.0", slotId: "worker-2" });
+  const first = await service.pull({ scriptVersion: "1.29.0", slotId: "worker-1" });
+  const second = await service.pull({ scriptVersion: "1.29.0", slotId: "worker-2" });
   assert.equal(first.work !== null, true);
   assert.equal(second.work !== null, true);
 
   // Предел 2 исчерпан: третья вкладка получает «жди» с причиной.
-  const third = await service.pull({ scriptVersion: "1.28.0", slotId: "worker-3" });
+  const third = await service.pull({ scriptVersion: "1.29.0", slotId: "worker-3" });
   assert.equal(third.work, null);
   assert.match(third.why, /предел одновременности: уже идёт 2 из 2/);
 });
@@ -239,10 +239,10 @@ test("после отчёта одной вкладки третья получ�
       queueRow({ id: "q-3", card: "c-3", role: "Tactical Bridge Engineer", at: "2026-11-26T10:02:00Z" }),
     ],
   });
-  const first = await service.pull({ scriptVersion: "1.28.0", slotId: "worker-1" });
-  await service.pull({ scriptVersion: "1.28.0", slotId: "worker-2" });
+  const first = await service.pull({ scriptVersion: "1.29.0", slotId: "worker-1" });
+  await service.pull({ scriptVersion: "1.29.0", slotId: "worker-2" });
   await service.report({ slotId: "worker-1", payload: { runId: first.work.runId, markerRunId: first.work.runId } });
-  const third = await service.pull({ scriptVersion: "1.28.0", slotId: "worker-3" });
+  const third = await service.pull({ scriptVersion: "1.29.0", slotId: "worker-3" });
   assert.equal(third.work.card, "c-3", "освободившееся место занимает следующая карточка");
 });
 
@@ -250,7 +250,7 @@ test("снятая строка не выдаётся", async () => {
   const { service } = makeService({ queue: [queueRow({ id: "q-1", card: "c-1" })] });
   const cancelled = await service.cancel({ itemId: "q-1" });
   assert.equal(cancelled.ok, true);
-  const pulled = await service.pull({ scriptVersion: "1.28.0", slotId: "worker-1" });
+  const pulled = await service.pull({ scriptVersion: "1.29.0", slotId: "worker-1" });
   assert.equal(pulled.work, null);
 });
 
