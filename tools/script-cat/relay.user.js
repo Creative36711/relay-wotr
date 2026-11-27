@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Relay — передача хода между агентами
 // @namespace    https://arena.ai/
-// @version      1.34.2
+// @version      1.34.3
 // @updateURL    https://raw.githubusercontent.com/Creative36711/relay-wotr/main/tools/script-cat/relay.user.js
 // @downloadURL  https://raw.githubusercontent.com/Creative36711/relay-wotr/main/tools/script-cat/relay.user.js
 // @description  Цикл Координатор → исполнитель → Координатор: агент сам коммитит, пушит и мержит PR; ScriptCat ждёт мерж и нажимает Continue.
@@ -97,7 +97,7 @@
     // D-073: отпечаток сборки вшивает build.mjs (SHA-256 источника). Номер версии
     // говорит «какой выпуск», отпечаток — «какая именно сборка»: без него проверка
     // «работает новая версия, а не прежняя под новым номером» невозможна.
-    buildFingerprint: "8cc52d6502fc89e8",
+    buildFingerprint: "729eed2d42e0d2ee",
     repo: "", // для ссылки на PR из номера
     tickMs: 15000,
     mergeGraceMs: 90000, // сколько ждём мерж, прежде чем нажать кнопки за агента
@@ -406,6 +406,9 @@
       projectId: profile.id, secretsMigrated: true,
       credentials: data.credentials && typeof data.credentials === "object" ? { ...data.credentials } : {},
     };
+    // Это отдельный маркер миграции секретов. Старый settings marker мог быть
+    // записан прежней версией при отказе и не доказывает, что секреты дошли.
+    rawSet(projectStorageKey(profile.id, "cfn-relay-project-credentials-synced"), true);
     // Remove legacy secret copies only after the Relay file has been read and
     // validated. Queues, expectations, journals and the profile UUID stay local.
     for (const key of Object.keys(PROJECT_SECRET_FIELDS)) rawSet(projectStorageKey(profile.id, key), "");
@@ -890,7 +893,7 @@
 
   const NTFY_BASE = "https://ntfy.sh";
   const SCRIPT_VERSION =
-    (typeof GM_info !== "undefined" && GM_info?.script?.version) || "1.34.2";
+    (typeof GM_info !== "undefined" && GM_info?.script?.version) || "1.34.3";
 
   /** «https://ntfy.sh/topic?x=1» и «topic» одинаково дают topic. */
   function normalizeNtfyTopic(raw) {
@@ -2455,8 +2458,10 @@
     const settings = connectionSettings();
     const profileUnchanged = () => JSON.stringify(resolveProfile(ACTIVE_PROFILE.id)) === JSON.stringify(ACTIVE_PROFILE);
     try {
-      if (!settings.notion || !settings.gwUrl || !settings.gwKey)
-        throw new Error("Для допуска не хватает подключений профиля Relay: Notion token, Drive Gateway URL и Gateway key. Введите их в разделе «Проект», нажмите «Сохранить», дождитесь подтверждения и повторите проверку из admin-вкладки. Секреты из старого ScriptCat не импортируются автоматически.");
+      if (!settings.notion || !settings.gwUrl || !settings.gwKey) {
+        const missing = [!settings.notion && "Notion token", !settings.gwUrl && "Drive Gateway URL", !settings.gwKey && "Drive Gateway key"].filter(Boolean);
+        throw new Error(`Relay пока не получил сохранённые подключения: ${missing.join(", ")}. Дождитесь синхронизации локального профиля и повторите проверку; повторно вводить сохранённые значения не нужно.`);
+      }
       if (!profileUnchanged()) throw new Error("Профиль изменился в другой вкладке; обновите эту Arena-вкладку и повторите.");
       log("Пульт запросил проверку проекта. Проверяю Notion, Drive, GitHub и схему только чтением…");
       const results = await Promise.all([probeNotionConnection(settings), probeDriveConnection(settings), probeGithubConnection(settings)]);
@@ -2476,7 +2481,7 @@
       log(successText, false);
       if (typeof relayPost === "function") await relayPost({ action: "event", slotId: relayClient?.slotId || "",
         kind: "state", level: "info", text: successText,
-        data: { projectApprovalResult: true, projectId: ACTIVE_PROFILE.id } });
+        data: { projectApprovalResult: true, projectId: ACTIVE_PROFILE.id, projectName: ACTIVE_PROFILE.name, projectApprovalFailure: "" } });
       return true;
     } catch (error) {
       const reason = connectionProblem(error, settings).replace(/[.。]+$/, "");
@@ -2484,7 +2489,7 @@
       log(failureText, true);
       if (typeof relayPost === "function") await relayPost({ action: "event", slotId: relayClient?.slotId || "",
         kind: "state", level: "warn", text: failureText,
-        data: { projectApprovalResult: false, projectId: ACTIVE_PROFILE.id } });
+        data: { projectApprovalResult: false, projectId: ACTIVE_PROFILE.id, projectName: ACTIVE_PROFILE.name, projectApprovalFailure: reason } });
       return false;
     } finally {
       relayApprovalBusy = false;
@@ -22717,12 +22722,13 @@ function reviewPullRequest({ files, pr, zone } = {}) {
       ? `expect:${String(waitingState.kind || "ход")}`
       : pendingState ? "pending" : "";
     const projectConfigUpdatedAt = String(GM_getValue("cfn-relay-settings-updated-at", "") || "");
+    const projectCredentialsSynced = GM_getValue("cfn-relay-project-credentials-synced", false) === true;
     const res = await relayPost({
       action: "hello", account: email, expectedSlot, localBusy, localWaiting,
       projectId: typeof ACTIVE_PROFILE !== "undefined" ? ACTIVE_PROFILE.id : "",
       projectName: typeof ACTIVE_PROFILE !== "undefined" ? ACTIVE_PROFILE.name : "",
       projectProfile: typeof projectProfileSnapshot === "function" ? projectProfileSnapshot() : null,
-      projectCredentials: !projectConfigUpdatedAt && typeof projectCredentialsSnapshot === "function"
+      projectCredentials: !projectCredentialsSynced && typeof projectCredentialsSnapshot === "function"
         ? projectCredentialsSnapshot() : {},
       projectConfigUpdatedAt,
       projectApproved: typeof projectApproved === "function" ? projectApproved() : undefined,

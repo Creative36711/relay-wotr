@@ -23,7 +23,8 @@ assert.match(app, /post\("\/api\/projects"/, "profile metadata and credentials s
 assert.match(app, /\/api\/projects\/active/, "profile switching is available in Relay");
 assert.match(client, /projectSelection/, "ScriptCat receives the pult's profile selection over hello");
 assert.match(client, /projectSettingsUnavailable/, "missing Relay credentials revoke approval on a safe hello");
-assert.match(client, /projectCredentials:\s*!projectConfigUpdatedAt[\s\S]*?projectCredentialsSnapshot/, "already-saved local credentials migrate automatically on hello");
+assert.match(client, /projectCredentials:\s*!projectCredentialsSynced[\s\S]*?projectCredentialsSnapshot/, "already-saved local credentials migrate until Relay confirms receipt");
+assert.match(profileCore, /cfn-relay-project-credentials-synced/, "credential migration uses its own confirmation marker");
 assert.match(profileCore, /function projectCredentialsSnapshot\(\)/, "migration reads project-scoped local secrets");
 assert.doesNotMatch(profileCore.match(/function applyRelayProjectSettingsUnavailable\(data\) \{[\s\S]*?\n  \}/)?.[0] || "", /rawSet\([^\n]*,\s*["']{2}\)/,
   "an empty Relay profile does not erase credentials before migration");

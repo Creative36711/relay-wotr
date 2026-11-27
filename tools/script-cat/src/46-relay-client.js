@@ -193,12 +193,13 @@
       ? `expect:${String(waitingState.kind || "ход")}`
       : pendingState ? "pending" : "";
     const projectConfigUpdatedAt = String(GM_getValue("cfn-relay-settings-updated-at", "") || "");
+    const projectCredentialsSynced = GM_getValue("cfn-relay-project-credentials-synced", false) === true;
     const res = await relayPost({
       action: "hello", account: email, expectedSlot, localBusy, localWaiting,
       projectId: typeof ACTIVE_PROFILE !== "undefined" ? ACTIVE_PROFILE.id : "",
       projectName: typeof ACTIVE_PROFILE !== "undefined" ? ACTIVE_PROFILE.name : "",
       projectProfile: typeof projectProfileSnapshot === "function" ? projectProfileSnapshot() : null,
-      projectCredentials: !projectConfigUpdatedAt && typeof projectCredentialsSnapshot === "function"
+      projectCredentials: !projectCredentialsSynced && typeof projectCredentialsSnapshot === "function"
         ? projectCredentialsSnapshot() : {},
       projectConfigUpdatedAt,
       projectApproved: typeof projectApproved === "function" ? projectApproved() : undefined,

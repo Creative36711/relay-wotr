@@ -11,7 +11,7 @@ import { join } from "node:path";
 import { createTransportServer } from "../src/server.mjs";
 import { createFakeStore, settingsRows, slotRows, queueRow, knownAgentRows } from "./fake-sheets.mjs";
 
-const startServer = async () => {
+const startServer = async ({ notionToken = "" } = {}) => {
   const store = createFakeStore({
     slots: slotRows(),
     settings: settingsRows(),
@@ -23,6 +23,7 @@ const startServer = async () => {
   const { server, service } = createTransportServer({
     spreadsheetId: "fake",
     token: "fake",
+    NOTION_TOKEN: notionToken,
     storeFactory: () => store,
     version: "9.9.9",
     log: () => {},
@@ -135,6 +136,25 @@ test("запрос допуска из пульта требует same-origin �
   }
 });
 
+test("подробная причина проверки допуска попадает в статус пульта", async () => {
+  const ctx = await startServer();
+  try {
+    const projectId = "123e4567-e89b-12d3-a456-426614174000";
+    const response = await fetch(`${ctx.base}/api/agent`, {
+      method: "POST", headers: { origin: "https://arena.ai", "content-type": "application/json" },
+      body: JSON.stringify({ action: "event", slotId: "admin", tab: "approval-result-tab", scriptVersion: "1.34.3",
+        kind: "state", level: "warn", text: "Проверка отказана",
+        data: { projectApprovalResult: false, projectId, projectName: "WOTR",
+          projectApprovalFailure: "Drive: папка проекта недоступна" } }),
+    });
+    assert.equal(response.status, 200);
+    const client = (await ctx.service.snapshot()).scriptClients.find((item) => item.tab === "approval-result-tab");
+    assert.equal(client.projectApproved, false);
+    assert.equal(client.projectBlockReason, "unapproved");
+    assert.equal(client.projectApprovalFailure, "Drive: папка проекта недоступна");
+  } finally { await ctx.close(); }
+});
+
 test("hello переносит уже сохранённые локальные credentials в новый профиль Relay", async () => {
   const ctx = await startServer();
   try {
@@ -150,7 +170,8 @@ test("hello переносит уже сохранённые локальные 
     const response = await fetch(`${ctx.base}/api/agent`, {
       method: "POST", headers: { origin: "https://arena.ai", "content-type": "application/json" },
       body: JSON.stringify({ action: "hello", account: "creative36711@gmail.com", tab: "migration-tab",
-        projectId: project.id, projectProfile: project, projectCredentials: {
+        projectId: project.id, projectProfile: project, projectConfigUpdatedAt: "stale-marker-from-previous-version",
+        projectCredentials: {
           notion: "ntn_existing_local", gwUrl: "https://script.google.com/macros/s/deploy/exec", gwKey: "existing_gateway_key",
         }, localBusy: false }),
     });
@@ -165,6 +186,35 @@ test("hello переносит уже сохранённые локальные 
   } finally {
     await ctx.close();
   }
+});
+
+test("новый профиль автоматически получает Notion token, уже заданный в BAT", async () => {
+  const ctx = await startServer({ notionToken: "ntn_from_bat_config" });
+  try {
+    const project = {
+      id: "123e4567-e89b-12d3-a456-426614174200", name: "WOTR",
+      roles: "123e4567-e89b-12d3-a456-426614174201", missions: "123e4567-e89b-12d3-a456-426614174202",
+      requests: "123e4567-e89b-12d3-a456-426614174203", questions: "123e4567-e89b-12d3-a456-426614174204",
+      pageUrl: "https://www.notion.so/workspace/page-123e4567e89b12d3a456426614174205",
+      questionsUrl: "https://www.notion.so/workspace/questions-123e4567e89b12d3a456426614174206",
+      repo: "Creative36711/open-bfme", branch: "main", driveFolder: "wotr",
+      repos: [{ repo: "Creative36711/open-bfme", branch: "main", main: true }], roleRepos: [],
+    };
+    const saved = await (await fetch(`${ctx.base}/api/projects`, {
+      method: "POST", headers: { origin: ctx.base, "content-type": "application/json" },
+      body: JSON.stringify({ profile: project, secrets: {
+        gwUrl: "https://script.google.com/macros/s/deploy/exec", gwKey: "project_key",
+      } }),
+    })).json();
+    assert.equal(saved.ok, true);
+    assert.equal(saved.profile.secretStatus.notion, true);
+    const hello = await (await fetch(`${ctx.base}/api/agent`, {
+      method: "POST", headers: { origin: "https://arena.ai", "content-type": "application/json" },
+      body: JSON.stringify({ action: "hello", account: "creative36711@gmail.com", tab: "bat-token-tab",
+        projectId: project.id, projectName: project.name, projectConfigUpdatedAt: "", localBusy: false }),
+    })).json();
+    assert.equal(hello.projectSettings.credentials.notion, "ntn_from_bat_config");
+  } finally { await ctx.close(); }
 });
 
 test("пульт сохраняет секреты локально; только Arena получает их в ответе hello", async () => {

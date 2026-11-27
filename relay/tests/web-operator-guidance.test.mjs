@@ -49,6 +49,17 @@ test("project permission block is shown before a coordinator request and disable
   assert.doesNotMatch(result.detail, /q-blocked/);
 });
 
+test("approval failure shows its actual reason instead of a generic settings hint", () => {
+  helpers.setProjectProfiles([]);
+  const result = helpers.operatorGuidance(snapshot({
+    scriptClients: [{ slotId: "admin", projectId: "wotr-1", projectName: "WOTR", projectApproved: false,
+      projectBlockReason: "unapproved", projectApprovalFailure: "Drive: папка проекта недоступна" }],
+  }));
+  assert.equal(result.canStep, false);
+  assert.match(result.detail, /Drive: папка проекта недоступна/);
+  assert.doesNotMatch(result.detail, /проверьте настройки/i);
+});
+
 test("missing profile credentials identify the exact fields and next action", () => {
   helpers.setProjectProfiles([{ id: "wotr-1", secretStatus: { notion: false, gwUrl: false, gwKey: false } }]);
   const result = helpers.operatorGuidance(snapshot({
@@ -57,7 +68,7 @@ test("missing profile credentials identify the exact fields and next action", ()
   assert.equal(result.canStep, false);
   assert.equal(result.title, "Для проекта не заданы подключения");
   assert.match(result.detail, /Notion token, Drive Gateway URL, Drive Gateway key/);
-  assert.match(result.detail, /«Сохранить»/);
+  assert.match(result.detail, /синхронизации сохранённых BAT\/ScriptCat настроек/);
 });
 
 test("an existing turn request blocks duplicate manual Step even without a local hold", () => {
@@ -76,13 +87,14 @@ test("support report includes project gate state without exposing connection sec
   const report = helpers.diagnosticReport(snapshot({
     scriptClients: [{
       slotId: "admin", projectId: "wotr-1", projectName: "WOTR",
-      projectApproved: false, projectBlockReason: "unapproved", secret: "ntn_sensitive-token",
+      projectApproved: false, projectBlockReason: "unapproved", projectApprovalFailure: "Drive: [TOKEN REDACTED]", secret: "ntn_sensitive-token",
     }],
   }));
   const payload = JSON.parse(report.slice(report.indexOf("\n") + 1));
   assert.equal(payload.clients[0].projectApproved, false);
   assert.equal(payload.clients[0].projectName, "WOTR");
   assert.equal(payload.clients[0].projectBlockReason, "unapproved");
+  assert.equal(payload.clients[0].projectApprovalFailure, "Drive: [TOKEN REDACTED]");
   assert.equal("secret" in payload.clients[0], false);
   assert.doesNotMatch(report, /ntn_sensitive-token/);
 });
@@ -142,6 +154,9 @@ test("secondary data and legacy service setup are collapsed; required project in
   for (const id of ["project-notion", "project-gw-url", "project-gw-key", "project-credential-status"])
     assert.match(html, new RegExp(`id="${id}"`), `${id} remains immediately visible/actionable`);
   assert.match(html, /Для допуска проекта используйте токен Notion и Drive Gateway в карточке «Проект»/);
+  assert.match(html, /Drive file Gateway URL/);
+  assert.match(html, /не Gateway таблицы Google Sheets/);
+  assert.match(html, /BAT\/ScriptCat token подхватится автоматически/);
 });
 
 test("Relay pult can request project validation without starting the auto-cycle", () => {

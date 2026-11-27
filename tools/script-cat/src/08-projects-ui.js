@@ -254,8 +254,10 @@
     const settings = connectionSettings();
     const profileUnchanged = () => JSON.stringify(resolveProfile(ACTIVE_PROFILE.id)) === JSON.stringify(ACTIVE_PROFILE);
     try {
-      if (!settings.notion || !settings.gwUrl || !settings.gwKey)
-        throw new Error("Для допуска не хватает подключений профиля Relay: Notion token, Drive Gateway URL и Gateway key. Введите их в разделе «Проект», нажмите «Сохранить», дождитесь подтверждения и повторите проверку из admin-вкладки. Секреты из старого ScriptCat не импортируются автоматически.");
+      if (!settings.notion || !settings.gwUrl || !settings.gwKey) {
+        const missing = [!settings.notion && "Notion token", !settings.gwUrl && "Drive Gateway URL", !settings.gwKey && "Drive Gateway key"].filter(Boolean);
+        throw new Error(`Relay пока не получил сохранённые подключения: ${missing.join(", ")}. Дождитесь синхронизации локального профиля и повторите проверку; повторно вводить сохранённые значения не нужно.`);
+      }
       if (!profileUnchanged()) throw new Error("Профиль изменился в другой вкладке; обновите эту Arena-вкладку и повторите.");
       log("Пульт запросил проверку проекта. Проверяю Notion, Drive, GitHub и схему только чтением…");
       const results = await Promise.all([probeNotionConnection(settings), probeDriveConnection(settings), probeGithubConnection(settings)]);
@@ -275,7 +277,7 @@
       log(successText, false);
       if (typeof relayPost === "function") await relayPost({ action: "event", slotId: relayClient?.slotId || "",
         kind: "state", level: "info", text: successText,
-        data: { projectApprovalResult: true, projectId: ACTIVE_PROFILE.id } });
+        data: { projectApprovalResult: true, projectId: ACTIVE_PROFILE.id, projectName: ACTIVE_PROFILE.name, projectApprovalFailure: "" } });
       return true;
     } catch (error) {
       const reason = connectionProblem(error, settings).replace(/[.。]+$/, "");
@@ -283,7 +285,7 @@
       log(failureText, true);
       if (typeof relayPost === "function") await relayPost({ action: "event", slotId: relayClient?.slotId || "",
         kind: "state", level: "warn", text: failureText,
-        data: { projectApprovalResult: false, projectId: ACTIVE_PROFILE.id } });
+        data: { projectApprovalResult: false, projectId: ACTIVE_PROFILE.id, projectName: ACTIVE_PROFILE.name, projectApprovalFailure: reason } });
       return false;
     } finally {
       relayApprovalBusy = false;

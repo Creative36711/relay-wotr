@@ -65,9 +65,9 @@
     <p id="project-note" class="muted project-note" role="status" aria-live="polite"></p>
     <p id="project-credential-status" class="credential-status warn" role="status" aria-live="polite">Выберите профиль, чтобы увидеть состояние обязательных подключений.</p>
     <div class="grid project-secrets required-secrets">
-      <label>Notion token для этого проекта <input id="project-notion" type="password" autocomplete="new-password" placeholder="вставьте токен; старый ScriptCat не переносится автоматически"></label>
-      <label>Drive Gateway URL <input id="project-gw-url" type="url" autocomplete="off" placeholder="https://script.google.com/macros/s/…/exec"></label>
-      <label>Drive Gateway key <input id="project-gw-key" type="password" autocomplete="new-password" placeholder="проектный ключ"></label>
+      <label>Notion token <input id="project-notion" type="password" autocomplete="new-password" placeholder="BAT/ScriptCat token подхватится автоматически; вводите только если его нет"></label>
+      <label>Drive file Gateway URL <input id="project-gw-url" type="url" autocomplete="off" placeholder="/exec шлюза файлов проекта — не Gateway таблицы Google Sheets"></label>
+      <label>Drive file Gateway key <input id="project-gw-key" type="password" autocomplete="new-password" placeholder="ключ шлюза файлов проекта"></label>
     </div>
     <details class="advanced-details">
       <summary>Дополнительные настройки проекта</summary>
