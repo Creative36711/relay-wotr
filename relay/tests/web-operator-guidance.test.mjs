@@ -33,7 +33,10 @@ test("unfinished heal + outstanding coordinator request gets clear safe guidance
   assert.match(result.title, /ScriptCat удерживает опрос/);
   assert.match(result.detail, /разбор предыдущей ошибки/);
   assert.match(result.detail, /q-test-123/);
-  assert.match(result.detail, /Не нажимайте «Шаг» повторно/);
+  // 28.11: «не нажимайте Шаг» оставляло человека без действия. Теперь шаг
+  // назван и разрешён — «Дожать ход» применяет уже полученный ответ.
+  assert.match(result.detail, /Дожать ход/);
+  assert.doesNotMatch(result.detail, /Не нажимайте «Шаг» повторно/);
 });
 
 test("expect:plan is described as an active wait, not orphaned work or a request to click Step", () => {
@@ -41,11 +44,11 @@ test("expect:plan is described as an active wait, not orphaned work or a request
     scriptClients: [{ slotId: "admin", localBusy: true, localWaiting: "expect:plan", scriptVersion: "1.35.2" }],
   }));
   assert.equal(result.canStep, false);
-  assert.match(result.title, /ждёт результат плана/);
-  assert.match(result.detail, /активный ход/);
+  // Шаг не «запрещён», а переназван: маркер уже в чате, его надо применить.
+  assert.match(result.title, /ответ ждёт применения/);
   assert.match(result.detail, /CF_COORDINATOR_RESULT/);
-  assert.match(result.detail, /выберет слот\/аккаунт/);
-  assert.match(result.detail, /не подтверждает, что Arena обработала/);
+  assert.match(result.detail, /Дожать ход/);
+  assert.match(result.detail, /дубль задания не создаёт/);
   assert.doesNotMatch(result.title, /незавершённой работе/);
 });
 

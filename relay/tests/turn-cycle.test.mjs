@@ -455,3 +455,59 @@ test("выдача не состоялась: run failed, строка в blocke
   const journal = store.objects("events").map((event) => event["Текст"]);
   assert.ok(journal.some((text) => /выдача .* не состоялась/.test(text)));
 });
+
+// ───────────────────────── «Дожать ход»: выход из ожидания ─────────────────
+//
+// 28.11, 01:14–01:16. Координатор ответил маркером (CF_COORDINATOR_RESULT,
+// next: Integration Auditor), но админ-вкладка держала `expect:plan` и на тике
+// выходила из опроса. Пульт видел `localBusy` и запирал «Шаг» с надписью
+// «Ожидает ScriptCat» — человек не мог продолжить миссию вообще.
+//
+// Теперь пульт просит «дожать ход», а вкладка забирает просьбу отдельным
+// запросом: он НЕ выдаёт работу, иначе тик, держащий ожидание, задублировал бы
+// ход. Просьба одноразовая и адресная.
+
+test("«дожать ход»: просьба доходит до админ-вкладки и не выдаёт работу", async () => {
+  const { service } = makeService();
+  await service.hello({ account: "creative36711@gmail.com", tab: "t-admin", scriptVersion: "1.35.5",
+    localBusy: true, localWaiting: "expect:plan" });
+
+  const asked = await service.handle({ action: "nudge" });
+  assert.equal(asked.ok, true, asked.why);
+  assert.match(asked.why, /вкладка сделает шаг/);
+
+  // Вкладка спрашивает только просьбу: работы в ответе быть не может.
+  const first = await service.handle({ action: "pull", slotId: "admin", tab: "t-admin", nudgeOnly: true });
+  assert.equal(first.ok, true);
+  assert.equal(first.nudge, true, "просьба передана");
+  assert.equal(first.work, undefined, "работа не выдана");
+  assert.equal(first.kind, undefined, "это не ход и не выдача");
+
+  // Просьба одноразовая: второй тик её уже не получит (иначе два шага).
+  const second = await service.handle({ action: "pull", slotId: "admin", tab: "t-admin", nudgeOnly: true });
+  assert.equal(second.nudge, undefined);
+});
+
+test("«дожать ход» при капче: просьба сохраняется и причина названа", async () => {
+  const { service } = makeService();
+  await service.hello({ account: "creative36711@gmail.com", tab: "t-admin", scriptVersion: "1.35.5",
+    localPaused: true, localPauseReason: "Появилась капча (Security Verification): без человека сообщение не уйдёт.",
+    localBusy: true, localWaiting: "expect:plan" });
+
+  const asked = await service.handle({ action: "nudge" });
+  assert.equal(asked.ok, false);
+  assert.equal(asked.pending, true, "просьба не потеряна");
+  assert.match(asked.why, /капч/i);
+  assert.match(asked.why, /Продолжить/);
+
+  // После снятия паузы просьба всё ещё ждёт вкладку.
+  const taken = await service.handle({ action: "pull", slotId: "admin", tab: "t-admin", nudgeOnly: true });
+  assert.equal(taken.nudge, true, "шаг случится сразу после снятия паузы");
+});
+
+test("«дожать ход» без админ-вкладки на связи: честный отказ, а не тишина", async () => {
+  const { service } = makeService();
+  const asked = await service.handle({ action: "nudge" });
+  assert.equal(asked.ok, false);
+  assert.match(asked.why, /не на связи/);
+});

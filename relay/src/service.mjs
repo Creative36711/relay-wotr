@@ -41,6 +41,8 @@ export function createMemoryState() {
     lock: null,        // { owner, until }
     lastTick: 0,
     lastStep: null,
+    // Просьба «дожать ход»: админ-вкладка забирает её на своём тике.
+    nudge: null,
     paused: false,
     pauseReason: "",
     slotsCache: null,
@@ -1339,6 +1341,78 @@ export function createService({
   }
 
   /**
+   * «Дожать ход»: попросить админ-вкладку применить уже полученный ответ.
+   *
+   * Зачем. Вкладка держит `expect:plan` — ход принят, ответ Координатора в
+   * чате. Пульт видел это как «вкладка занята» и запирал «Шаг» («Ожидает
+   * ScriptCat»), хотя именно этот шаг и нужен: прочитать маркер и передать
+   * карточку дальше. Человек оставался без единого действия.
+   *
+   * Просьба не выдаёт новую работу и не создаёт ход: вкладка просто делает
+   * свой ручной шаг. Поэтому дубля задания от неё быть не может.
+   */
+  async function nudge({ slotId = "" } = {}) {
+    const data = await loadAll();
+    const admins = data.slots.filter((slot) => slot.admin && slot.enabled);
+    if (!admins.length) return { ok: false, why: "в книге нет активного административного слота" };
+    const target = String(slotId || "").trim() ||
+      admins.map((slot) => slot.slotId).join(",");
+    const active = [...(memory.clients instanceof Map ? memory.clients.values() : [])]
+      .filter((client) => now() - Number(client.seenAt || 0) <= CLIENT_ACTIVE_MS)
+      .filter((client) => admins.some((slot) => norm(slot.slotId) === norm(client.slotId)));
+    if (!active.length) {
+      return { ok: false, why: "админ-вкладка не на связи: откройте вкладку контейнера, ScriptCat объявит её службе" };
+    }
+    if (!active.some((client) => client.localPaused)) {
+      memory.nudge = { slots: target, at: now(), by: "пульт" };
+      await record({
+        kind: "ui",
+        text: active.some((client) => String(client.localWaiting || "") === "expect:plan")
+          ? "пульт просит дожать ход: админ-вкладка дочитает ответ Координатора"
+          : "пульт просит админ-вкладку сделать шаг",
+      });
+      return {
+        ok: true,
+        why: "просьба передана: вкладка сделает шаг в течение пятнадцати секунд и дочитает ответ",
+      };
+    }
+    // Пауза вкладки — не повод молчать: называем её причину и что именно снять.
+    const paused = active.find((client) => client.localPaused) || {};
+    memory.nudge = { slots: target, at: now(), by: "пульт" };
+    const captcha = /капч|security verification|recaptcha/i.test(String(paused.localPauseReason || ""));
+    return {
+      ok: false,
+      why: captcha
+        ? `вкладка «${paused.slotId}» ждёт человека: решите капчу в контейнере и нажмите «Продолжить». Просьба сохранена — шаг случится сразу после этого`
+        : `вкладка «${paused.slotId}» на локальной паузе: снимите её в виджете ScriptCat. Просьба сохранена`,
+      pending: true,
+    };
+  }
+
+  /**
+   * Забрать просьбу «дожать» (вкладка спрашивает на своём тике).
+   *
+   * Отдаём один раз и тому слоту, которому адресовано: иначе две вкладки
+   * одного слота сделали бы по шагу, и оба применили бы один маркер.
+   */
+  function takeNudge(slotId = "") {
+    const pending = memory.nudge;
+    if (!pending) return { ok: true, nudge: false };
+    // Просьба живёт до пяти минут: вкладка может быть занята ответом агента
+    // (печатает), и «пропустить» шаг хуже, чем сделать его позже.
+    if (now() - Number(pending.at || 0) > 300000) {
+      memory.nudge = null;
+      return { ok: true, nudge: false, why: "просьба устарела" };
+    }
+    const target = String(pending.slots || "");
+    if (target && slotId && !target.split(",").some((item) => norm(item) === norm(slotId))) {
+      return { ok: true, nudge: false };
+    }
+    memory.nudge = null;
+    return { ok: true, nudge: true, why: "пульт просит дочитать ответ" };
+  }
+
+  /**
    * Перезапросить планирующий ход Координатора.
    *
    * Зачем кнопка. Пока запрос хода жив, пульт блокировал «Шаг» («Шаг уже
@@ -1804,9 +1878,23 @@ export function createService({
     switch (check.action) {
       case ACTIONS.HELLO: return hello(body);
       case ACTIONS.PULL: {
+        // «Только просьба»: вкладка спрашивает, не просил ли пульт дожать ход,
+        // и НЕ претендует на работу. Без этой ветки тик, держащий ожидание,
+        // забирал бы выдачу вслепую — то есть дублировал бы ход.
+        if (body.nudgeOnly) {
+          const only = takeNudge(String(body.slotId || ""));
+          return { ok: true, ...(only.nudge ? { nudge: true, nudgeWhy: only.why } : {}) };
+        }
         const result = await pull(body);
         const settings = await loadSettings();
-        return { ...result, cycleMode: settings["cycle.mode"] === "auto" ? "auto" : "manual" };
+        // Просьба «дожать ход» отдаётся здесь же: вкладка спрашивает работу
+        // на своём тике, и это единственный момент, когда она нас слушает.
+        // Отдельного действия не нужно — иначе появился бы второй канал,
+        // который пришлось бы держать в согласии с первым.
+        return {
+          ...result,
+          cycleMode: settings["cycle.mode"] === "auto" ? "auto" : "manual",
+        };
       }
       case ACTIONS.BEAT: return beat(body);
       case ACTIONS.AGENT: return agentReady({
@@ -1823,6 +1911,7 @@ export function createService({
       case CONTROL.PAUSE: return pause({ reason: body.reason });
       case CONTROL.RESUME: return resume();
       case CONTROL.RETRY_TURN: return retryTurn();
+      case CONTROL.NUDGE: return nudge(body);
       case CONTROL.MODE: return setMode({ mode: body.mode });
       case CONTROL.ENQUEUE: return enqueue(body);
       case CONTROL.CANCEL: return cancel(body);
@@ -1837,7 +1926,7 @@ export function createService({
   return {
     handle, hello, pull, beat, report, event, step, pause, resume, setMode, agentReady,
     bootAutoRunner, stopAutoRunner,
-    enqueue, cancel, setup, requestProjectApproval, notionTokenSet, notionNet, rolesToBook, measureBook, retryTurn, snapshot, incidentPackage, loadAll, record, memory, sheetTitles,
+    enqueue, cancel, setup, requestProjectApproval, notionTokenSet, notionNet, rolesToBook, measureBook, retryTurn, nudge, takeNudge, snapshot, incidentPackage, loadAll, record, memory, sheetTitles,
     // Только для тестов: эти функции не входят в протокол и не должны
     // вызываться из вкладки. Отдельным объектом, чтобы «наружу» случайно не
     // уехал лишний вход.
