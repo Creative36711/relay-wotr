@@ -148,9 +148,17 @@ function renderHeader(shot) {
   $("btn-pause").textContent = shot.paused ? "Продолжить" : "Пауза";
   if (shot.paused) banner(`Пауза: ${shot.pauseReason || "по решению человека"}`);
   else if (shot.turnRequest) {
+    const clients = Array.isArray(shot.scriptClients) ? shot.scriptClients : [];
+    const adminSlots = new Set((shot.slots || []).filter((slot) => slot.admin).map((slot) => slot.slotId));
+    const adminClients = clients.filter((client) => adminSlots.has(client.slotId));
+    const adminPaused = adminClients.some((client) => client.localPaused);
     banner(shot.turnRequest.claimed
-      ? "Планирующий ход получил браузерный клиент. Жду, пока вкладка Coordinator обработает миссию."
-      : "Планирующий ход ожидает вкладку ScriptCat в административном контейнере. Откройте Arena под Coordinator.");
+      ? "Планирующий ход принят административной вкладкой; жду, пока ScriptCat обработает миссию."
+      : adminPaused
+        ? "Административная вкладка связана, но ScriptCat на локальной паузе. Снимите её в виджете ScriptCat; запрос останется в очереди."
+        : adminClients.length
+          ? "Административная вкладка на связи. Жду её следующего опроса Relay (обычно до 15 секунд)."
+          : "Запрос ждёт подключённую административную вкладку. Проверьте в ScriptCat → Подключения адрес этого Relay, затем перезагрузите Arena под админским аккаунтом.");
   } else banner("");
 }
 
@@ -178,25 +186,32 @@ function renderScriptCatStatus(shot) {
   const adminSlots = new Set((shot.slots || []).filter((slot) => slot.admin).map((slot) => slot.slotId));
   const adminClients = clients.filter((client) => adminSlots.has(client.slotId));
   const outdated = clients.filter((client) => !versionAtLeast(client.scriptVersion, required));
+  const pausedAdmin = adminClients.some((client) => client.localPaused);
   if (!adminClients.length) {
     node.append(document.createTextNode(
-      `Вкладка ScriptCat в административном контейнере не обнаружена. Для планирующего хода откройте Arena под Coordinator; пульт требует ScriptCat ${required || "актуальной версии"}. `,
+      `Пульт пока не получил сигнал ни от одной вкладки админского слота. Проверьте, что в ScriptCat → Подключения сохранён адрес именно этого Relay, и перезагрузите Arena под аккаунтом административного слота. `,
     ));
   } else if (outdated.length) {
     const versions = [...new Set(outdated.map((client) => `${client.slotId}: ${client.scriptVersion || "версия не сообщается"}`))];
     node.append(document.createTextNode(
-      `Обновите ScriptCat до v${required}: подключённые вкладки используют ${versions.join("; ")}. До обновления планирующий ход из пульта может не запускаться. `,
+      `Обновите ScriptCat до v${required}: подключённые вкладки используют ${versions.join("; ")}. До обновления новая работа не выдаётся. `,
+    ));
+  } else if (pausedAdmin) {
+    node.append(document.createTextNode(
+      `Административная вкладка обнаружена (ScriptCat ${adminClients.map((client) => client.scriptVersion).join(", ")}), но локальная пауза ScriptCat блокирует получение команд. Снимите паузу в виджете; новые действия останутся в пульте. `,
     ));
   } else {
     node.classList.add("hidden");
     return;
   }
-  const link = document.createElement("a");
-  link.href = "https://raw.githubusercontent.com/Creative36711/relay-wotr/main/tools/script-cat/relay.user.js";
-  link.target = "_blank";
-  link.rel = "noopener noreferrer";
-  link.textContent = `Открыть ScriptCat v${required} для обновления`;
-  node.append(link);
+  if (adminClients.length && outdated.length) {
+    const link = document.createElement("a");
+    link.href = "https://raw.githubusercontent.com/Creative36711/relay-wotr/main/tools/script-cat/relay.user.js";
+    link.target = "_blank";
+    link.rel = "noopener noreferrer";
+    link.textContent = `Открыть ScriptCat v${required} для обновления`;
+    node.append(link);
+  }
   node.classList.remove("hidden");
 }
 

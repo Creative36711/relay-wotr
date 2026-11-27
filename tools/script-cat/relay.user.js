@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Relay — передача хода между агентами
 // @namespace    https://arena.ai/
-// @version      1.27.0
+// @version      1.28.0
 // @updateURL    https://raw.githubusercontent.com/Creative36711/relay-wotr/main/tools/script-cat/relay.user.js
 // @downloadURL  https://raw.githubusercontent.com/Creative36711/relay-wotr/main/tools/script-cat/relay.user.js
 // @description  Цикл Координатор → исполнитель → Координатор: агент сам коммитит, пушит и мержит PR; ScriptCat ждёт мерж и нажимает Continue.
@@ -95,7 +95,7 @@
     // D-073: отпечаток сборки вшивает build.mjs (SHA-256 источника). Номер версии
     // говорит «какой выпуск», отпечаток — «какая именно сборка»: без него проверка
     // «работает новая версия, а не прежняя под новым номером» невозможна.
-    buildFingerprint: "8b92a2dfe7a09598",
+    buildFingerprint: "22def64cfae338bf",
     repo: "", // для ссылки на PR из номера
     tickMs: 15000,
     mergeGraceMs: 90000, // сколько ждём мерж, прежде чем нажать кнопки за агента
@@ -489,6 +489,7 @@
     count: "cfn-log-count",
     debug: "cfn-debug-toggle",
     agents: "cfn-agents",
+    relay: "cfn-open-relay",
   };
 
   // ───────────────────────────── утилиты ─────────────────────────────
@@ -801,7 +802,7 @@
 
   const NTFY_BASE = "https://ntfy.sh";
   const SCRIPT_VERSION =
-    (typeof GM_info !== "undefined" && GM_info?.script?.version) || "1.27.0";
+    (typeof GM_info !== "undefined" && GM_info?.script?.version) || "1.28.0";
 
   /** «https://ntfy.sh/topic?x=1» и «topic» одинаково дают topic. */
   function normalizeNtfyTopic(raw) {
@@ -1748,6 +1749,10 @@
     return id || "";
   }
 
+  function relayManagedMode() {
+    return typeof relayControlActive === "function" && relayControlActive();
+  }
+
   function setStatus(extra) {
     const el = document.getElementById(ui.status);
     if (!el) return;
@@ -1771,17 +1776,20 @@
       } catch { return ""; }
     })();
     const text = extra || (paused ? `Пауза${label ? ` (${label})` : ""}: ${short}` : auto ? "Работает" : "Выключен");
-    const tail = [account, me].filter(Boolean).join(" · ");
+    const relayLabel = typeof relayConnectionLabel === "function" ? relayConnectionLabel() : "";
+    const tail = [relayLabel, account, me].filter(Boolean).join(" · ");
     el.textContent = tail ? `${text} · ${tail}` : text;
-    el.title = paused || text;
+    el.title = paused || [text, relayLabel].filter(Boolean).join(" · ");
     // Красным — только пауза, которая действительно ждёт человека.
     el.style.color = paused ? (who && who !== "master" ? "#e8d08a" : "#ff9a9a") : auto ? "#8ee28e" : "inherit";
     const toggle = document.getElementById(ui.toggle);
     if (toggle) {
       toggle.textContent = paused ? "▶ Продолжить" : auto ? "⏸ Стоп" : "▶ Включить";
+      if (relayManagedMode()) toggle.title = "Временный локальный автоцикл ScriptCat; основной ручной запуск — в пульте Relay";
       toggle.style.background = paused ? "#3a3320" : auto ? "#3a2a2a" : "#24402a";
       toggle.style.borderColor = paused ? "#6b5a2a" : auto ? "#6b3a3a" : "#3f6b45";
     }
+    paintPanelChrome();
   }
 
   const paintDebugButton = () => {
@@ -1813,9 +1821,19 @@
     panel.style.width = collapsed ? "208px" : "360px";
     const log = document.getElementById(ui.log);
     if (log) log.style.display = collapsed ? "none" : "";
+    const relayMode = typeof relayControlActive === "function" && relayControlActive();
+    const relayConfiguredNow = typeof relayConfigured === "function" && relayConfigured();
     for (const id of [ui.step, ui.wake, ui.questions, ui.debug, ui.reset, ui.clear, ui.setup]) {
       const el = document.getElementById(id);
-      if (el) el.style.display = collapsed ? "none" : "";
+      if (!el) continue;
+      const superseded = relayMode && [ui.step, ui.wake].includes(id);
+      el.style.display = collapsed || superseded ? "none" : "";
+    }
+    const relayLink = document.getElementById(ui.relay);
+    if (relayLink) {
+      const base = typeof relayBase === "function" ? relayBase() : "";
+      relayLink.href = base || "#";
+      relayLink.style.display = relayConfiguredNow && !collapsed ? "" : "none";
     }
     const status = document.getElementById(ui.status);
     if (status) status.style.maxWidth = collapsed ? "120px" : "190px";
@@ -1855,6 +1873,7 @@
         <span style="flex:1"></span>
         <button id="${ui.step}" title="Один шаг цикла" style="${btnStyle()}">Шаг</button>
         <button id="${ui.wake}" title="D-006: разбудить вкладки других аккаунтов — работу продолжит та, чей это аккаунт" style="${btnStyle()}">📣 Все вкладки</button>
+        <a id="${ui.relay}" href="#" target="_blank" rel="noopener noreferrer" style="${btnStyle()};text-decoration:none;display:none">↗ Пульт Relay</a>
         <button id="${ui.toggle}" style="${btnStyle()}">▶ Включить</button>
         <button id="${ui.questions}" aria-label="Открыть обратную связь в Notion" title="Обратная связь — вопросы и предложения в Notion" style="${btnStyle()}">💬 Обратная связь<span id="${ui.qBadge}" style="display:none;margin-left:3px;padding:0 4px;border-radius:7px;background:#b23b3b;color:#fff;font-size:10px;line-height:14px;vertical-align:middle">0</span></button>
         <button id="${ui.agents}" title="Provisioning Arena-агентов: создание и замена ролей" style="${btnStyle()}">🤖 Агенты</button>
@@ -23566,9 +23585,22 @@ function reviewPullRequest({ files, pr, zone } = {}) {
     helloAt: 0,
     lastBeatAt: 0,
     lastContactAt: 0,
+    lastPresenceAt: 0,
     lastMarker: { hash: "", at: 0 },
     warned: { hello: "", pull: "", version: "" },
   };
+
+  function relayControlActive() {
+    return relayConfigured() && Boolean(relayClient.lastContactAt) && Date.now() - relayClient.lastContactAt <= 180000;
+  }
+
+  function relayConnectionLabel() {
+    if (!relayConfigured()) return "Node Relay не настроен";
+    if (!relayClient.slotId) return "Node Relay: нет связи";
+    const localPaused = typeof isPaused === "function" && isPaused();
+    if (!relayControlActive()) return `Node Relay: нет сигнала (${relayClient.slotId})`;
+    return `Node Relay: ${relayClient.slotId}${localPaused ? " · ScriptCat на паузе" : " · подключён"}`;
+  }
 
   /** Идентификатор вкладки: один на загрузку страницы, не общий на вкладки. */
   function relayTabId() {
@@ -23601,7 +23633,13 @@ function reviewPullRequest({ files, pr, zone } = {}) {
       const data = await request(
         "POST", `${base}/api/agent`,
         { "Content-Type": "application/json" },
-        JSON.stringify({ ...body, scriptVersion: SCRIPT_VERSION, v: 1, tab: relayTabId() }),
+        JSON.stringify({
+          ...body,
+          scriptVersion: SCRIPT_VERSION,
+          localPaused: typeof isPaused === "function" ? isPaused() : false,
+          v: 1,
+          tab: relayTabId(),
+        }),
         { retry: false },
       );
       if (data && typeof data === "object") relayClient.lastContactAt = Date.now();
@@ -23625,6 +23663,7 @@ function reviewPullRequest({ files, pr, zone } = {}) {
     const res = await relayPost({ action: "hello", account: email, path: typeof location !== "undefined" ? location.pathname : "" });
     relayClient.helloAt = nowMs;
     if (res && res.ok && res.slot) {
+      relayClient.lastPresenceAt = nowMs;
       relayClient.slotId = String(res.slot.slotId || "");
       relayClient.account = email;
       relayClient.admin = Boolean(res.slot.admin);
@@ -23776,9 +23815,21 @@ function reviewPullRequest({ files, pr, zone } = {}) {
   /** Тик клиента: опознание → работа или удар сердца. Никаких решений. */
   async function relayClientTick() {
     if (!relayConfigured()) return;
-    if (typeof isPaused === "function" && isPaused()) return;
+    // Объявляем вкладку службе даже при локальной паузе. Иначе пульт видит
+    // «административный клиент не найден» и не может объяснить, что именно
+    // мешает команде. Пауза по-прежнему запрещает брать работу/turn.
     const slotId = await relayIdentity().catch(() => "");
     if (!slotId) return;
+    const paused = typeof isPaused === "function" && isPaused();
+    if (paused) {
+      // Пауза запрещает pull, но не должна делать вкладку невидимой пульту.
+      // Лёгкий hello раз в минуту поддерживает свежий статус без спама в журнал.
+      if (Date.now() - Number(relayClient.lastPresenceAt || 0) >= 60000) {
+        await relayIdentity({ force: true }).catch(() => "");
+      }
+      if (typeof setStatus === "function") setStatus();
+      return;
+    }
     const pending = GM_getValue(K.pending, null);
     const waiting = GM_getValue(K.expect, null);
     if (pending || waiting) {
