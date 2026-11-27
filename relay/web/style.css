@@ -74,6 +74,38 @@ input { min-width: 160px; }
 .dot.ok { background: var(--ok); }
 .dot.bad { background: var(--bad); }
 
+.action-feedback {
+  margin: 10px 16px 0;
+  padding: 10px 12px;
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  background: #17232e;
+  color: var(--text);
+  font-weight: 600;
+}
+.action-feedback.ok { border-color: var(--ok); background: #17251e; }
+.action-feedback.warn { border-color: var(--warn); background: #292416; }
+.action-feedback.bad { border-color: var(--bad); background: #2a1b1d; }
+
+.operator-card {
+  margin: 10px 16px 0;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--accent);
+  border-radius: 9px;
+  background: var(--panel);
+}
+.operator-card.ok { border-left-color: var(--ok); }
+.operator-card.warn { border-left-color: var(--warn); }
+.operator-card.bad { border-left-color: var(--bad); }
+.operator-copy { display: flex; align-items: flex-start; gap: 10px; }
+.operator-mark { width: 20px; flex: 0 0 20px; font-weight: 700; color: var(--accent); }
+.operator-card.ok .operator-mark { color: var(--ok); }
+.operator-card.warn .operator-mark { color: var(--warn); }
+.operator-card.bad .operator-mark { color: var(--bad); }
+.operator-copy p { margin: 3px 0 0; white-space: pre-wrap; }
+.operator-tools { margin-top: 10px; }
+
 .scriptcat-status {
   margin: 10px 16px 0;
   padding: 9px 12px;

@@ -19,6 +19,152 @@ const post = async (path, body) => {
 
 let snapshot = null;
 let busy = false;
+let controlBusy = false;
+
+function announceAction(text, tone = "") {
+  const node = $("action-feedback");
+  if (!node) return;
+  node.textContent = text;
+  node.className = `action-feedback${tone ? ` ${tone}` : ""}`;
+}
+
+function adminClientsFor(shot) {
+  const adminSlots = new Set((shot?.slots || []).filter((slot) => slot.admin).map((slot) => slot.slotId));
+  return (shot?.scriptClients || []).filter((client) => adminSlots.has(client.slotId));
+}
+
+function localHoldDescription(client) {
+  const waiting = String(client?.localWaiting || "");
+  if (waiting === "expect:heal") return "сохранён незавершённый разбор предыдущей ошибки (heal)";
+  if (waiting.startsWith("expect:")) return `сохранено ожидание «${waiting.slice(7) || "ход"}»`;
+  if (waiting === "pending") return "сохранён незавершённый шаг";
+  return "ScriptCat сообщил о незавершённой локальной работе";
+}
+
+function operatorGuidance(shot) {
+  const admins = adminClientsFor(shot);
+  const heldAdmin = admins.find((client) => client.localBusy || client.localWaiting);
+  const pausedAdmin = admins.find((client) => client.localPaused);
+  if (shot.demo) return {
+    tone: "bad", mark: "!", title: "Это демо, не рабочая книга",
+    detail: "Не нажимайте «Шаг» для реальной работы: подключите книгу через настройку Relay.", canStep: false,
+  };
+  if (shot.paused) return {
+    tone: "warn", mark: "Ⅱ", title: "Relay на паузе",
+    detail: `Новые автоматические ходы остановлены. ${shot.pauseReason || "Сохранённое состояние не сбрасывается."}`,
+    canStep: false,
+  };
+  if (shot.turnRequest && heldAdmin) return {
+    tone: "warn", mark: "…", title: "Координатор ждёт Admin; ScriptCat удерживает опрос",
+    detail: `${localHoldDescription(heldAdmin)}. Relay сохранил запрос ${shot.turnRequest.id} и не сбросил его. Не нажимайте «Шаг» повторно — нажмите «Скопировать диагностику» и пришлите отчёт агенту.`,
+    canStep: false,
+  };
+  if (shot.turnRequest && pausedAdmin) return {
+    tone: "warn", mark: "Ⅱ", title: "Запрос Координатора сохранён, но ScriptCat на паузе",
+    detail: `Запрос ${shot.turnRequest.id} остаётся в Relay. Ничего не потеряно; отправьте агенту диагностику, не создавайте повторный «Шаг».`,
+    canStep: false,
+  };
+  if (shot.turnRequest && shot.turnRequest.claimed) return {
+    tone: "ok", mark: "✓", title: "Admin принял ход Координатора",
+    detail: `Запрос ${shot.turnRequest.id} обрабатывается. Новый «Шаг» сейчас не нужен.`,
+    canStep: false,
+  };
+  if (shot.turnRequest) return {
+    tone: "warn", mark: "…", title: "Ход Координатора уже ожидает Admin",
+    detail: `Запрос ${shot.turnRequest.id} сохранён. Не нажимайте «Шаг» ещё раз; если ожидание затянулось, скопируйте диагностику.`,
+    canStep: false,
+  };
+  if (heldAdmin) return {
+    tone: "warn", mark: "!", title: "ScriptCat сообщил о незавершённой работе",
+    detail: `${localHoldDescription(heldAdmin)}. Relay не очищает такое состояние автоматически. Сначала отправьте диагностику агенту.`,
+    canStep: false,
+  };
+  if (pausedAdmin) return {
+    tone: "warn", mark: "Ⅱ", title: "Админская вкладка на локальной паузе ScriptCat",
+    detail: "Relay видит вкладку, но она не забирает команды. Состояние сохранено; скопируйте диагностику, если не знаете причину паузы.",
+    canStep: false,
+  };
+  if (Number(shot.counts?.waiting || 0) > 0) return {
+    tone: "ok", mark: "✓", title: "Работа в очереди",
+    detail: `В очереди ${shot.counts.waiting} заданий. Автоцикл выдаст их сам; в ручном режиме «Шаг» по-прежнему доступен.`,
+    canStep: true,
+  };
+  return {
+    tone: "ok", mark: "✓", title: shot.mode === "auto" ? "Relay работает автоматически" : "Relay готов к ручному шагу",
+    detail: shot.mode === "auto"
+      ? "Автоцикл работает. Если хотите запросить один ход вручную, кнопка «Шаг» всё ещё доступна."
+      : "Чтобы запросить один планирующий ход Координатора, нажмите «Шаг» один раз.",
+    canStep: true,
+  };
+}
+
+function syncControls(shot = snapshot) {
+  if (!shot) return;
+  const guidance = operatorGuidance(shot);
+  const stepButton = $("btn-step");
+  if (stepButton) {
+    stepButton.disabled = busy || controlBusy || !guidance.canStep;
+    stepButton.textContent = shot.turnRequest
+      ? "Шаг уже ожидает"
+      : adminClientsFor(shot).some((client) => client.localBusy || client.localWaiting)
+        ? "Ожидает ScriptCat"
+        : "Шаг";
+    stepButton.title = guidance.canStep ? "Запросить один планирующий ход" : guidance.detail;
+  }
+  for (const id of ["btn-mode", "btn-pause"]) {
+    const button = $(id);
+    if (button) button.disabled = controlBusy || busy;
+  }
+}
+
+function renderOperatorGuidance(shot) {
+  const guidance = operatorGuidance(shot);
+  const card = $("operator-card");
+  if (!card) return;
+  card.className = `operator-card ${guidance.tone}`;
+  $("operator-mark").textContent = guidance.mark;
+  $("operator-title").textContent = guidance.title;
+  $("operator-detail").textContent = guidance.detail;
+  syncControls(shot);
+}
+
+function redactDiagnosticText(value) {
+  return String(value || "")
+    .replace(/(?:ntn|secret)_[A-Za-z0-9_-]{12,}/gi, "[TOKEN REDACTED]")
+    .replace(/Bearer\s+[A-Za-z0-9._~+/-]+=*/gi, "Bearer [REDACTED]")
+    .replace(/\b(token|api[_ -]?key|bridge[_ -]?key|password|secret)(\s*[:=]\s*)[^\s,;]+/gi, "$1$2[REDACTED]")
+    .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, "[EMAIL REDACTED]");
+}
+
+function diagnosticReport(shot) {
+  const events = (shot.events || []).slice(0, 15).reverse().map((event) => ({
+    at: event.at, slot: event.slot || "", kind: event.kind || "", level: event.level || "",
+    text: redactDiagnosticText(String(event.text || "").slice(0, 500)),
+  }));
+  return [
+    "Relay support report (review before sharing; access tokens and account emails are redacted)",
+    JSON.stringify({
+      capturedAt: new Date().toISOString(),
+      relayVersion: shot.version || "unknown",
+      mode: shot.mode || "unknown",
+      paused: Boolean(shot.paused),
+      pauseReason: redactDiagnosticText(shot.pauseReason || ""),
+      counts: shot.counts || {},
+      turnRequest: shot.turnRequest || null,
+      clients: (shot.scriptClients || []).map((client) => ({
+        slotId: client.slotId, scriptVersion: client.scriptVersion,
+        localPaused: Boolean(client.localPaused), localBusy: Boolean(client.localBusy),
+        localWaiting: client.localWaiting || "", seenAt: client.seenAt || "",
+        lastPullAt: client.lastPullAt || "", lastBeatAt: client.lastBeatAt || "",
+      })),
+      slots: (shot.slots || []).map((slot) => ({
+        slotId: slot.slotId, admin: Boolean(slot.admin), container: slot.container || "",
+        state: slot.state || "", activeRuns: (slot.runs || []).length,
+      })),
+      recentEvents: events,
+    }, null, 2),
+  ].join("\n");
+}
 
 const fmtTime = (iso) => {
   const date = new Date(iso || "");
@@ -202,7 +348,13 @@ function renderHeader(shot) {
   // уже назван в строке выше; дублировать его на кнопке значит заставлять
   // человека проверять: «Автоцикл» — это я включил или ещё нет?
   $("btn-mode").textContent = shot.mode === "auto" ? "Остановить автоцикл" : "Включить автоцикл";
+  $("btn-mode").title = shot.mode === "auto"
+    ? "Остановить создание новых автоматических ходов; очередь и сохранённые ожидания останутся на месте"
+    : "Разрешить автоматическое продолжение; ручная кнопка «Шаг» останется доступна";
   $("btn-pause").textContent = shot.paused ? "Продолжить" : "Пауза";
+  $("btn-pause").title = shot.paused
+    ? "Снять общую паузу Relay; незавершённые состояния не очищаются"
+    : "Приостановить действия Relay, не удаляя очередь и незавершённые состояния";
   if (shot.paused) banner(`Пауза: ${shot.pauseReason || "по решению человека"}`);
   else if (shot.turnRequest) {
     const clients = Array.isArray(shot.scriptClients) ? shot.scriptClients : [];
@@ -211,16 +363,20 @@ function renderHeader(shot) {
     const adminPaused = adminClients.some((client) => client.localPaused);
     const latestAdminPull = Math.max(0, ...adminClients.map((client) => Date.parse(client.lastPullAt || "") || 0));
     const adminPolledRecently = latestAdminPull > 0 && Date.now() - latestAdminPull <= 30000;
+    const heldAdmin = adminClients.find((client) => client.localBusy || client.localWaiting);
     banner(shot.turnRequest.claimed
       ? "Планирующий ход принят административной вкладкой; жду, пока ScriptCat обработает миссию."
-      : adminPaused
-        ? "Административная вкладка связана, но ScriptCat на локальной паузе. Снимите её в виджете ScriptCat; запрос останется в очереди."
-        : adminClients.length && adminPolledRecently
+      : heldAdmin
+        ? ""
+        : adminPaused
+          ? "Административная вкладка связана, но ScriptCat на локальной паузе. Запрос сохранён."
+          : adminClients.length && adminPolledRecently
           ? "Админ-вкладка опросила Relay, но запрос плана ещё не принят. Причину проверьте в Журнале событий ниже."
           : adminClients.length
             ? "Admin зарегистрирован, но ScriptCat не прислал pull-опрос. Проверьте строку Node Relay в виджете; подробности сохраняются в истории сообщений и Журнале."
-            : `Запрос ждёт административную вкладку. ScriptCat автоматически подключается к http://127.0.0.1:8787; проверьте разрешение localhost/127.0.0.1 в менеджере скриптов и перезагрузите Arena под admin.`);
+            : `Запрос ждёт административную вкладку. ScriptCat автоматически подключается к Relay; не вводите адрес вручную.`);
   } else banner("");
+  renderOperatorGuidance(shot);
 }
 
 function versionAtLeast(actual, minimum) {
@@ -250,6 +406,10 @@ function renderScriptCatStatus(shot) {
   const pausedAdmin = adminClients.some((client) => client.localPaused);
   const latestAdminPull = Math.max(0, ...adminClients.map((client) => Date.parse(client.lastPullAt || "") || 0));
   const adminPolledRecently = latestAdminPull > 0 && Date.now() - latestAdminPull <= 30000;
+  if (shot.turnRequest && adminClients.some((client) => client.localBusy || client.localWaiting)) {
+    node.classList.add("hidden");
+    return;
+  }
   if (!adminClients.length) {
     node.append(document.createTextNode(
       `Пульт не получил сигнал от админской вкладки. Адрес Relay подставляется автоматически (http://127.0.0.1:8787): не вводите его вручную. Проверьте одноразовое разрешение localhost/127.0.0.1 в ScriptCat и перезагрузите Arena под admin. `,
@@ -265,7 +425,7 @@ function renderScriptCatStatus(shot) {
     ));
   } else if (shot.turnRequest && adminClients.length && !adminPolledRecently) {
     node.append(document.createTextNode(
-      "Admin успешно зарегистрирован, но не опрашивает очередь. Если в ScriptCat есть локальное ожидание, его причина будет записана в журнал; автоматический сброс состояния запрещён. ",
+      "Admin зарегистрирован, но ещё не опросил очередь Relay. Запрос сохранён; причина появится здесь и в диагностике. ",
     ));
   } else if (shot.turnRequest && adminClients.length && adminPolledRecently && !shot.turnRequest.claimed) {
     node.append(document.createTextNode(
@@ -309,6 +469,11 @@ async function refresh() {
     renderEvents(shot);
   } catch (error) {
     $("health-dot").className = "dot bad";
+    $("operator-card").className = "operator-card bad";
+    $("operator-mark").textContent = "!";
+    $("operator-title").textContent = error.network ? "Relay запущен, но нет связи с внешним сервисом" : "Не удалось связаться с Relay";
+    $("operator-detail").textContent = error.message;
+    for (const id of ["btn-step", "btn-pause", "btn-mode"]) $(id).disabled = true;
     // «Служба не отвечает» — неправда, когда служба отвечает и говорит, что
     // не дотянулась до книги: человек перезапускает процесс, а дело в сети.
     banner(error.network
@@ -318,18 +483,35 @@ async function refresh() {
 }
 
 async function step() {
-  if (busy) return;
+  if (busy || controlBusy) return;
+  if (snapshot) {
+    const guidance = operatorGuidance(snapshot);
+    if (!guidance.canStep) {
+      announceAction(`«Шаг» не отправлен. ${guidance.detail}`, "warn");
+      return;
+    }
+  }
   busy = true;
-  $("btn-step").disabled = true;
+  syncControls();
+  announceAction("Отправляю один запрос «Шаг»…");
   try {
     await post("/api/control", { action: "ui", text: "нажат «Шаг»" });
     const result = await post("/api/control", { action: "step", origin: "panel" });
-    if (result.ok === false) banner(result.why);
-    else if (result.planned === 0) banner(`Выдач не было: ${result.why}`);
-    else banner(`Запланировано выдач: ${result.planned}`);
+    if (result.ok === false) {
+      announceAction(`Шаг не выполнен: ${result.why || "служба отказала"}`, "bad");
+      banner(result.why);
+    } else if (result.planned === 0) {
+      announceAction(`Запрос обработан: ${result.why || "пока нет выдач"}`, "warn");
+      banner(`Выдач не было: ${result.why}`);
+    } else {
+      announceAction(`Шаг выполнен: запланировано выдач — ${result.planned}.`, "ok");
+      banner(`Запланировано выдач: ${result.planned}`);
+    }
+  } catch (error) {
+    announceAction(`Не удалось отправить «Шаг»: ${error.message}`, "bad");
   } finally {
     busy = false;
-    $("btn-step").disabled = false;
+    syncControls();
     await refresh();
   }
 }
@@ -504,28 +686,86 @@ async function setNotionToken() {
   await refresh();
 }
 
+async function runConfirmedAction({ pending, actionBody, uiText, verify, done }) {
+  if (busy || controlBusy) return;
+  controlBusy = true;
+  syncControls();
+  announceAction(pending);
+  try {
+    await post("/api/control", { action: "ui", text: uiText });
+    const result = await post("/api/control", actionBody);
+    if (result?.ok === false) throw new Error(result.why || "служба отказала");
+    await refresh();
+    if (verify(snapshot, result)) announceAction(done, "ok");
+    else announceAction("Команда отправлена, но новое состояние пока не подтверждено. Нажмите «Обновить»; ничего повторно не нажимайте.", "warn");
+  } catch (error) {
+    announceAction(`Не удалось выполнить действие: ${error.message}`, "bad");
+  } finally {
+    controlBusy = false;
+    syncControls();
+  }
+}
+
+async function copyDiagnostics() {
+  const note = $("diagnostic-note");
+  if (!snapshot) {
+    note.textContent = "Пока нет снимка Relay. Нажмите «Обновить» и повторите.";
+    return;
+  }
+  const report = diagnosticReport(snapshot);
+  try {
+    if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(report);
+    else throw new Error("clipboard API unavailable");
+  } catch {
+    const field = document.createElement("textarea");
+    field.value = report;
+    field.setAttribute("readonly", "");
+    field.style.position = "fixed";
+    field.style.opacity = "0";
+    document.body.append(field);
+    field.select();
+    const copied = document.execCommand("copy");
+    field.remove();
+    if (!copied) {
+      note.textContent = "Не удалось скопировать автоматически. Выделите и скопируйте журнал вручную.";
+      return;
+    }
+  }
+  note.textContent = "Диагностика скопирована. Просмотрите и вставьте сюда; токены и почта скрыты, но тексты событий могут содержать рабочие детали.";
+  announceAction("Диагностика скопирована в буфер обмена. Вставьте её в сообщение агенту.", "ok");
+}
+
 function bind() {
   $("btn-step").onclick = step;
-  $("btn-refresh").onclick = refresh;
-  $("btn-pause").onclick = async () => {
+  $("btn-refresh").onclick = async () => {
+    announceAction("Обновляю состояние Relay…");
+    await refresh();
+    if (snapshot) announceAction("Состояние обновлено.", "ok");
+  };
+  $("btn-pause").onclick = () => {
     const paused = snapshot?.paused;
-    await post("/api/control", { action: "ui", text: paused ? "нажато «Продолжить»" : "нажата «Пауза»" });
-    await post("/api/control", { action: paused ? "resume" : "pause", reason: "кнопка пульта" });
-    await refresh();
+    const nextPaused = !paused;
+    void runConfirmedAction({
+      pending: nextPaused ? "Останавливаю новые действия…" : "Снимаю паузу…",
+      uiText: nextPaused ? "нажата «Пауза»" : "нажато «Продолжить»",
+      actionBody: { action: nextPaused ? "pause" : "resume", reason: "кнопка пульта" },
+      verify: (shot) => Boolean(shot) && Boolean(shot.paused) === nextPaused,
+      done: nextPaused ? "Подтверждено: Relay на паузе; состояние сохранено." : "Подтверждено: пауза снята.",
+    });
   };
-  $("btn-mode").onclick = async () => {
+  $("btn-mode").onclick = () => {
     const next = snapshot?.mode === "auto" ? "manual" : "auto";
-    await post("/api/control", { action: "ui", text: `переключён режим: ${next}` });
-    await post("/api/control", { action: "mode", mode: next });
-    if (next === "auto") {
-      // Автоцикл не делает работу сам: карточки выдаются только когда их
-      // просит вкладка. Сказать об этом сразу честнее, чем оставить
-      // «автоцикл» в шапке и тишину в очереди.
-      banner("Автоцикл включён: транспорт будет выдавать работу сам, когда вкладка спросит. " +
-        "Очередь наполняет Координатор — вручную или карточкой Notion.");
-    }
-    await refresh();
+    void runConfirmedAction({
+      pending: next === "manual" ? "Останавливаю автоцикл…" : "Включаю автоцикл…",
+      uiText: `переключён режим: ${next}`,
+      actionBody: { action: "mode", mode: next },
+      verify: (shot, result) => (shot?.mode || result?.mode) === next,
+      done: next === "manual"
+        ? "Подтверждено: автоцикл остановлен. Сохранённые ходы и очередь не удалены."
+        : "Подтверждено: автоцикл включён.",
+    });
   };
+  $("btn-copy-diagnostics").onclick = copyDiagnostics;
   $("btn-discover").onclick = discover;
   const notionButton = $("btn-notion");
   if (notionButton) notionButton.onclick = setNotionToken;
