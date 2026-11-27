@@ -27,8 +27,8 @@ assert.match(src, /entries\s*=\s*entries\.slice\(-C\.maxLog\)/, 'старые з
 assert.match(src, /GM_getValue\(K\.log, \[\]\) \|\| \[\]\)\.slice\(-C\.maxLog\)/, 'хвост обрезается при загрузке');
 assert.match(src, /function clearLog\(\)/, 'есть очистка журнала');
 assert.match(src, /GM_setValue\(K\.log, \[\]\)/, 'очистка стирает сохранённый хвост');
-assert.match(src, /title="Очистить журнал/, 'кнопка очистки есть в панели');
-assert.match(src, /title="Снять ход: очередь, ожидание и карточки в Running/, 'кнопка снятия хода есть в панели');
+assert.match(src, /id="\$\{ui\.clear\}" title="Очистить только журнал"/, 'очистка журнала находится в обслуживании');
+assert.match(src, /id="\$\{ui\.reset\}" title="Снять локальный ход; очередь и ожидания будут очищены"/, 'сброс локального хода находится в обслуживании');
 assert.match(src, /id="\$\{ui\.count\}"/, 'в панели виден размер журнала');
 
 // 3. Пауза — единственная точка остановки.

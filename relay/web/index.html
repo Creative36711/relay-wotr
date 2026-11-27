@@ -33,8 +33,11 @@
   </div>
   <div class="row wrap operator-tools">
     <button id="btn-approve-project" class="primary hidden" type="button">Проверить и разрешить проект</button>
-    <button id="btn-copy-diagnostics" class="ghost">Скопировать диагностику</button>
-    <span id="diagnostic-note" class="muted" aria-live="polite">Скопирует состояние и последние события. Перед отправкой просмотрите текст; рабочие детали могут быть личными.</span>
+    <details class="diagnostic-details">
+      <summary>Диагностика</summary>
+      <button id="btn-copy-diagnostics" class="ghost">Скопировать отчёт</button>
+      <span id="diagnostic-note" class="muted" aria-live="polite">Перед отправкой просмотрите текст отчёта.</span>
+    </details>
   </div>
 </section>
 <div id="scriptcat-status" class="scriptcat-status hidden"></div>
@@ -46,37 +49,52 @@
 
 <main>
   <section class="panel" id="projects-panel">
-    <h2>Профили и подключения</h2>
-    <p class="muted">Настройки принадлежат пульту Relay и хранятся в локальном файле с правами только владельца. ScriptCat получает их как закрытый исполнитель. Секреты не показываются после сохранения; пустое поле оставляет прежнее значение.</p>
-    <div class="row wrap">
-      <select id="project-select" aria-label="Проект"><option value="">загрузка профилей…</option></select>
-      <button id="btn-project-new" class="ghost" type="button">Новый профиль</button>
-      <button id="btn-project-import" class="ghost" type="button">Импорт JSON профиля</button>
-      <button id="btn-project-activate" class="ghost hidden" type="button">Сделать активным</button>
-      <input id="project-file" type="file" accept="application/json,.json" hidden>
-      <span id="project-note" class="muted" role="status" aria-live="polite"></span>
+    <div class="section-heading">
+      <div>
+        <h2>Проект</h2>
+        <p class="muted">Сначала сохраните настройки здесь. Секреты не переносятся из старого ScriptCat и не попадают в JSON.</p>
+      </div>
+      <div class="row wrap project-picker">
+        <select id="project-select" aria-label="Проект"><option value="">загрузка профилей…</option></select>
+        <button id="btn-project-new" class="ghost" type="button">Новый</button>
+        <button id="btn-project-import" class="ghost" type="button">Импорт JSON</button>
+        <button id="btn-project-activate" class="ghost hidden" type="button">Сделать активным</button>
+        <input id="project-file" type="file" accept="application/json,.json" hidden>
+      </div>
     </div>
-    <label for="project-json">Конфигурация профиля (JSON; экспорт ScriptCat `scriptcat-project-config` тоже принимается)</label>
-    <textarea id="project-json" rows="12" spellcheck="false" autocomplete="off" placeholder="Импортируйте JSON профиля или создайте новый. Секреты сюда не вставляйте."></textarea>
-    <label>ntfy topic (не секрет; пусто — уведомления выключены) <input id="project-ntfy-topic" type="text" maxlength="64" autocomplete="off" placeholder="arena-project-topic"></label>
-    <div class="grid project-secrets">
-      <label>Notion token <input id="project-notion" type="password" autocomplete="new-password" placeholder="оставьте пустым, чтобы сохранить текущий"></label>
+    <p id="project-note" class="muted project-note" role="status" aria-live="polite"></p>
+    <p id="project-credential-status" class="credential-status warn" role="status" aria-live="polite">Выберите профиль, чтобы увидеть состояние обязательных подключений.</p>
+    <div class="grid project-secrets required-secrets">
+      <label>Notion token для этого проекта <input id="project-notion" type="password" autocomplete="new-password" placeholder="вставьте токен; старый ScriptCat не переносится автоматически"></label>
       <label>Drive Gateway URL <input id="project-gw-url" type="url" autocomplete="off" placeholder="https://script.google.com/macros/s/…/exec"></label>
-      <label>Drive Gateway key <input id="project-gw-key" type="password" autocomplete="new-password" placeholder="оставьте пустым, чтобы сохранить текущий"></label>
-      <label>GitHub token (необязательно) <input id="project-github" type="password" autocomplete="new-password" placeholder="оставьте пустым, чтобы сохранить текущий"></label>
-      <label>ntfy token (необязательно) <input id="project-ntfy" type="password" autocomplete="new-password" placeholder="оставьте пустым, чтобы сохранить текущий"></label>
+      <label>Drive Gateway key <input id="project-gw-key" type="password" autocomplete="new-password" placeholder="проектный ключ"></label>
     </div>
-    <div class="row wrap">
-      <button id="btn-project-save" class="primary" type="button">Сохранить профиль и подключения</button>
+    <details class="advanced-details">
+      <summary>Дополнительные настройки проекта</summary>
+      <div class="details-content">
+        <label>ntfy topic (не секрет; тема уведомлений) <input id="project-ntfy-topic" type="text" maxlength="64" autocomplete="off" placeholder="необязательно"></label>
+        <label>GitHub token (только для приватного репозитория) <input id="project-github" type="password" autocomplete="new-password" placeholder="необязательно"></label>
+        <label>ntfy token (необязательно) <input id="project-ntfy" type="password" autocomplete="new-password" placeholder="необязательно"></label>
+      </div>
+    </details>
+    <details id="project-json-details" class="advanced-details">
+      <summary>Расширенные метаданные профиля (JSON)</summary>
+      <div class="details-content">
+        <label for="project-json">UUID баз Notion, ссылки, репозитории и маршруты ролей. Не вставляйте секреты.</label>
+        <textarea id="project-json" rows="8" spellcheck="false" autocomplete="off" placeholder="Импортируйте JSON профиля или заполните метаданные вручную."></textarea>
+      </div>
+    </details>
+    <div class="row wrap project-save-row">
+      <button id="btn-project-save" class="primary" type="button">Сохранить</button>
       <button id="btn-project-clear-secrets" class="danger" type="button">Удалить сохранённые секреты…</button>
-      <span class="muted">Изменение профиля приостановит его до повторной проверки. Очередь и ожидания не удаляются.</span>
+      <span class="muted">Изменение настроек снимет допуск; очередь и ожидания сохранятся.</span>
     </div>
   </section>
 
-  <section class="panel" id="setup-panel">
-    <h2>Настройка</h2>
-    <p class="muted" id="setup-hint">Ключи и ID подставляются сами: мастер находит базы в Notion и папку логов в Drive.
-      Расширенные настройки трогать не нужно — без них цикл работает.</p>
+  <details class="panel advanced-panel" id="setup-panel">
+    <summary>Служебная настройка Relay (для книги и мастера, не для подключения профиля)</summary>
+    <div class="details-content">
+    <p class="muted" id="setup-hint">Эти параметры нужны только для настройки хранилища службы. Для допуска проекта используйте токен Notion и Drive Gateway в карточке «Проект» выше.</p>
     <div class="row wrap" id="notion-row">
       <input id="notion-token" type="password" spellcheck="false" autocomplete="off"
              placeholder="Токен Notion (ntn_… или secret_…) — вставьте и нажмите «Проверить»" />
@@ -93,15 +111,16 @@
       <button id="btn-mount" class="ghost">Код для входа в книгу</button>
       <span class="muted" id="setup-note"></span>
     </div>
-  </section>
+    </div>
+  </details>
 
-  <section class="panel">
-    <h2>Слоты <span class="counter" id="counts"></span></h2>
-    <div id="slots" class="slots"></div>
-  </section>
+  <details class="panel secondary-panel" id="slots-panel">
+    <summary>Слоты <span class="counter" id="counts"></span></summary>
+    <div class="details-content"><div id="slots" class="slots"></div></div>
+  </details>
 
-  <section class="panel">
-    <h2>Очередь</h2>
+  <details class="panel secondary-panel" id="queue-panel">
+    <summary>Очередь</summary>
     <div class="row wrap">
       <input id="queue-card" placeholder="ID карточки Notion" />
       <input id="queue-title" placeholder="Заголовок (для человека)" />
@@ -110,10 +129,12 @@
       <button id="btn-enqueue">В очередь</button>
     </div>
     <div id="queue" class="list"></div>
-  </section>
+  </details>
 
-  <section class="panel">
-    <h2>Журнал <span class="muted">— все вкладки, включая действия человека</span></h2>
+  <details class="panel secondary-panel" id="events-panel">
+    <summary>Журнал событий</summary>
+    <div class="details-content">
+    <p class="muted">История всех вкладок и действий человека.</p>
     <div class="row wrap">
       <select id="event-filter">
         <option value="">все виды</option>
@@ -128,7 +149,8 @@
       <span class="muted" id="event-note"></span>
     </div>
     <ol id="events" class="events"></ol>
-  </section>
+    </div>
+  </details>
 </main>
 
 <dialog id="incident-dialog">

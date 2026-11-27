@@ -137,10 +137,10 @@ const real = { ...ghost, sentAt: 2, verified: true };
 
 // ── 6. Кнопка есть в панели, у 🧹 подсказка про ↺ ───────────────────────────
 assert.match(src, /reset: "cfn-reset"/, 'id кнопки объявлен');
-assert.match(src, /id="\$\{ui\.reset\}" title="Снять ход: очередь, ожидание и карточки в Running/, 'кнопка ↺ в панели');
+assert.match(src, /id="\$\{ui\.reset\}" title="Снять локальный ход; очередь и ожидания будут очищены"/, 'сброс находится в дополнительном меню обслуживания');
 assert.match(src, /getElementById\(ui\.reset\)\.onclick = \(\) => \{/, 'кнопка вызывает очистку');
 assert.match(src, /const work = resetStateDialog\(\);[\s\S]*?trackProjectTask\(work\)[\s\S]*?\.catch\(/, 'отказ сети при снятии хода не теряется');
-assert.match(src, /Очистить журнал; очередь снимается кнопкой ↺/, 'у 🧹 понятная подсказка');
+assert.match(src, /id="\$\{ui\.clear\}" title="Очистить только журнал"/, 'очистка сообщает, что очередь не меняется');
 assert.match(src, /reset: \(\) => resetStateDialog\(\)/, 'в консоли есть __relay.reset()');
 assert.match(src, /const boot = \(\) => \{\s*migrateState\(\);/, 'миграция выполняется до первого шага');
 assert.match(src, /title="версия скрипта">v\$\{SCRIPT_VERSION\}/, 'в панели видно, какая версия загружена');

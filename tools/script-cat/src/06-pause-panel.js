@@ -650,51 +650,37 @@
   };
 
   /**
-   * Свёрнутая панель.
+   * Компактный виджет исполнителя, а не второй пульт.
    *
-   * 28.10 Мастер попросил свернуть окно приложения: панель занимает угол
-   * страницы агента и мешает читать чат. Свёрнутое состояние — только полоса с
-   * названием, статусом и кнопкой «Стоп»: журнал и остальные кнопки скрыты, но
-   * счётчики вопросов и решений остаются на самой кнопке, чтобы свёрнутое окно
-   * не прятало работу, которая ждёт человека. Состояние помнится в ScriptCat и
-   * переживает перезагрузку страницы.
+   * Основные команды находятся в Relay. ScriptCat оставляет только имя проекта,
+   * краткий статус, ссылку в пульт и по раскрытию — локальный журнал с парой
+   * узких инструментов обратной связи/агентов. Развёрнутый журнал закрыт по
+   * умолчанию и запоминает выбор в локальном хранилище.
    */
-  const panelCollapsed = () => GM_getValue(K.collapsed, false) === true;
+  const panelCollapsed = () => GM_getValue(K.collapsed, true) === true;
 
   function paintPanelChrome() {
     const panel = document.getElementById(ui.panel);
     if (!panel) return;
     const collapsed = panelCollapsed();
     panel.classList.toggle("cfn-panel-collapsed", collapsed);
-    panel.style.width = collapsed ? "208px" : "360px";
-    const log = document.getElementById(ui.log);
-    if (log) log.style.display = collapsed ? "none" : "";
-    const relayMode = typeof relayControlActive === "function" && relayControlActive();
-    const relayConfiguredNow = typeof relayConfigured === "function" && relayConfigured();
-    for (const id of [ui.step, ui.wake, ui.questions, ui.debug, ui.reset, ui.clear]) {
-      const el = document.getElementById(id);
-      if (!el) continue;
-      const superseded = relayMode && [ui.step, ui.wake].includes(id);
-      el.style.display = collapsed || superseded ? "none" : "";
-    }
+    panel.style.width = collapsed ? "270px" : "360px";
+    const details = document.getElementById("cfn-panel-details");
+    if (details) details.style.display = collapsed ? "none" : "";
     const relayLink = document.getElementById(ui.relay);
     if (relayLink) {
       const base = typeof relayBase === "function" ? relayBase() : "";
       relayLink.href = base || "#";
-      relayLink.style.display = relayConfiguredNow && !collapsed ? "" : "none";
+      relayLink.style.display = base ? "" : "none";
     }
     const status = document.getElementById(ui.status);
-    if (status) status.style.maxWidth = collapsed ? "120px" : "190px";
+    if (status) status.style.maxWidth = collapsed ? "110px" : "190px";
+    const localResume = document.getElementById(ui.localResume);
+    if (localResume) localResume.style.display = isPaused() ? "" : "none";
     const button = document.getElementById(ui.collapse);
     if (!button) return;
-    const count = (id) => Number(document.getElementById(id)?.textContent || 0) || 0;
-    const openQ = count(ui.qBadge);
-    const marks = openQ ? ` 💬${openQ}` : "";
-    button.textContent = collapsed ? `▸${marks}` : "▾";
-    button.title = collapsed
-      ? `Развернуть панель${openQ ? ` (открытых записей обратной связи: ${openQ})` : ""}`
-      : "Свернуть панель";
-    button.style.background = collapsed ? "#2c3a2f" : "#242833";
+    button.textContent = collapsed ? "⌄" : "⌃";
+    button.title = collapsed ? "Показать журнал и дополнительные инструменты" : "Свернуть до статуса";
   }
 
   function togglePanel() {
@@ -713,35 +699,39 @@
       "box-shadow:0 10px 30px rgba(0,0,0,.45)", "overflow:hidden",
     ].join(";");
     panel.innerHTML = `
-      <div style="display:flex;align-items:center;gap:6px;padding:8px 10px;background:#1b1e25;border-bottom:1px solid #2b2f38;flex-wrap:wrap">
-        <strong id="cfn-panel-project" style="font-size:12px">Relay</strong>
-        <span style="opacity:.45;font-size:10px" title="версия скрипта">v${SCRIPT_VERSION}</span>
-        <span id="${ui.status}" style="opacity:.75;font-size:11px;max-width:190px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">…</span>
-        <span id="${ui.count}" style="opacity:.45;font-size:10px">0/${C.maxLog}</span>
+      <div style="display:flex;align-items:center;gap:7px;padding:7px 9px;background:#1b1e25;flex-wrap:nowrap">
+        <strong id="cfn-panel-project" style="font-size:11px;max-width:95px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">Relay</strong>
+        <span style="opacity:.45;font-size:9px" title="версия скрипта">v${SCRIPT_VERSION}</span>
+        <span id="${ui.status}" style="opacity:.8;font-size:10px;max-width:110px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">…</span>
         <span style="flex:1"></span>
-        <button id="${ui.step}" title="Один шаг цикла" style="${btnStyle()}">Шаг</button>
-        <button id="${ui.wake}" title="D-006: разбудить вкладки других аккаунтов — работу продолжит та, чей это аккаунт" style="${btnStyle()}">📣 Все вкладки</button>
-        <a id="${ui.relay}" href="#" target="_blank" rel="noopener noreferrer" style="${btnStyle()};text-decoration:none;display:none">↗ Пульт Relay</a>
-        <button id="${ui.toggle}" style="${btnStyle()}">▶ Включить</button>
-        <button id="${ui.questions}" aria-label="Открыть обратную связь в Notion" title="Обратная связь — вопросы и предложения в Notion" style="${btnStyle()}">💬 Обратная связь<span id="${ui.qBadge}" style="display:none;margin-left:3px;padding:0 4px;border-radius:7px;background:#b23b3b;color:#fff;font-size:10px;line-height:14px;vertical-align:middle">0</span></button>
-        <button id="${ui.agents}" title="Provisioning Arena-агентов: создание и замена ролей" style="${btnStyle()}">🤖 Агенты</button>
-        <button id="${ui.debug}" title="Отладка в консоли браузера (F12)" style="${btnStyle()}">🐞</button>
-        <button id="${ui.reset}" title="Снять ход: очередь, ожидание и карточки в Running без хода (журнал и настройки останутся)" style="${btnStyle()}">↺</button>
-        <button id="${ui.clear}" title="Очистить журнал; очередь снимается кнопкой ↺" style="${btnStyle()}">🧹</button>
-        <button id="${ui.stop}" title="Остановить цикл и снять паузу" style="${btnStyle()}">✕</button>
-        <button id="${ui.collapse}" title="Свернуть панель" style="${btnStyle()}">▾</button>
+        <a id="${ui.relay}" href="#" target="_blank" rel="noopener noreferrer" title="Открыть основной пульт Relay" style="${btnStyle()};text-decoration:none;white-space:nowrap">Пульт ↗</a>
+        <button id="${ui.collapse}" aria-label="Показать журнал" title="Показать журнал и дополнительные инструменты" style="${btnStyle()}">⌄</button>
       </div>
-      <div id="${ui.log}" style="max-height:200px;overflow:auto;padding:6px 10px"></div>`;
+      <div id="cfn-panel-details" style="display:none;border-top:1px solid #2b2f38;padding:6px 9px">
+        <div style="display:flex;gap:6px;margin-bottom:6px">
+          <button id="${ui.questions}" aria-label="Открыть обратную связь в Notion" title="Обратная связь" style="${btnStyle()}">💬 Обратная связь<span id="${ui.qBadge}" style="display:none;margin-left:3px;padding:0 4px;border-radius:7px;background:#b23b3b;color:#fff;font-size:10px;line-height:14px;vertical-align:middle">0</span></button>
+          <button id="${ui.agents}" title="Управление Arena-агентами" style="${btnStyle()}">🤖 Агенты</button>
+        </div>
+        <details style="margin:0 0 6px;font-size:10px">
+          <summary style="cursor:pointer;opacity:.65">Обслуживание</summary>
+          <div style="display:flex;gap:5px;padding:5px 0;flex-wrap:wrap">
+            <button id="${ui.localResume}" title="Снять локальную паузу после подтверждения; основной запуск остаётся в пульте" style="${btnStyle()};display:none">▶ Снять локальную паузу…</button>
+            <button id="${ui.debug}" title="Отладка в консоли браузера (F12)" style="${btnStyle()}">🐞</button>
+            <button id="${ui.reset}" title="Снять локальный ход; очередь и ожидания будут очищены" style="${btnStyle()}">↺ Сброс хода</button>
+            <button id="${ui.clear}" title="Очистить только журнал" style="${btnStyle()}">🧹</button>
+          </div>
+        </details>
+        <div style="display:flex;justify-content:space-between;opacity:.6;font-size:10px;margin:2px 0"><span>Журнал</span><span id="${ui.count}">0/${C.maxLog}</span></div>
+        <div id="${ui.log}" style="max-height:125px;overflow:auto"></div>
+      </div>`;
     document.body.appendChild(panel);
 
     document.getElementById(ui.collapse).onclick = () => togglePanel();
-
-    document.getElementById(ui.reset).onclick = () => {
-      // Сброс теперь ходит в Notion: без перехвата отказ сети остался бы
-      // необработанным обещанием и молчаливой кнопкой.
-      const work = resetStateDialog();
-      (typeof trackProjectTask === "function" ? trackProjectTask(work) : work)
-        .catch((e) => log(`Сброс не удался: ${e.message}`, true));
+    document.getElementById(ui.questions).onclick = () => window.open(C.questionsUrl, "_blank", "noopener");
+    document.getElementById(ui.localResume).onclick = () => {
+      if (!isPaused()) return;
+      const work = toggleAuto();
+      return typeof trackProjectTask === "function" ? trackProjectTask(work) : work;
     };
     document.getElementById(ui.clear).onclick = () => clearLog();
     document.getElementById(ui.debug).onclick = () => {
@@ -749,74 +739,17 @@
       GM_setValue(K.debug, on);
       debugApi.debug(on);
       installDebugApi();
-      log(
-        on
-          ? "Отладка включена: подробности идут в консоль браузера (F12), панель — только вехи. Команды: __relay.state(), __relay.step()."
-          : "Отладка выключена.",
-      );
+      log(on ? "Отладка включена: подробности идут в консоль браузера (F12)." : "Отладка выключена.");
       paintDebugButton();
     };
-    document.getElementById(ui.questions).onclick = () => window.open(C.questionsUrl, "_blank", "noopener");
+    document.getElementById(ui.reset).onclick = () => {
+      const work = resetStateDialog();
+      (typeof trackProjectTask === "function" ? trackProjectTask(work) : work)
+        .catch((error) => log(`Сброс не удался: ${error.message}`, true));
+    };
     const agentsButton = document.getElementById(ui.agents);
     if (agentsButton) agentsButton.onclick = () => {
       if (typeof provisionOpenDialog === "function") provisionOpenDialog();
-    };
-    document.getElementById(ui.stop).onclick = () => {
-      GM_setValue(K.paused, "");
-      GM_setValue(K.pause, null);
-      autoSet(false);
-      log("Автоцикл остановлен вручную.");
-    };
-    document.getElementById(ui.step).onclick = () => {
-      if (typeof projectApproved === "function" && !projectApproved()) {
-        log(typeof projectBlockedText === "function" ? projectBlockedText()
-          : "Проект ещё не разрешён к работе: проверьте профиль и подключения в пульте Relay.", true);
-        if (typeof noteFeedbackPipelineHeld === "function") noteFeedbackPipelineHeld();
-        return;
-      }
-      const reason = GM_getValue(K.paused, "");
-      if (reason && !confirm(`Снять паузу и выполнить один шаг?\n\n${reason}`)) return;
-      if (reason) resume("ручной шаг");
-      if (typeof releaseProjectHold === "function" && !releaseProjectHold()) {
-        log("Вкладка не может сохранить выбор проекта; ручной шаг не запущен.", true); return;
-      }
-      log("Шаг нажат: смотрю страницу, очередь и задание.");
-      tick(true);
-    };
-    // D-006: одна кнопка вместо угадывания вкладки. Ничего не отправляет и не
-    // переключает: ставит общую отметку «работа есть, просыпайтесь». Остальные
-    // вкладки на ближайшем тике увидят её и продолжат ту, для которой работа
-    // действительно есть. Где бы Мастер ни нажал — эффект один.
-    document.getElementById(ui.wake).onclick = () => {
-      if (typeof wakeAll !== "function") return;
-      // Будильник не снимает паузу и удержание: это по-прежнему решение
-      // Мастера, и молчать об этом нельзя — иначе кнопка «не работает».
-      if (typeof projectApproved === "function" && !projectApproved()) {
-        log(typeof projectBlockedText === "function" ? projectBlockedText()
-          : "Проект ещё не разрешён к работе: проверьте профиль и подключения в пульте Relay.", true);
-        return;
-      }
-      if (typeof projectHeld === "function" && projectHeld()) {
-        log("Вкладки разбудить нельзя: проект ждёт ручного запуска после переключения — нажмите «Шаг».", true);
-        return;
-      }
-      if (GM_getValue(K.paused, "")) {
-        log("Вкладки разбудить нельзя: работа стоит на паузе — снимите её кнопкой «Шаг» или «Продолжить».", true);
-        return;
-      }
-      const state = wakeAll("кнопка «Все вкладки»");
-      const work = typeof wakeWorkHere === "function" ? wakeWorkHere() : "";
-      log(
-        work
-          ? `Разбудил вкладки. У этой роли тоже есть работа (${work === "pending" ? "в очереди" : "ждём ответа"}) — начну здесь.`
-          : `Разбудил вкладки других аккаунтов до ${new Date(Number(state.until)).toLocaleTimeString()}: работу продолжит та, чей аккаунт адресат. Эта вкладка ждёт своей работы.`,
-      );
-      if (work) tick(true);
-      else if (autoOn()) tick(false);
-    };
-    document.getElementById(ui.toggle).onclick = () => {
-      const work = toggleAuto();
-      return typeof trackProjectTask === "function" ? trackProjectTask(work) : work;
     };
     const projectLabel = document.getElementById("cfn-panel-project");
     if (projectLabel) projectLabel.textContent = C.projectName || "Relay";

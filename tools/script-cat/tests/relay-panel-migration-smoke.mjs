@@ -46,7 +46,7 @@ test("Arena panel keeps executor controls but exposes no settings editor", async
   assert.match(instances, /localhost\(\?=:\\d\|\\\/\|\$\)[\s\S]*?127\.0\.0\.1/, "localhost normalizes to the IPv4 listener");
   assert.match(client, /function relayClientStart\(\) \{\s*const run =/);
   assert.doesNotMatch(client.slice(client.indexOf("async function relayClientTick()"), client.indexOf("function relayClientStart()")), /if \(!relayConfigured\(\)\) return/);
-  assert.match(panel, /id="\$\{ui\.relay\}"[^>]*>↗ Пульт Relay/);
+  assert.match(panel, /id="\$\{ui\.relay\}"[^>]*>Пульт ↗/);
   assert.match(panel, /relayLink\.href = base \|\| "#"/);
   assert.match(panel, /Временный локальный автоцикл ScriptCat/);
 });

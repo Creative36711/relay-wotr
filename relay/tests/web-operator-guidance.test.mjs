@@ -9,7 +9,7 @@ const [app, html] = await Promise.all([
 const start = app.indexOf("function announceAction(");
 const end = app.indexOf("const fmtTime =", start);
 assert.ok(start >= 0 && end > start, "operator guidance helpers are present");
-const helpers = new Function(`${app.slice(start, end)}; return { operatorGuidance, diagnosticReport, safeDiagnosticEventData };`)();
+const helpers = new Function(`let projectProfiles = []; ${app.slice(start, end)}; return { operatorGuidance, diagnosticReport, safeDiagnosticEventData, setProjectProfiles(value) { projectProfiles = value; } };`)();
 
 const snapshot = (overrides = {}) => ({
   demo: false,
@@ -25,7 +25,7 @@ const snapshot = (overrides = {}) => ({
 
 test("unfinished heal + outstanding coordinator request gets clear safe guidance", () => {
   const shot = snapshot({
-    scriptClients: [{ slotId: "admin", localBusy: true, localWaiting: "expect:heal", scriptVersion: "1.33.0" }],
+    scriptClients: [{ slotId: "admin", localBusy: true, localWaiting: "expect:heal", scriptVersion: "1.34.1" }],
     turnRequest: { id: "q-test-123", claimed: false },
   });
   const result = helpers.operatorGuidance(shot);
@@ -37,6 +37,7 @@ test("unfinished heal + outstanding coordinator request gets clear safe guidance
 });
 
 test("project permission block is shown before a coordinator request and disables futile Step retries", () => {
+  helpers.setProjectProfiles([]);
   const result = helpers.operatorGuidance(snapshot({
     scriptClients: [{ slotId: "admin", projectId: "wotr-1", projectName: "WOTR", projectApproved: false, projectBlockReason: "unapproved" }],
     turnRequest: { id: "q-blocked", claimed: false },
@@ -46,6 +47,17 @@ test("project permission block is shown before a coordinator request and disable
   assert.match(result.detail, /WOTR/);
   assert.match(result.detail, /проверка допуска/);
   assert.doesNotMatch(result.detail, /q-blocked/);
+});
+
+test("missing profile credentials identify the exact fields and next action", () => {
+  helpers.setProjectProfiles([{ id: "wotr-1", secretStatus: { notion: false, gwUrl: false, gwKey: false } }]);
+  const result = helpers.operatorGuidance(snapshot({
+    scriptClients: [{ slotId: "admin", projectId: "wotr-1", projectName: "WOTR", projectApproved: false, projectBlockReason: "unapproved" }],
+  }));
+  assert.equal(result.canStep, false);
+  assert.equal(result.title, "Для проекта не заданы подключения");
+  assert.match(result.detail, /Notion token, Drive Gateway URL, Drive Gateway key/);
+  assert.match(result.detail, /«Сохранить»/);
 });
 
 test("an existing turn request blocks duplicate manual Step even without a local hold", () => {
@@ -77,7 +89,7 @@ test("support report includes project gate state without exposing connection sec
 
 test("support report captures coordinator blockers, pult network history and safe local hold details", () => {
   const report = helpers.diagnosticReport(snapshot({
-    version: "1.34.0",
+    version: "1.34.1",
     cycle: { turn: "coordinator", round: 2 },
     lastStep: { why: "ожидает admin-вкладку" },
     scriptClients: [{ slotId: "admin", localBusy: true, localWaiting: "expect:heal", scriptVersion: "1.33.1" }],
@@ -120,8 +132,16 @@ test("local client state diagnostics whitelist fields and never copy prompt text
 });
 test("operator status and copy-diagnostics control are visible and announced accessibly", () => {
   assert.match(html, /id="operator-card"/);
-  assert.match(html, /id="btn-copy-diagnostics"/);
+  assert.match(html, /<details class="diagnostic-details">[\s\S]*?id="btn-copy-diagnostics"/);
   assert.match(html, /id="action-feedback"[^>]*role="status"[^>]*aria-live="polite"/);
+});
+
+test("secondary data and legacy service setup are collapsed; required project inputs stay visible", () => {
+  for (const id of ["setup-panel", "slots-panel", "queue-panel", "events-panel", "project-json-details"])
+    assert.match(html, new RegExp(`<details[^>]*id="${id}"`), `${id} is collapsible`);
+  for (const id of ["project-notion", "project-gw-url", "project-gw-key", "project-credential-status"])
+    assert.match(html, new RegExp(`id="${id}"`), `${id} remains immediately visible/actionable`);
+  assert.match(html, /Для допуска проекта используйте токен Notion и Drive Gateway в карточке «Проект»/);
 });
 
 test("Relay pult can request project validation without starting the auto-cycle", () => {

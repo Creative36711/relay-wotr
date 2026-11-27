@@ -125,7 +125,7 @@ test("автоцикл Relay сохраняет режим и сам запра�
 test("ответ pull сообщает ScriptCat режим, которым должен управлять менеджер вкладок", async () => {
   const { service } = makeService();
   await service.setMode({ mode: "auto" });
-  const result = await service.handle({ action: "pull", slotId: "admin", tab: "mode-test", scriptVersion: "1.33.0" });
+  const result = await service.handle({ action: "pull", slotId: "admin", tab: "mode-test", scriptVersion: "1.34.1" });
   assert.equal(result.cycleMode, "auto");
   service.stopAutoRunner();
 });
@@ -133,7 +133,7 @@ test("ответ pull сообщает ScriptCat режим, которым до
 test("менеджер Firefox не допускает работу, если Arena-аккаунт не совпадает со слотом контейнера", async () => {
   const { service, store } = makeService();
   const result = await service.hello({
-    account: "creative36711@list.ru", tab: "wrong-container", scriptVersion: "1.33.0", expectedSlot: "admin",
+    account: "creative36711@list.ru", tab: "wrong-container", scriptVersion: "1.34.1", expectedSlot: "admin",
   });
   assert.equal(result.ok, false);
   assert.equal(result.expectedSlot, "admin");
@@ -144,7 +144,7 @@ test("менеджер Firefox не допускает работу, если Ar
 test("недопущенный проект виден пульту и блокирует запрос нового хода до создания turnRequest", async () => {
   const { service } = makeService();
   const hello = await service.hello({
-    account: "creative36711@gmail.com", tab: "admin-project-blocked", scriptVersion: "1.33.1",
+    account: "creative36711@gmail.com", tab: "admin-project-blocked", scriptVersion: "1.34.1",
     projectId: "wotr-project-1", projectName: "WOTR", projectApproved: false, projectBlockReason: "unapproved",
   });
   assert.equal(hello.ok, true);
@@ -161,7 +161,7 @@ test("недопущенный проект виден пульту и блок�
   assert.equal((await service.snapshot()).turnRequest, null, "не создаётся запрос, который вкладка заранее отвергнет");
 
   service.memory.coordinatorTurnRequest = { id: "q-stale", createdAt: Date.now(), claimedBy: "", claimUntil: 0 };
-  const pull = await service.pull({ slotId: "admin", tab: "admin-project-blocked", scriptVersion: "1.33.1" });
+  const pull = await service.pull({ slotId: "admin", tab: "admin-project-blocked", scriptVersion: "1.34.1" });
   assert.equal(pull.work, null, "админская вкладка не получает новый turn при закрытом допуске");
   assert.match(pull.why, /WOTR.*unapproved/);
   assert.equal(service.memory.coordinatorTurnRequest, null, "старый запрос удаляется вместо повторных отказов");
@@ -171,7 +171,7 @@ test("пульт запрашивает проверку допуска у жи�
   const { service } = makeService();
   const profileId = "123e4567-e89b-12d3-a456-426614174000";
   const first = await service.hello({
-    account: "creative36711@gmail.com", tab: "admin-project-approval", scriptVersion: "1.34.0",
+    account: "creative36711@gmail.com", tab: "admin-project-approval", scriptVersion: "1.34.1",
     projectId: profileId, projectName: "WOTR", projectApproved: false, projectBlockReason: "unapproved",
   });
   assert.equal(first.ok, true);
@@ -179,13 +179,13 @@ test("пульт запрашивает проверку допуска у жи�
   assert.equal(requested.ok, true);
   assert.equal(requested.projectName, "WOTR");
   const delivery = await service.hello({
-    account: "creative36711@gmail.com", tab: "admin-project-approval", scriptVersion: "1.34.0",
+    account: "creative36711@gmail.com", tab: "admin-project-approval", scriptVersion: "1.34.1",
     projectId: profileId, projectName: "WOTR", projectApproved: false, projectBlockReason: "unapproved",
   });
   assert.equal(delivery.projectApprovalRequest.projectId, profileId);
   assert.equal(delivery.projectApprovalRequest.id, requested.requestId);
   const acknowledged = await service.hello({
-    account: "creative36711@gmail.com", tab: "admin-project-approval", scriptVersion: "1.34.0",
+    account: "creative36711@gmail.com", tab: "admin-project-approval", scriptVersion: "1.34.1",
     projectId: profileId, projectName: "WOTR", projectApproved: true,
   });
   assert.equal(acknowledged.projectApprovalRequest, undefined);
@@ -201,19 +201,19 @@ test("пульт не отправляет команду проверки в с
   });
   const result = await service.requestProjectApproval({ projectId: profileId });
   assert.equal(result.ok, false);
-  assert.match(result.why, /нужен ScriptCat 1\.33\.2/);
+  assert.match(result.why, /нужен ScriptCat 1\.34\.1/);
   assert.equal(service.memory.projectApprovalRequests.has(profileId), false);
 });
 
 test("hello остаётся видимым пульту при локальной паузе и отражает её снятие", async () => {
   const { service } = makeService();
-  await service.hello({ account: "creative36711@gmail.com", tab: "admin-paused", scriptVersion: "1.33.0", localPaused: true });
+  await service.hello({ account: "creative36711@gmail.com", tab: "admin-paused", scriptVersion: "1.34.1", localPaused: true });
   let snapshot = await service.snapshot();
   let admin = snapshot.scriptClients.find((client) => client.slotId === "admin");
   assert.equal(admin.localPaused, true);
-  assert.equal(admin.scriptVersion, "1.33.0");
+  assert.equal(admin.scriptVersion, "1.34.1");
 
-  await service.hello({ account: "creative36711@gmail.com", tab: "admin-paused", scriptVersion: "1.33.0", localPaused: false });
+  await service.hello({ account: "creative36711@gmail.com", tab: "admin-paused", scriptVersion: "1.34.1", localPaused: false });
   snapshot = await service.snapshot();
   admin = snapshot.scriptClients.find((client) => client.slotId === "admin");
   assert.equal(admin.localPaused, false);
@@ -221,29 +221,29 @@ test("hello остаётся видимым пульту при локально
 
 test("снимок пульта передаёт локальную занятость, чтобы менеджер не закрыл вкладку с незавершённым шагом", async () => {
   const { service } = makeService();
-  await service.hello({ account: "creative36711@list.ru", tab: "worker-busy", scriptVersion: "1.33.0" });
+  await service.hello({ account: "creative36711@list.ru", tab: "worker-busy", scriptVersion: "1.34.1" });
   await service.event({
-    slotId: "worker-2", tab: "worker-busy", scriptVersion: "1.33.0", kind: "state", level: "info",
+    slotId: "worker-2", tab: "worker-busy", scriptVersion: "1.34.1", kind: "state", level: "info",
     text: "локальное ожидание", data: { relayClientState: true, localBusy: true, localWaiting: "expect:dispatch" },
   });
   let client = (await service.snapshot()).scriptClients.find((item) => item.slotId === "worker-2");
   assert.equal(client.localBusy, true);
   assert.equal(client.localWaiting, "expect:dispatch");
 
-  await service.pull({ slotId: "worker-2", tab: "worker-busy", scriptVersion: "1.33.0" });
+  await service.pull({ slotId: "worker-2", tab: "worker-busy", scriptVersion: "1.34.1" });
   client = (await service.snapshot()).scriptClients.find((item) => item.slotId === "worker-2");
   assert.equal(client.localBusy, false, "фактический pull подтверждает, что локальное удержание снято");
 });
 
 test("снимок различает hello от фактического pull-опроса", async () => {
   const { service, advance } = makeService();
-  await service.hello({ account: "creative36711@gmail.com", tab: "admin-poll", scriptVersion: "1.33.0" });
+  await service.hello({ account: "creative36711@gmail.com", tab: "admin-poll", scriptVersion: "1.34.1" });
   let client = (await service.snapshot()).scriptClients.find((item) => item.slotId === "admin");
   assert.ok(client.lastHelloAt, "время hello есть");
   assert.equal(client.lastPullAt, "", "hello не притворяется опросом очереди");
 
   advance(1200);
-  await service.pull({ slotId: "admin", tab: "admin-poll", scriptVersion: "1.33.0" });
+  await service.pull({ slotId: "admin", tab: "admin-poll", scriptVersion: "1.34.1" });
   client = (await service.snapshot()).scriptClients.find((item) => item.slotId === "admin");
   assert.ok(client.lastPullAt, "реальный pull фиксируется отдельно");
   assert.ok(Date.parse(client.lastPullAt) > Date.parse(client.lastHelloAt), "времена событий упорядочены");
@@ -255,18 +255,18 @@ test("кнопка пульта передаёт планирующий ход C
   assert.equal(step.turnRequested, true);
   assert.ok(step.turnRequestId);
 
-  const oldClient = await service.pull({ slotId: "admin", tab: "old-admin", scriptVersion: "1.31.0" });
+  const oldClient = await service.pull({ slotId: "admin", tab: "old-admin", scriptVersion: "1.34.0" });
   assert.equal(oldClient.updateRequired, true, "предыдущий выпуск не получает сигнал/работу");
-  const claimed = await service.pull({ slotId: "admin", tab: "admin-tab", scriptVersion: "1.33.0" });
+  const claimed = await service.pull({ slotId: "admin", tab: "admin-tab", scriptVersion: "1.34.1" });
   assert.equal(claimed.kind, "turn");
   assert.equal(claimed.turn, "coordinator");
   assert.equal(claimed.turnId, step.turnRequestId);
-  const duplicateClaim = await service.pull({ slotId: "admin", tab: "admin-tab", scriptVersion: "1.33.0" });
+  const duplicateClaim = await service.pull({ slotId: "admin", tab: "admin-tab", scriptVersion: "1.34.1" });
   assert.notEqual(duplicateClaim.kind, "turn", "claim жив: повторный poll не запускает тот же план дважды");
 
   await service.report({ slotId: "admin", tab: "admin-tab", payload: { turnAck: true, turnRequestId: claimed.turnId, retry: true } });
   assert.equal(service.memory.coordinatorTurnRequest.claimedBy, "", "неуспешный запуск освобождает claim");
-  const retried = await service.pull({ slotId: "admin", tab: "admin-tab", scriptVersion: "1.33.0" });
+  const retried = await service.pull({ slotId: "admin", tab: "admin-tab", scriptVersion: "1.34.1" });
   assert.equal(retried.kind, "turn", "вкладка может повторить планирующий ход");
   await service.report({ slotId: "admin", tab: "admin-tab", payload: { turnAck: true, turnRequestId: retried.turnId } });
   assert.equal(service.memory.coordinatorTurnRequest, null, "успешный ack закрывает запрос");
@@ -293,7 +293,7 @@ test("ход завершён: шаг не выдаёт работу даже п
 const reportWith = async (service, markerRaw) => {
   // Строка очереди → выдача → принятый ответ с маркером хода.
   await service.enqueue({ card: "mission-card", title: "Миссия", role: "Coordinator", fn: "Coordinator", slotId: "admin" });
-  const pulled = await service.pull({ scriptVersion: "1.33.0", slotId: "admin", tab: "admin-tab" });
+  const pulled = await service.pull({ scriptVersion: "1.34.1", slotId: "admin", tab: "admin-tab" });
   assert.equal(pulled.ok, true, pulled.why);
   return service.report({
     slotId: "admin",
@@ -397,7 +397,7 @@ test("выдача не состоялась: run failed, строка в blocke
   const { service, store } = makeService({
     queue: [queueRow({ id: "q-1", card: "mission-card", role: "Technical Artist" })],
   });
-  const pulled = await service.pull({ scriptVersion: "1.33.0", slotId: "worker-1" });
+  const pulled = await service.pull({ scriptVersion: "1.34.1", slotId: "worker-1" });
   assert.equal(pulled.ok, true);
   const res = await service.report({
     slotId: "worker-1",

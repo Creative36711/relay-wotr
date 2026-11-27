@@ -25,7 +25,7 @@ import { fileURLToPath } from "node:url";
 import { serviceAccountFromEnv, createServiceAccountToken } from "./google-auth.mjs";
 
 // Версия службы в одном месте: она печатается в шапке страницы установки.
-const VERSION = "1.34.0";
+const VERSION = "1.34.1";
 
 const PORT = Number(process.env.PORT || 8787);
 const HOST = process.env.HOST || "0.0.0.0";
