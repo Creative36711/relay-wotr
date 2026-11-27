@@ -65,7 +65,7 @@ function renderQueue(shot) {
   select.value = current;
 
   if (!shot.queue.length) {
-    host.innerHTML = `<div class="muted">Очередь пуста. Работа появляется здесь, когда Координатор ставит карточку.</div>`;
+    host.innerHTML = `<div class="muted">Очередь Relay пуста. Нажмите «Шаг», чтобы вызвать планирующий ход Координатора: его выбранная карточка попадёт сюда и будет выдана подходящему слоту.</div>`;
     return;
   }
   for (const item of shot.queue) {
@@ -147,7 +147,57 @@ function renderHeader(shot) {
   $("btn-mode").textContent = shot.mode === "auto" ? "Остановить автоцикл" : "Включить автоцикл";
   $("btn-pause").textContent = shot.paused ? "Продолжить" : "Пауза";
   if (shot.paused) banner(`Пауза: ${shot.pauseReason || "по решению человека"}`);
-  else if (shot.lastStep) banner("");
+  else if (shot.turnRequest) {
+    banner(shot.turnRequest.claimed
+      ? "Планирующий ход получил браузерный клиент. Жду, пока вкладка Coordinator обработает миссию."
+      : "Планирующий ход ожидает вкладку ScriptCat в административном контейнере. Откройте Arena под Coordinator.");
+  } else banner("");
+}
+
+function versionAtLeast(actual, minimum) {
+  const parse = (value) => {
+    const hit = String(value || "").trim().match(/^(\d+)\.(\d+)\.(\d+)(?:[-+].*)?$/);
+    return hit ? hit.slice(1).map(Number) : null;
+  };
+  const a = parse(actual);
+  const b = parse(minimum);
+  if (!a || !b) return false;
+  for (let i = 0; i < 3; i += 1) {
+    if (a[i] > b[i]) return true;
+    if (a[i] < b[i]) return false;
+  }
+  return true;
+}
+
+function renderScriptCatStatus(shot) {
+  const node = $("scriptcat-status");
+  if (!node) return;
+  node.replaceChildren();
+  const required = String(shot.requiredScriptVersion || "");
+  const clients = Array.isArray(shot.scriptClients) ? shot.scriptClients : [];
+  const adminSlots = new Set((shot.slots || []).filter((slot) => slot.admin).map((slot) => slot.slotId));
+  const adminClients = clients.filter((client) => adminSlots.has(client.slotId));
+  const outdated = clients.filter((client) => !versionAtLeast(client.scriptVersion, required));
+  if (!adminClients.length) {
+    node.append(document.createTextNode(
+      `Вкладка ScriptCat в административном контейнере не обнаружена. Для планирующего хода откройте Arena под Coordinator; пульт требует ScriptCat ${required || "актуальной версии"}. `,
+    ));
+  } else if (outdated.length) {
+    const versions = [...new Set(outdated.map((client) => `${client.slotId}: ${client.scriptVersion || "версия не сообщается"}`))];
+    node.append(document.createTextNode(
+      `Обновите ScriptCat до v${required}: подключённые вкладки используют ${versions.join("; ")}. До обновления планирующий ход из пульта может не запускаться. `,
+    ));
+  } else {
+    node.classList.add("hidden");
+    return;
+  }
+  const link = document.createElement("a");
+  link.href = "https://raw.githubusercontent.com/Creative36711/relay-wotr/main/tools/script-cat/relay.user.js";
+  link.target = "_blank";
+  link.rel = "noopener noreferrer";
+  link.textContent = `Открыть ScriptCat v${required} для обновления`;
+  node.append(link);
+  node.classList.remove("hidden");
 }
 
 function escapeHtml(text) {
@@ -165,6 +215,7 @@ async function refresh() {
     }
     snapshot = shot;
     renderHeader(shot);
+    renderScriptCatStatus(shot);
     renderSetupHint(shot);
     renderMountButton(shot);
     renderSlots(shot);

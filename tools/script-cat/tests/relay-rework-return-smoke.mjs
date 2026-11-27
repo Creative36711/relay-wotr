@@ -184,7 +184,8 @@ assert.match(
 // ── 9. Отказ выдачи не ставит паузу сразу ─────────────────────────────────
 const coordinator = sliceBetween('  async function coordinatorStep(', '  /**\n   * Запрос хода Координатора');
 assert.match(coordinator, /const card = pickReadyForRole\(ready, route\.roleName\)/, 'карточка выбирается по роли и свежести');
-assert.match(coordinator, /const problem = await dispatchTask\(card, route\.roleName, mission\)/, 'причина отказа читается, миссия передаётся в выдачу');
+assert.match(coordinator, /problem = await dispatchTask\(card, route\.roleName, mission\)/, 'причина отказа читается при прямой выдаче без Relay');
+assert.match(coordinator, /relayEnqueueTask\(card, route\.roleName\)/, 'при подключённом Relay выбранная карточка уходит в очередь службы');
 assert.match(coordinator, /if \(problem === true\)/, 'успех отличается от причины');
 assert.match(coordinator, /cfn-dispatch-miss/, 'повторы отказа считаются');
 assert.match(
