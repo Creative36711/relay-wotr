@@ -15,13 +15,27 @@
     <span class="muted" id="mode-line">загрузка…</span>
   </div>
   <div class="actions">
-    <button id="btn-step" class="primary">Шаг</button>
-    <button id="btn-pause">Пауза</button>
-    <button id="btn-mode">Автоцикл</button>
+    <button id="btn-step" class="primary" disabled>Шаг</button>
+    <button id="btn-pause" disabled>Пауза</button>
+    <button id="btn-mode" disabled>Автоцикл</button>
     <button id="btn-refresh" title="обновить сейчас">↻</button>
   </div>
 </header>
 
+<div id="action-feedback" class="action-feedback hidden" role="status" aria-live="polite"></div>
+<section id="operator-card" class="operator-card" aria-live="polite">
+  <div class="operator-copy">
+    <span id="operator-mark" class="operator-mark">…</span>
+    <div>
+      <strong id="operator-title">Проверяю состояние Relay…</strong>
+      <p id="operator-detail" class="muted">Сейчас появится простой статус и следующий безопасный шаг.</p>
+    </div>
+  </div>
+  <div class="row wrap operator-tools">
+    <button id="btn-copy-diagnostics" class="ghost">Скопировать диагностику</button>
+    <span id="diagnostic-note" class="muted" aria-live="polite">Скопирует состояние и последние события. Перед отправкой просмотрите текст; рабочие детали могут быть личными.</span>
+  </div>
+</section>
 <div id="scriptcat-status" class="scriptcat-status hidden"></div>
 <div id="banner" class="banner hidden"></div>
 <details id="banner-history-wrap" class="banner-history hidden">
