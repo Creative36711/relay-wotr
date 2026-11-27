@@ -311,6 +311,22 @@
   }
 
   /**
+   * Удержание после переключения проекта (D-035): ход или выдача из пульта —
+   * явное действие Мастера, и оно же снимает удержание. Без этого вкладка с
+   * оставшимся ключом удержания (его могла записать старая версия скрипта)
+   * уходила в вечный цикл «планирующий ход повторится: вкладка пока не
+   * создала ожидание» — служба передавала ход, а вкладка молча стояла.
+   */
+  function relayReleaseSwitchHold(reason) {
+    if (typeof projectHeld !== "function" || !projectHeld()) return;
+    const released = typeof releaseProjectHold === "function" && releaseProjectHold();
+    log(released
+      ? `Удержание после переключения снято: ${reason} — явное действие пульта.`
+      : `Удержание после переключения не снялось (хранилище вкладки), но ${reason} — явное действие пульта: выполняю.`,
+      false, { ntfy: "quiet" });
+  }
+
+  /**
    * Взять работу: карточка книги → та же выдача, что и всегда.
    *
    * `dispatchTask` собирает промпт из карточки Notion, ставит Running и
@@ -334,6 +350,7 @@
       await relayWorkFailed(work, "активной миссии нет: карточке неоткуда взять контекст и промпт");
       return;
     }
+    relayReleaseSwitchHold("выдача работы из очереди");
     let problem = "";
     try {
       const done = await dispatchTask(card, role, mission, { runId: String(work.runId) });
@@ -504,6 +521,7 @@
       // coordinatorStep/requestPlan, что и старый ручной цикл. Если открыта
       // не Coordinator, tick(true) сам перейдёт на неё и сохранит шаг.
       log("Пульт Relay передал планирующий ход: запускаю Координатора.", false, { ntfy: "quiet" });
+      relayReleaseSwitchHold("планирующий ход Координатора");
       if (typeof tick === "function") await tick(true);
       const expectAfter = GM_getValue(K.expect, null);
       const pendingAfter = GM_getValue(K.pending, null);

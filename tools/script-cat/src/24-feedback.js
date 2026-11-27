@@ -336,7 +336,7 @@
     const held = typeof projectHeld === "function" && projectHeld();
     const reason = typeof projectBlockReason === "function" ? projectBlockReason() : "";
     const why = held
-      ? "вкладка держит переключение проекта (нажмите «Шаг» или «Включить» — удержание снимется)"
+      ? "вкладка держит переключение проекта (нажмите «Шаг» на пульте или «Включить» здесь — удержание снимется)"
       : reason === "invalid"
         ? "профиль вкладки повреждён или изменён в другой вкладке («Управление проектами» → обновите страницу)"
         : reason === "legacy"

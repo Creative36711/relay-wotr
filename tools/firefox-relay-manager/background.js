@@ -8,6 +8,9 @@ const STATUS_KEY = "relayManagerStatusV1";
 let polling = false;
 let latestMode = "manual";
 let latestSnapshot = null;
+// Один планирующий ход — одно привлечение admin-вкладки: пока id запроса
+// тот же, фокус не воруем (D-035).
+let focusedTurnId = "";
 
 const norm = (value) => String(value || "").trim().toLocaleLowerCase();
 const isArena = (url) => /^https:\/\/(?:www\.)?arena\.ai\//i.test(String(url || ""));
@@ -138,6 +141,16 @@ async function pollRelay() {
           const preferredTabId = busyTabIds[0] || Number(map[slot.slotId]?.tabId || 0);
           const tab = await ensureTab(slot, identity, map, tabs, preferredTabId);
           openManaged += 1;
+          // Новый планирующий ход — Мастер ждёт результата: показываем ему
+          // admin-вкладку, а не прячем её за другими (D-035). Фокус один раз
+          // на id запроса; фоновая вкладка к тому же экономит таймеры ScriptCat.
+          if (slot.admin && shot.turnRequest && String(shot.turnRequest.id || "") !== focusedTurnId) {
+            focusedTurnId = String(shot.turnRequest.id);
+            try {
+              const current = await browser.tabs.get(tab.id);
+              if (!current.active) await browser.tabs.update(tab.id, { active: true });
+            } catch { /* вкладка закрылась — следующий опрос откроет заново */ }
+          }
           const active = scriptAutoActive(slot, shot);
           for (const candidate of tabs) {
             if (candidate.id !== tab.id && candidate.cookieStoreId === identity.cookieStoreId && isArena(candidate.url || candidate.pendingUrl)) {

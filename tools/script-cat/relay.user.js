@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Relay — передача хода между агентами
 // @namespace    https://arena.ai/
-// @version      1.34.4
+// @version      1.35.0
 // @updateURL    https://raw.githubusercontent.com/Creative36711/relay-wotr/main/tools/script-cat/relay.user.js
 // @downloadURL  https://raw.githubusercontent.com/Creative36711/relay-wotr/main/tools/script-cat/relay.user.js
 // @description  Цикл Координатор → исполнитель → Координатор: агент сам коммитит, пушит и мержит PR; ScriptCat ждёт мерж и нажимает Continue.
@@ -97,7 +97,7 @@
     // D-073: отпечаток сборки вшивает build.mjs (SHA-256 источника). Номер версии
     // говорит «какой выпуск», отпечаток — «какая именно сборка»: без него проверка
     // «работает новая версия, а не прежняя под новым номером» невозможна.
-    buildFingerprint: "07c5926caf508cb1",
+    buildFingerprint: "20a230826f7f8c3e",
     repo: "", // для ссылки на PR из номера
     tickMs: 15000,
     mergeGraceMs: 90000, // сколько ждём мерж, прежде чем нажать кнопки за агента
@@ -438,8 +438,13 @@
     if (index >= 0) next[index] = profile;
     else next.push(profile);
     rawSet(PROFILE_REGISTRY_KEY, next);
-    try { sessionStorage.setItem(PROFILE_SESSION_KEY, profile.id); }
-    catch { return false; }
+    try {
+      sessionStorage.setItem(PROFILE_SESSION_KEY, profile.id);
+      // Переключение проекта: отложенный шаг прошлого профиля не должен
+      // выполниться в новом после перезагрузки — до явного действия
+      // («Шаг» из пульта или «Включить» здесь) вкладка держится (D-035).
+      sessionStorage.setItem(PROJECT_HOLD_PREFIX + profile.id, "1");
+    } catch { return false; }
     return true;
   }
 
@@ -893,7 +898,7 @@
 
   const NTFY_BASE = "https://ntfy.sh";
   const SCRIPT_VERSION =
-    (typeof GM_info !== "undefined" && GM_info?.script?.version) || "1.34.4";
+    (typeof GM_info !== "undefined" && GM_info?.script?.version) || "1.35.0";
 
   /** «https://ntfy.sh/topic?x=1» и «topic» одинаково дают topic. */
   function normalizeNtfyTopic(raw) {
@@ -12814,7 +12819,7 @@
     const held = typeof projectHeld === "function" && projectHeld();
     const reason = typeof projectBlockReason === "function" ? projectBlockReason() : "";
     const why = held
-      ? "вкладка держит переключение проекта (нажмите «Шаг» или «Включить» — удержание снимется)"
+      ? "вкладка держит переключение проекта (нажмите «Шаг» на пульте или «Включить» здесь — удержание снимется)"
       : reason === "invalid"
         ? "профиль вкладки повреждён или изменён в другой вкладке («Управление проектами» → обновите страницу)"
         : reason === "legacy"
@@ -22862,6 +22867,22 @@ function reviewPullRequest({ files, pr, zone } = {}) {
   }
 
   /**
+   * Удержание после переключения проекта (D-035): ход или выдача из пульта —
+   * явное действие Мастера, и оно же снимает удержание. Без этого вкладка с
+   * оставшимся ключом удержания (его могла записать старая версия скрипта)
+   * уходила в вечный цикл «планирующий ход повторится: вкладка пока не
+   * создала ожидание» — служба передавала ход, а вкладка молча стояла.
+   */
+  function relayReleaseSwitchHold(reason) {
+    if (typeof projectHeld !== "function" || !projectHeld()) return;
+    const released = typeof releaseProjectHold === "function" && releaseProjectHold();
+    log(released
+      ? `Удержание после переключения снято: ${reason} — явное действие пульта.`
+      : `Удержание после переключения не снялось (хранилище вкладки), но ${reason} — явное действие пульта: выполняю.`,
+      false, { ntfy: "quiet" });
+  }
+
+  /**
    * Взять работу: карточка книги → та же выдача, что и всегда.
    *
    * `dispatchTask` собирает промпт из карточки Notion, ставит Running и
@@ -22885,6 +22906,7 @@ function reviewPullRequest({ files, pr, zone } = {}) {
       await relayWorkFailed(work, "активной миссии нет: карточке неоткуда взять контекст и промпт");
       return;
     }
+    relayReleaseSwitchHold("выдача работы из очереди");
     let problem = "";
     try {
       const done = await dispatchTask(card, role, mission, { runId: String(work.runId) });
@@ -23055,6 +23077,7 @@ function reviewPullRequest({ files, pr, zone } = {}) {
       // coordinatorStep/requestPlan, что и старый ручной цикл. Если открыта
       // не Coordinator, tick(true) сам перейдёт на неё и сохранит шаг.
       log("Пульт Relay передал планирующий ход: запускаю Координатора.", false, { ntfy: "quiet" });
+      relayReleaseSwitchHold("планирующий ход Координатора");
       if (typeof tick === "function") await tick(true);
       const expectAfter = GM_getValue(K.expect, null);
       const pendingAfter = GM_getValue(K.pending, null);

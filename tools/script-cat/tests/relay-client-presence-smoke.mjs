@@ -73,3 +73,28 @@ test("admin poll skips and client exceptions are saved to local and Relay journa
   assert.match(client, /relayManagerMayPoll\(\)/, "лишние вкладки одного контейнера переводятся в standby");
   assert.match(cycle, /managerOwnsScheduling \|\| relayOwnsScheduling/, "локальный цикл не дублирует диспетчер Relay");
 });
+
+test("pult turn and queued work release the project switch hold (D-035)", () => {
+  assert.match(client, /function relayReleaseSwitchHold\(reason\)/, "helper is present");
+  assert.match(client, /relayReleaseSwitchHold\("планирующий ход Координатора"\)/,
+    "coordinator turn from the pult is an explicit action and releases the hold");
+  assert.match(client, /relayReleaseSwitchHold\("выдача работы из очереди"\)/,
+    "queued work from the pult is an explicit action and releases the hold");
+  const start = client.indexOf("function relayReleaseSwitchHold(");
+  const end = client.indexOf("async function relayTakeWork(", start);
+  assert.ok(start >= 0 && end > start, "helper source is present");
+  const context = { log: (...args) => context.logged.push(args), logged: [] };
+  vm.createContext(context);
+  vm.runInContext(`${client.slice(start, end)}\nthis.releaseHold = relayReleaseSwitchHold;`, context);
+  let held = false;
+  let releases = 0;
+  context.projectHeld = () => held;
+  context.releaseProjectHold = () => { releases += 1; return true; };
+  context.releaseHold("проба");
+  assert.equal(releases, 0, "без удержания снимать нечего и писать нечего");
+  assert.equal(context.logged.length, 0, "обычный ход не засоряет журнал");
+  held = true;
+  context.releaseHold("проба");
+  assert.equal(releases, 1, "удержание снимается");
+  assert.match(String(context.logged[0][0]), /Удержание после переключения снято/);
+});
