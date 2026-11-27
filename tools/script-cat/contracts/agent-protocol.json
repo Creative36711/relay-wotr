@@ -2735,5 +2735,23 @@
       "Сборка ScriptCat и релизные smoke-проверки подтверждают @version 1.28.0 = SCRIPT_VERSION; версия Node Relay — 1.29.0."
     ],
     "supersedes": ["d027"]
+  },
+  "d029": {
+    "version": "1.30.0",
+    "title": "Разрешение localhost для Relay-клиента и московское время пульта",
+    "date": "2026-11-27",
+    "decision": [
+      "`relayBase()` по умолчанию не угадывает адрес проекта. Если в ScriptCat → Подключения указан локальный Node Relay, userscript должен иметь @connect localhost и 127.0.0.1; иначе GM_xmlhttpRequest блокирует handshake до Node-службы.",
+      "Пульт при отсутствии admin client показывает точный origin своего интерфейса и проверку доступа localhost; виджет сообщает локальную ошибку GM-запроса вместо молчания.",
+      "Время событий веб-пульта форматируется в IANA timezone Europe/Moscow с пометкой МСК независимо от timezone ОС/браузера.",
+      "Минимум ScriptCat для нового Node Relay — 1.29.0. Версия службы 1.30.0; @version и runtime fallback ScriptCat 1.29.0."
+    ],
+    "invariants": [
+      "Нет активного Relay URL — нет автоматической отправки на localhost: разные project profiles не смешиваются.",
+      "Запрещённый менеджером loopback-запрос виден в статусе ScriptCat; Node пульт отдельно объясняет точную настройку подключения.",
+      "В интерфейсе не применяется локальная timezone пользователя для лога; все timestamp-ы показываются в МСК.",
+      "Сборка bundle и smoke-проверки подтверждают @version 1.29.0 = SCRIPT_VERSION; версия Node Relay — 1.30.0."
+    ],
+    "supersedes": ["d028"]
   }
 }
