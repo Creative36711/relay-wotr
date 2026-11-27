@@ -138,14 +138,14 @@ test("next: done переводит ход в приёмку", async () => {
 });
 
 test("accept завершает цикл, rework возвращает Координатору с кругом", async () => {
-  // accept.
-  const accepted = makeService();
+  // Вердикт приёмки применяется, только когда ход у приёмки (FSM).
+  const accepted = makeService({ settings: settingsRows({ "cycle.turn": "warden" }) });
   await reportWith(accepted.service, 'CF_REVIEW_RESULT {"verdict":"accept"}');
   assert.equal(settingsValue(accepted.store, "cycle.turn"), "done");
   assert.ok(accepted.store.objects("events").some((event) => /миссия принята — цикл завершён/.test(event["Текст"])));
 
   // Первый возврат: круг 1, ход Координатору.
-  const returned = makeService();
+  const returned = makeService({ settings: settingsRows({ "cycle.turn": "warden" }) });
   await reportWith(returned.service, 'CF_REVIEW_RESULT {"verdict":"rework"}');
   assert.equal(settingsValue(returned.store, "cycle.turn"), "coordinator");
   assert.equal(settingsValue(returned.store, "cycle.round"), "1");
@@ -153,7 +153,7 @@ test("accept завершает цикл, rework возвращает Коорд
 });
 
 test("четвёртый возврат будит Мастера: пауза с причиной, как во вкладке", async () => {
-  const { service, store } = makeService({ settings: settingsRows({ "cycle.round": "3" }) });
+  const { service, store } = makeService({ settings: settingsRows({ "cycle.turn": "warden", "cycle.round": "3" }) });
   await reportWith(service, 'CF_REVIEW_RESULT {"verdict":"rework"}');
   assert.equal(settingsValue(store, "cycle.turn"), "coordinator");
   assert.equal(settingsValue(store, "cycle.round"), "4");
@@ -164,7 +164,7 @@ test("четвёртый возврат будит Мастера: пауза с
 });
 
 test("master ставит цикл на паузу: без владельца не продолжить", async () => {
-  const { service, store } = makeService();
+  const { service, store } = makeService({ settings: settingsRows({ "cycle.turn": "warden" }) });
   await reportWith(service, 'CF_REVIEW_RESULT {"verdict":"master"}');
   const snapshot = await service.snapshot();
   assert.equal(snapshot.paused, true);
@@ -184,4 +184,53 @@ test("снимок пульта несёт ход: строка запуска �
   const { service } = makeService({ settings: settingsRows({ "cycle.turn": "warden", "cycle.round": "2" }) });
   const snapshot = await service.snapshot();
   assert.deepEqual(snapshot.cycle, { turn: "warden", round: 2 });
+});
+
+// ─── D-026: отчёты без выдачи и путь «выдача не состоялась» ─────────────────
+
+test("маркер хода без выдачи (markerOnly): план и приёмка двигают FSM", async () => {
+  const { service, store } = makeService();
+  // Координатор: next done → приёмка.
+  let res = await service.report({ slotId: "admin", tab: "t1", payload: { markerOnly: true, markerRaw: 'CF_COORDINATOR_RESULT {"next":"done"}' } });
+  assert.equal(res.ok, true);
+  assert.equal(res.applied, true);
+  assert.equal(settingsValue(store, "cycle.turn"), "warden");
+  // Повтор того же маркера — не дубль (FSM).
+  res = await service.report({ slotId: "admin", tab: "t1", payload: { markerOnly: true, markerRaw: 'CF_COORDINATOR_RESULT {"next":"done"}' } });
+  assert.equal(res.applied, false, "повторный done при ходе «warden» не применяется");
+  // Приёмка: accept → цикл завершён.
+  res = await service.report({ slotId: "admin", tab: "t1", payload: { markerOnly: true, markerRaw: 'CF_REVIEW_RESULT {"verdict":"accept"}' } });
+  assert.equal(res.applied, true);
+  assert.equal(settingsValue(store, "cycle.turn"), "done");
+  // Вердикт вне хода приёмки — молча отклонён.
+  res = await service.report({ slotId: "admin", tab: "t1", payload: { markerOnly: true, markerRaw: 'CF_REVIEW_RESULT {"verdict":"rework"}' } });
+  assert.equal(res.applied, false, "rework при «done» не применяется");
+  assert.equal(settingsValue(store, "cycle.turn"), "done");
+  // Маркер без решения хода — ок, но ничего не двигает.
+  res = await service.report({ slotId: "admin", tab: "t1", payload: { markerOnly: true, markerRaw: "просто текст" } });
+  assert.equal(res.ok, true);
+  assert.equal(res.applied, false);
+});
+
+test("выдача не состоялась: run failed, строка в blocked, слот свободен", async () => {
+  const { service, store } = makeService({
+    queue: [queueRow({ id: "q-1", card: "mission-card", role: "Technical Artist" })],
+  });
+  const pulled = await service.pull({ slotId: "worker-1" });
+  assert.equal(pulled.ok, true);
+  const res = await service.report({
+    slotId: "worker-1",
+    payload: { runId: pulled.work.runId, failed: true, why: "карточка не привязана к активной миссии" },
+  });
+  assert.equal(res.ok, false);
+  assert.equal(res.failed, true);
+  assert.match(res.why, /не состоялась/);
+  const run = store.objects("runs").find((item) => item["Run ID"] === pulled.work.runId);
+  assert.equal(run["Статус"], "failed");
+  const row = store.objects("queue").find((item) => item["ID"] === "q-1");
+  assert.equal(row["Статус"], "blocked");
+  assert.match(String(row["Комментарий"]), /не привязана/);
+  assert.equal(res.freedSlot, "worker-1", "слот освобождён — phantom'а нет");
+  const journal = store.objects("events").map((event) => event["Текст"]);
+  assert.ok(journal.some((text) => /выдача .* не состоялась/.test(text)));
 });

@@ -36,6 +36,9 @@ const parts = [
   // D-006: будильник вкладок. После accounts (нужны roleAccount/accountLabel в
   // 28-cycle) и до цикла: тик спрашивает его первым.
   '45-wake.js',
+  // D-026: клиент протокола службы. После wake (нужны роли/аккаунты) и до
+  // цикла: тик клиента крутится сам, но вызывает функции цикла по именам.
+  '46-relay-client.js',
   '28-cycle.js', '29-boot.js',
 ];
 const read = (name) => readFile(join(here, 'src', name), 'utf8');

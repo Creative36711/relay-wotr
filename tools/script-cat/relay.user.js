@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Relay — передача хода между агентами
 // @namespace    https://arena.ai/
-// @version      1.24.1
+// @version      1.25.0
 // @description  Цикл Координатор → исполнитель → Координатор: агент сам коммитит, пушит и мержит PR; ScriptCat ждёт мерж и нажимает Continue.
 // @match        https://arena.ai/*
 // @match        https://www.arena.ai/*
@@ -93,7 +93,7 @@
     // D-073: отпечаток сборки вшивает build.mjs (SHA-256 источника). Номер версии
     // говорит «какой выпуск», отпечаток — «какая именно сборка»: без него проверка
     // «работает новая версия, а не прежняя под новым номером» невозможна.
-    buildFingerprint: "66ae4bb198b6306d",
+    buildFingerprint: "34b2beabe9164fcf",
     repo: "", // для ссылки на PR из номера
     tickMs: 15000,
     mergeGraceMs: 90000, // сколько ждём мерж, прежде чем нажать кнопки за агента
@@ -798,7 +798,7 @@
 
   const NTFY_BASE = "https://ntfy.sh";
   const SCRIPT_VERSION =
-    (typeof GM_info !== "undefined" && GM_info?.script?.version) || "1.24.1";
+    (typeof GM_info !== "undefined" && GM_info?.script?.version) || "1.25.0";
 
   /** «https://ntfy.sh/topic?x=1» и «topic» одинаково дают topic. */
   function normalizeNtfyTopic(raw) {
@@ -13195,6 +13195,11 @@
     // поэтому запоминаем именно ответ сервера.
     rememberAnswerStamp(result.dispatch_id, await patch(result.dispatch_id, props));
     GM_setValue(`cfn-done:${result.dispatch_id}:${result.run_id}`, true);
+    // D-026: карточка Submitted — ответ действительно принят. Служба
+    // закрывает свою выдачу и по маркеру двигает ход цикла.
+    if (typeof relayReportDispatch === "function") {
+      relayReportDispatch(expect, hit, result, answer).catch(() => {});
+    }
     log(
       noPr
         ? `Ответ ${role.name} записан${review?.verdict ? ` (вердикт: ${review.verdict})` : ""}, PR не нужен, задача → Submitted.`
@@ -16057,10 +16062,11 @@
     const draft = await tasks("Draft", mission).catch(() => []);
 
     if (expect && (expect.kind === "plan" || expect.kind === "reminder")) {
-      const decision = messagesAfter(expect.watermark)
-        .map((m) => parseMarker(m.raw, "CF_COORDINATOR_RESULT"))
-        .filter(Boolean)
+      const decisionHit = messagesAfter(expect.watermark)
+        .map((m) => ({ raw: m.raw, obj: parseMarker(m.raw, "CF_COORDINATOR_RESULT") }))
+        .filter((x) => x.obj)
         .at(-1);
+      const decision = decisionHit ? decisionHit.obj : null;
       if (!decision) return markerMissing(role, expect, "CF_COORDINATOR_RESULT", manual);
 
       // Решение по устаревшей очереди не применяется.
@@ -16485,6 +16491,10 @@
         readyRoles: ready.map(taskRole),
         misses: Number(GM_getValue("cfn-plan-miss", 0)) || 0,
       });
+      // D-026: решение применено — служба узнаёт о ходе (next/done).
+      if (decisionHit && typeof relayTurnMarker === "function") {
+        relayTurnMarker(decisionHit.raw || JSON.stringify(decision)).catch(() => {});
+      }
 
       if (route.kind === "pause") {
         GM_setValue("cfn-plan-miss", 0);
@@ -16900,9 +16910,12 @@
       });
       return true;
     }
-    const decision = restored.found ? restored.decision : replies.map((m) => parseMarker(m.raw, "CF_REVIEW_RESULT"))
-      .filter(Boolean)
-      .at(-1);
+    const decisionHit = restored.found
+      ? { raw: JSON.stringify(restored.decision), obj: restored.decision }
+      : replies.map((m) => ({ raw: m.raw, obj: parseMarker(m.raw, "CF_REVIEW_RESULT") }))
+        .filter((x) => x.obj)
+        .at(-1);
+    const decision = decisionHit ? decisionHit.obj : null;
     if (!decision) return markerMissing(role, expect, "CF_REVIEW_RESULT", manual);
     if (!isUuid(mission.id) || !isUuid(expect.turnId) || !isUuid(decision.mission_id) || !isUuid(decision.turn_id) ||
         norm(decision.mission_id) !== norm(mission.id) || norm(decision.turn_id) !== norm(expect.turnId) ||
@@ -16913,6 +16926,11 @@
         kind: "marker-mismatch", ref: mission.id, turnId: expect.turnId || "",
       });
       return true;
+    }
+    // D-026: маркер прошёл проверку личности хода — служба применяет FSM
+    // хода (accept/rework/master). Здесь вердикт разбирается как раньше.
+    if (decisionHit && typeof relayTurnMarker === "function") {
+      relayTurnMarker(decisionHit.raw || JSON.stringify(decision)).catch(() => {});
     }
     const verdict = String(decision.verdict || "").trim().toLowerCase();
     if (!restored.found && ["accept", "rework", "master"].includes(verdict) && decision.question != null) {
@@ -18756,7 +18774,7 @@
     return "";
   }
 
-  async function dispatchTask(card, roleName, mission = null) {
+  async function dispatchTask(card, roleName, mission = null, opts = {}) {
     const role = (await roles()).find((r) => r.name === roleName);
     if (!role) throw new Error(`Роль «${roleName}» не найдена среди активных.`);
     // Защита перед любыми чтениями/записями карточки и журнала: повторная
@@ -18913,7 +18931,9 @@
       log("Карточку выдали заново — прошлая неотправленная очередь снята.");
     }
 
-    const runId = uid();
+    // D-026: когда выдачу завела служба, Run ID её — книга, а не локальная
+    // генерация: ответ агента должен указывать на ту выдачу, что в «Выдачах».
+    const runId = (opts && opts.runId) || uid();
     // 08.11, 18:34: поле «Payload Drive File ID» у B1 перечисляло два файла
     // через запятую — и скрипт отправил шлюзу всю строку как один id, получив
     // «Некорректный Drive file ID». Сеть и карточка были в порядке: отказ
@@ -23294,6 +23314,255 @@ function reviewPullRequest({ files, pr, zone } = {}) {
     return wakeAll(reason);
   }
 
+  // ─────────────── D-026: клиент протокола службы Relay ───────────────
+  //
+  // Вкладка — глупый исполнитель (D-009): решения принимает служба, здесь
+  // только шесть действий протокола и одна обязанность — не терять выдачу.
+  //
+  //   hello  — «я вкладка аккаунта X» → слот (один раз, дальше кеш);
+  //   pull   — «дай работу» → строка очереди книги (карточка миссии);
+  //   beat   — «я жива» → продление выдачи, пока агент работает;
+  //   report — «ответ прочитан» → разбор маркера и переход хода в службе;
+  //   event  — «вот что случилось» → журнал пульта;
+  //   bye    — «вкладка уходит» → выдача не остаётся висеть без присмотра.
+  //
+  // Промпт собирает не клиент: выдача карточки — это старая, проверенная
+  // механика (`dispatchTask`), только Run ID теперь приходит из книги, а не
+  // рождается локально. План Координатора и вердикт приёмки остаются
+  // служебными ходами вкладки; их маркеры уходят в службу отдельно —
+  // без выдачи, потому что у служебного хода Run ID в книге нет.
+
+  /** Как часто холостая вкладка спрашивает работу. */
+  const RELAY_CLIENT_TICK_MS = 15000;
+  /** Удар сердца: реже — квота, чаще — шум в журнале. */
+  const RELAY_BEAT_MS = 60000;
+  /** Один и тот же маркер хода не отчитываем дважды. */
+  const RELAY_MARKER_DEDUPE_MS = 60000;
+
+  const relayClient = {
+    slotId: "",
+    account: "",
+    tab: "",
+    helloAt: 0,
+    lastBeatAt: 0,
+    lastContactAt: 0,
+    lastMarker: { hash: "", at: 0 },
+    warned: { hello: "", pull: "" },
+  };
+
+  /** Идентификатор вкладки: один на загрузку страницы, не общий на вкладки. */
+  function relayTabId() {
+    if (!relayClient.tab) {
+      relayClient.tab = `t-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+    }
+    return relayClient.tab;
+  }
+
+  /** POST действия в службу. Служба живёт на машине владельца, без неё — тишина. */
+  async function relayPost(body) {
+    const base = relayBase();
+    if (!base) return null;
+    try {
+      const data = await request(
+        "POST", `${base}/api/agent`,
+        { "Content-Type": "application/json" },
+        JSON.stringify({ ...body, v: 1, tab: relayTabId() }),
+        { retry: false },
+      );
+      if (data && typeof data === "object") relayClient.lastContactAt = Date.now();
+      return data;
+    } catch {
+      return null;
+    }
+  }
+
+  /** Опознание: почта контейнера → слот книги. Кеш живёт до перезагрузки. */
+  async function relayIdentity({ force = false } = {}) {
+    if (relayClient.slotId && !force) return relayClient.slotId;
+    const nowMs = Date.now();
+    // Повтор hello раз в 10 минут: аккаунт в книге могут добавить после старта.
+    if (relayClient.slotId && nowMs - relayClient.helloAt < 600000) return relayClient.slotId;
+    const read = typeof readAccountEmail === "function"
+      ? await readAccountEmail({ expand: false }).catch(() => null)
+      : null;
+    const email = String((read && read.email) || (typeof accountSeen === "function" ? accountSeen().email : "") || "").trim();
+    if (!email) return "";
+    const res = await relayPost({ action: "hello", account: email, path: typeof location !== "undefined" ? location.pathname : "" });
+    relayClient.helloAt = nowMs;
+    if (res && res.ok && res.slot) {
+      relayClient.slotId = String(res.slot.slotId || "");
+      relayClient.account = email;
+      if (relayClient.warned.hello !== relayClient.slotId) {
+        relayClient.warned.hello = relayClient.slotId;
+        log(`Служба Relay: вкладка опознана как слот ${relayClient.slotId} (${email}).`);
+      }
+      return relayClient.slotId;
+    }
+    if (res && res.ok === false) {
+      const why = String(res.why || "аккаунт не привязан к слоту");
+      if (relayClient.warned.hello !== why) {
+        relayClient.warned.hello = why;
+        log(`Служба Relay: ${why}.`, true, { ntfy: "quiet" });
+      }
+    }
+    return "";
+  }
+
+  /** Отчёт службе: выдача закрыта несостоявшейся — строка и слот не висят. */
+  async function relayWorkFailed(work, why) {
+    const slotId = await relayIdentity().catch(() => "");
+    if (!slotId || !work || !work.runId) return;
+    await relayPost({ action: "report", slotId, payload: { runId: work.runId, failed: true, why: String(why || "причина не названа") } });
+    await relayPost({
+      action: "event", slotId, kind: "dispatch", level: "warn", runId: work.runId, card: work.card || "",
+      text: `выдача ${work.runId} не состоялась: ${String(why || "").slice(0, 300)}`,
+    });
+  }
+
+  /**
+   * Взять работу: карточка книги → та же выдача, что и всегда.
+   *
+   * `dispatchTask` собирает промпт из карточки Notion, ставит Running и
+   * ставит ожидание (`K.pending`/`K.expect`) — дальше страницу адресата
+   * открывает и отправляет штатный цикл. Единственное отличие от старого
+   * пути: Run ID приходит из книги (`work.runId`), и ответ уходит в службу.
+   */
+  async function relayTakeWork(work, slotId) {
+    const card = String(work.card || "").trim();
+    const role = String(work.role || "").trim();
+    if (!card || !role) {
+      await relayWorkFailed(work, "в выдаче нет карточки или роли");
+      return;
+    }
+    if (typeof isUuid === "function" && !isUuid(card)) {
+      await relayWorkFailed(work, `карточка «${card}» не UUID Notion — промпт из неё не собрать`);
+      return;
+    }
+    const mission = await activeMission().catch(() => null);
+    if (!mission) {
+      await relayWorkFailed(work, "активной миссии нет: карточке неоткуда взять контекст и промпт");
+      return;
+    }
+    let problem = "";
+    try {
+      const done = await dispatchTask(card, role, mission, { runId: String(work.runId) });
+      problem = done === true ? "" : String(done || "выдача не состоялась");
+    } catch (error) {
+      problem = String((error && error.message) || error);
+    }
+    if (problem) await relayWorkFailed(work, problem);
+  }
+
+  /** Удар сердца, пока агент работает: служба видит живой слот и выдачу. */
+  async function relayBeat(slotId, waiting) {
+    const nowMs = Date.now();
+    if (!waiting || !waiting.runId) return;
+    if (nowMs - relayClient.lastBeatAt < RELAY_BEAT_MS) return;
+    relayClient.lastBeatAt = nowMs;
+    const silentMs = relayClient.lastContactAt ? nowMs - relayClient.lastContactAt : 0;
+    await relayPost({
+      action: "beat", slotId, runId: String(waiting.runId),
+      waiting: String(waiting.kind || ""), silentMs,
+    });
+  }
+
+  /**
+   * Маркер служебного хода (план/приёмка) — в службу.
+   *
+   * У плана и приёмки нет выдачи в книге, поэтому отчёт отдельный:
+   * `markerOnly`. Служба применяет FSM хода сама; здесь — только текст
+   * маркера и защита от повторов (ответ перечитывают несколько раз).
+   */
+  async function relayTurnMarker(raw) {
+    const text = String(raw || "").trim();
+    if (!text) return;
+    const hash = `${text.length}:${text.slice(0, 120)}`;
+    const nowMs = Date.now();
+    if (relayClient.lastMarker.hash === hash && nowMs - relayClient.lastMarker.at < RELAY_MARKER_DEDUPE_MS) return;
+    const slotId = await relayIdentity().catch(() => "");
+    if (!slotId) return;
+    const res = await relayPost({ action: "report", slotId, payload: { markerOnly: true, markerRaw: text } });
+    if (res && res.ok) {
+      relayClient.lastMarker = { hash, at: nowMs };
+      if (res.applied) log(`Служба Relay: ход обновлён (${res.turn || "по маркеру"}).`, false, { ntfy: "quiet" });
+    }
+  }
+
+  /**
+   * Отчёт по рабочей выдаче: ответ агента уходит в службу с тем же Run ID,
+   * что был в книге. Вызывается из разбора ответа (submitExecutor), когда
+   * карточка уже Submitted — то есть ответ действительно принят.
+   */
+  async function relayReportDispatch(expect, hit, result, answer) {
+    if (!expect || !expect.runId) return;
+    const slotId = await relayIdentity().catch(() => "");
+    if (!slotId) return;
+    await relayPost({
+      action: "report", slotId,
+      payload: {
+        runId: String(expect.runId),
+        markerRunId: String((result && result.run_id) || ""),
+        markerCard: String((result && result.dispatch_id) || ""),
+        markerRaw: String((hit && hit.raw) || ""),
+        answer: String((answer && answer.body) || "").slice(0, 4000),
+      },
+    });
+  }
+
+  /** Тик клиента: опознание → работа или удар сердца. Никаких решений. */
+  async function relayClientTick() {
+    if (!relayConfigured()) return;
+    if (typeof isPaused === "function" && isPaused()) return;
+    const slotId = await relayIdentity().catch(() => "");
+    if (!slotId) return;
+    const pending = GM_getValue(K.pending, null);
+    const waiting = GM_getValue(K.expect, null);
+    if (pending || waiting) {
+      // Работа идёт — служба не должна решить, что слот мёртв.
+      if (waiting) await relayBeat(slotId, waiting);
+      return;
+    }
+    const res = await relayPost({ action: "pull", slotId });
+    if (!res || !res.ok) {
+      if (res && res.ok === false && relayClient.warned.pull !== String(res.why || "")) {
+        relayClient.warned.pull = String(res.why || "");
+        log(`Служба Relay: работа не выдана — ${relayClient.warned.pull}.`, false, { ntfy: "quiet" });
+      }
+      return;
+    }
+    relayClient.warned.pull = "";
+    if (res.kind === "provision") {
+      // Задание на создание агента. Контур создания — свой (provisioning
+      // вкладки, решение Мастера): здесь только факт в журнал, иначе строка
+      // выглядит брошенной, а создание идёт своим ходом.
+      await relayPost({
+        action: "event", slotId, kind: "provision",
+        text: `задание на агента «${res.role || "?"}» получено — создаёт контур provisioning вкладки`,
+      });
+      return;
+    }
+    if (res.work) await relayTakeWork(res.work, slotId);
+  }
+
+  /** Запуск клиента из загрузки: первый вопрос — через паузу, дальше по таймеру. */
+  function relayClientStart() {
+    if (!relayConfigured()) return;
+    const run = () => {
+      Promise.resolve()
+        .then(() => relayClientTick())
+        .catch((e) => log(`Служба Relay: тик клиента не прошёл — ${e && e.message}`, false, { ntfy: "quiet" }));
+    };
+    setTimeout(run, 5000);
+    setInterval(run, RELAY_CLIENT_TICK_MS);
+    // Вкладка уходит — выдача не должна остаться без присмотра.
+    window.addEventListener("pagehide", () => {
+      const waiting = GM_getValue(K.expect, null);
+      if (relayClient.slotId && waiting && waiting.runId) {
+        relayPost({ action: "bye", slotId: relayClient.slotId, runId: String(waiting.runId) }).catch(() => {});
+      }
+    });
+  }
+
   // ───────────────────────────── цикл ─────────────────────────────
   let busy = false;
   /** Сколько раз подряд шаг снимали с блокировки по тишине. */
@@ -24436,6 +24705,9 @@ function reviewPullRequest({ files, pr, zone } = {}) {
     setStatus();
     setup(false);
     setInterval(() => tick(false), C.tickMs);
+    // D-026: клиент протокола службы — hello/pull/beat/report. Решений не
+    // принимает; без адреса службы молчит и не мешает прежнему циклу.
+    if (typeof relayClientStart === "function") relayClientStart();
     // D-073: пульс для сторожа вне браузера. Сторож — отдельный процесс: он
     // видит, что пульс кончился, хотя браузер жив, и зовёт Мастера. Раз в
     // `heartbeatMs` (10 минут), а не каждый тик: это квота, а не диагностика хода.

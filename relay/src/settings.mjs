@@ -56,7 +56,7 @@ export const SETTINGS = {
   "incident.windowMs": { group: "advanced", type: "number", default: 600000, min: 60000 },
   "incident.maxEvents": { group: "advanced", type: "number", default: 400, min: 50 },
 
-  "transport.version": { group: "basic", type: "text", default: "1.24.0" },
+  "transport.version": { group: "basic", type: "text", default: "1.25.0" },
 };
 
 /** Ключи, без которых цикл не работает: они обязаны быть в basic. */

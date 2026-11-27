@@ -146,7 +146,7 @@ const readyCount = (src.match(/async function waitForSendReady\(/g) || []).lengt
 assert.equal(readyCount, 1, 'определение waitForSendReady одно: мёртвый дубль убран');
 
 // ── 5. Повторная выдача ───────────────────────────────────────────────────
-const dispatchSrc = cut('  async function dispatchTask(card, roleName, mission = null) {', '  // ───────────────────────────── цикл');
+const dispatchSrc = cut('  async function dispatchTask(card, roleName, mission = null, opts = {}) {', '  // ───────────────────────────── цикл');
 assert.match(dispatchSrc, /notion\("GET", `pages\/\$\{card\.id\}`\)/, 'карточка перечитывается перед выдачей');
 assert.match(dispatchSrc, /state !== "Ready" \|\| submittedAt \|\| prLink/, 'карточка не выдаётся, если она не в Ready');
 assert.match(dispatchSrc, /redispatchClearProps\(fresh\)/, 'следы прошлого ответа снимаются перед выдачей');

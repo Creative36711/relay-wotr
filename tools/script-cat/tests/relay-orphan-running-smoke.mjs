@@ -255,7 +255,7 @@ function makeDialog({ state = {}, answer = true, rolled = true, swept = [], fail
 }
 
 // ── 3. Выдача не оставляет карточку в Running без очереди ────────────────
-const dispatchSrc = cut('  async function dispatchTask(card, roleName, mission = null) {', '  // ───────────────────────────── цикл ───');
+const dispatchSrc = cut('  async function dispatchTask(card, roleName, mission = null, opts = {}) {', '  // ───────────────────────────── цикл ───');
 assert.match(dispatchSrc, /const queued = await sendToRole\(/, 'результат постановки в очередь проверяется');
 assert.match(dispatchSrc, /if \(!queued\) \{/, 'непоставленное задание разбирается, а не игнорируется');
 assert.match(

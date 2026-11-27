@@ -217,9 +217,12 @@
       });
       return true;
     }
-    const decision = restored.found ? restored.decision : replies.map((m) => parseMarker(m.raw, "CF_REVIEW_RESULT"))
-      .filter(Boolean)
-      .at(-1);
+    const decisionHit = restored.found
+      ? { raw: JSON.stringify(restored.decision), obj: restored.decision }
+      : replies.map((m) => ({ raw: m.raw, obj: parseMarker(m.raw, "CF_REVIEW_RESULT") }))
+        .filter((x) => x.obj)
+        .at(-1);
+    const decision = decisionHit ? decisionHit.obj : null;
     if (!decision) return markerMissing(role, expect, "CF_REVIEW_RESULT", manual);
     if (!isUuid(mission.id) || !isUuid(expect.turnId) || !isUuid(decision.mission_id) || !isUuid(decision.turn_id) ||
         norm(decision.mission_id) !== norm(mission.id) || norm(decision.turn_id) !== norm(expect.turnId) ||
@@ -230,6 +233,11 @@
         kind: "marker-mismatch", ref: mission.id, turnId: expect.turnId || "",
       });
       return true;
+    }
+    // D-026: маркер прошёл проверку личности хода — служба применяет FSM
+    // хода (accept/rework/master). Здесь вердикт разбирается как раньше.
+    if (decisionHit && typeof relayTurnMarker === "function") {
+      relayTurnMarker(decisionHit.raw || JSON.stringify(decision)).catch(() => {});
     }
     const verdict = String(decision.verdict || "").trim().toLowerCase();
     if (!restored.found && ["accept", "rework", "master"].includes(verdict) && decision.question != null) {
