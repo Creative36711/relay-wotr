@@ -409,10 +409,12 @@ export function createTransportServer({
             body.projectBlockReason = "inactive-project";
           }
         }
-        // First-run migration: seed project metadata and move credentials that
-        // already exist in the local ScriptCat profile into Relay's local file.
-        // Existing Relay values win; runtime queues are never included.
-        if (body.action === "hello" && !body.projectConfigUpdatedAt && body.projectProfile && body.projectProfile.id === body.projectId) {
+        // Sync project metadata and move any credentials already saved in the
+        // local ScriptCat profile into Relay's local file. This intentionally
+        // does not rely on the old settings marker: older versions could set it
+        // after an incomplete response. Existing Relay values win; runtime
+        // queues are never included.
+        if (body.action === "hello" && body.projectProfile && body.projectProfile.id === body.projectId) {
           try {
             const existing = await projectConfigStore.get(body.projectId);
             const localCredentials = body.projectCredentials && typeof body.projectCredentials === "object"
@@ -461,10 +463,12 @@ export function createTransportServer({
               if (String(body.projectConfigUpdatedAt || "") !== String(entry.updatedAt || "")) {
                 body.projectApproved = false;
                 body.projectBlockReason = "unapproved";
+                body.projectApprovalFailure = "";
               }
             } else {
               body.projectApproved = false;
               body.projectBlockReason = "credentials-missing";
+              body.projectApprovalFailure = "";
               projectSettingsUnavailable = { projectId: entry.profile.id, updatedAt: entry.updatedAt || "" };
             }
           }
@@ -518,8 +522,15 @@ export function createTransportServer({
           return send(response, 403, { ok: false, why: "Настройки проектов можно менять только из локального пульта." });
         const body = await readBody(request);
         try {
+          const existing = await projectConfigStore.get(body.profile?.id);
+          const secrets = { ...(body.secrets || {}) };
+          // A BAT-provided Notion token is already a valid local credential.
+          // Seed new profiles from it rather than making the owner paste it a
+          // second time; never replace an existing project-specific token.
+          if (!secrets.notion && !existing?.secrets?.notion && /^(ntn_|secret_)/.test(String(notionToken || "")))
+            secrets.notion = notionToken;
           const profile = await projectConfigStore.save({
-            profile: body.profile, secrets: body.secrets, clearSecrets: body.clearSecrets === true,
+            profile: body.profile, secrets, clearSecrets: body.clearSecrets === true,
           });
           return send(response, 200, { ok: true, profile }, privateCorsHeaders(request));
         } catch (error) {

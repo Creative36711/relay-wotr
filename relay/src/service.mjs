@@ -588,7 +588,7 @@ export function createService({
     return run;
   }
 
-  function rememberClient({ slotId = "", tab = "", scriptVersion = "", localPaused = false, localBusy = false, localWaiting = "", projectId = "", projectName = "", projectApproved, projectBlockReason = "", source = "hello" } = {}) {
+  function rememberClient({ slotId = "", tab = "", scriptVersion = "", localPaused = false, localBusy = false, localWaiting = "", projectId = "", projectName = "", projectApproved, projectBlockReason = "", projectApprovalFailure, source = "hello" } = {}) {
     if (!slotId || !tab) return;
     const clients = memory.clients instanceof Map ? memory.clients : new Map();
     memory.clients = clients;
@@ -603,7 +603,8 @@ export function createService({
     const changed = !previous.slotId || previous.scriptVersion !== version || previous.localPaused !== paused ||
       (typeof projectApproved === "boolean" && (
         previous.projectApproved !== projectApproved || previous.projectId !== String(projectId || "") ||
-        previous.projectName !== String(projectName || "") || previous.projectBlockReason !== String(projectBlockReason || "")
+        previous.projectName !== String(projectName || "") || previous.projectBlockReason !== String(projectBlockReason || "") ||
+        (typeof projectApprovalFailure === "string" && previous.projectApprovalFailure !== projectApprovalFailure)
       ));
     const next = {
       ...previous, slotId, tab, scriptVersion: version, localPaused: paused,
@@ -614,6 +615,9 @@ export function createService({
       projectBlockReason: typeof projectApproved === "boolean"
         ? (projectApproved ? "" : String(projectBlockReason || previous.projectBlockReason || "unapproved").slice(0, 240))
         : String(projectBlockReason || previous.projectBlockReason || "").slice(0, 240),
+      ...(typeof projectApprovalFailure === "string"
+        ? { projectApprovalFailure: projectApprovalFailure.replace(/\s+/g, " ").slice(0, 280) }
+        : projectApproved === true ? { projectApprovalFailure: "" } : {}),
     };
     if (source === "hello") next.lastHelloAt = nowMs;
     if (source === "pull") next.lastPullAt = nowMs;
@@ -634,7 +638,7 @@ export function createService({
    * контейнера не должно ломать транспорт. Неизвестный аккаунт — честный
    * отказ с подсказкой, какой слот добавить.
    */
-  async function hello({ account = "", tab = "", path = "", scriptVersion = "", localPaused = false, localBusy = false, localWaiting = "", expectedSlot = "", projectId = "", projectName = "", projectApproved, projectBlockReason = "" } = {}) {
+  async function hello({ account = "", tab = "", path = "", scriptVersion = "", localPaused = false, localBusy = false, localWaiting = "", expectedSlot = "", projectId = "", projectName = "", projectApproved, projectBlockReason = "", projectApprovalFailure } = {}) {
     const slots = await loadSlots(true);
     const slot = slotByAccount(slots, account);
     if (!slot) {
@@ -666,7 +670,7 @@ export function createService({
     }
     const clientChanged = rememberClient({
       slotId: slot.slotId, tab, scriptVersion, localPaused, localBusy, localWaiting,
-      projectId, projectName, projectApproved, projectBlockReason, source: "hello",
+      projectId, projectName, projectApproved, projectBlockReason, projectApprovalFailure, source: "hello",
     });
     if (clientChanged) {
       const projectStatus = typeof projectApproved === "boolean"
@@ -1161,6 +1165,17 @@ export function createService({
         projectId: String(data.projectId || ""), projectName: String(data.projectName || ""),
         projectApproved: typeof data.projectApproved === "boolean" ? data.projectApproved : undefined,
         projectBlockReason: String(data.projectBlockReason || ""), source: "state",
+      });
+    } else if (data && typeof data.projectApprovalResult === "boolean") {
+      // Detailed, read-only approval outcome from the live admin tab. Keep it
+      // alongside its project state so the control panel can explain a block.
+      rememberClient({
+        slotId, tab, scriptVersion, localPaused,
+        projectId: String(data.projectId || ""), projectName: String(data.projectName || ""),
+        projectApproved: data.projectApprovalResult,
+        projectBlockReason: data.projectApprovalResult ? "" : "unapproved",
+        projectApprovalFailure: String(data.projectApprovalFailure || ""),
+        source: "event",
       });
     }
     const row = await record({ slot: slotId, account, tab, kind, level, text, card, runId, durationMs, data });

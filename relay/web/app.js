@@ -61,8 +61,8 @@ function updateProjectCredentialStatus(status = {}) {
   node.classList.toggle("warn", missing.length > 0);
   node.classList.toggle("ok", missing.length === 0);
   node.textContent = missing.length
-    ? `Для допуска не хватает: ${missing.join(", ")}. Введите значения выше и нажмите «Сохранить». Старые секреты ScriptCat не переносятся автоматически.`
-    : "Обязательные подключения сохранены локально. Теперь откройте admin-вкладку и запустите проверку допуска; цикл не включится автоматически.";
+    ? `Для допуска пока не хватает: ${missing.join(", ")}. Relay сначала синхронизирует уже сохранённые BAT/ScriptCat настройки; пустые поля при сохранении не стирают секреты.`
+    : "Обязательные подключения уже сохранены. Откройте admin-вкладку и запустите проверку допуска; цикл не включится автоматически.";
 }
 
 function showProjectProfile(id) {
@@ -134,7 +134,7 @@ async function saveProjectConfig({ clearSecrets = false } = {}) {
     await loadProjectProfiles(result.profile.id);
     note.textContent = `Сохранено: «${result.profile.name}». ${result.profile.secretStatus.notion && result.profile.secretStatus.gwUrl && result.profile.secretStatus.gwKey
       ? "ScriptCat получит обновление при следующем безопасном опросе; при смене настроек понадобится повторная проверка допуска."
-      : "Для рабочего подключения заполните Notion token, Drive Gateway URL и key."}`;
+      : "Relay синхронизирует BAT/ScriptCat credentials автоматически. Поля выше нужны только если соответствующего сохранённого значения нет."}`;
     announceAction("Настройки профиля сохранены на службе Relay. Секреты скрыты; профиль и локальное состояние ScriptCat не очищались.", "ok");
   } catch (error) {
     note.textContent = `Не сохранено: ${error.message}`;
@@ -211,15 +211,17 @@ function operatorGuidance(shot) {
       !status.gwUrl && "Drive Gateway URL",
       !status.gwKey && "Drive Gateway key",
     ].filter(Boolean) : [];
+    const approvalFailure = redactDiagnosticText(String(blockedProject.projectApprovalFailure || "").slice(0, 280));
     const why = missing.length
       ? `в профиле Relay не сохранены ${missing.join(", ")}`
-      : reason === "unapproved" ? "не пройдена проверка допуска"
+      : reason === "unapproved" && approvalFailure ? `проверка допуска не пройдена: ${approvalFailure}`
+        : reason === "unapproved" ? "не пройдена проверка допуска"
         : reason === "invalid" ? "профиль недоступен или повреждён"
           : reason === "legacy" ? "вкладка не выбрала профиль"
             : reason === "credentials-missing" ? "вкладке не доставлены обязательные подключения из Relay"
               : reason || "проверка проекта не завершена";
     const next = missing.length
-      ? "Введите их в разделе «Проект» выше, нажмите «Сохранить» и повторите проверку из admin-вкладки."
+      ? "Дождитесь синхронизации сохранённых BAT/ScriptCat настроек; вводите только действительно отсутствующие значения в разделе «Проект»."
       : "Исправьте указанную причину и повторите проверку из admin-вкладки.";
     return {
       tone: "warn", mark: "!", title: missing.length ? "Для проекта не заданы подключения" : "Проект заблокировал запуск",
@@ -405,6 +407,7 @@ function diagnosticReport(shot, bannerEntries = []) {
         ...(client.projectName ? { projectName: redactDiagnosticText(String(client.projectName).slice(0, 120)) } : {}),
         ...(typeof client.projectApproved === "boolean" ? { projectApproved: client.projectApproved } : {}),
         ...(client.projectBlockReason ? { projectBlockReason: redactDiagnosticText(String(client.projectBlockReason).slice(0, 240)) } : {}),
+        ...(client.projectApprovalFailure ? { projectApprovalFailure: redactDiagnosticText(String(client.projectApprovalFailure).slice(0, 280)) } : {}),
       })),
       slots: (shot.slots || []).map((slot) => ({
         slotId: slot.slotId, admin: Boolean(slot.admin), container: slot.container || "",

@@ -216,6 +216,9 @@
       projectId: profile.id, secretsMigrated: true,
       credentials: data.credentials && typeof data.credentials === "object" ? { ...data.credentials } : {},
     };
+    // Это отдельный маркер миграции секретов. Старый settings marker мог быть
+    // записан прежней версией при отказе и не доказывает, что секреты дошли.
+    rawSet(projectStorageKey(profile.id, "cfn-relay-project-credentials-synced"), true);
     // Remove legacy secret copies only after the Relay file has been read and
     // validated. Queues, expectations, journals and the profile UUID stay local.
     for (const key of Object.keys(PROJECT_SECRET_FIELDS)) rawSet(projectStorageKey(profile.id, key), "");
