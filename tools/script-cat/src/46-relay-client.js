@@ -476,6 +476,23 @@
     }
     const pending = GM_getValue(K.pending, null);
     const waiting = GM_getValue(K.expect, null);
+    // Просьба пульта «дожать ход» проверяется раньше удержания — но только
+    // когда вкладка свободна.
+    //
+    // Удержание `expect:plan` означает «ход мой, жду маркер». Именно такой
+    // вкладке шаг и нужен, и раньше она выходила из тика, не увидев просьбу.
+    // Но лезть с шагом поверх незавершённой отправки (`pending`) или пока
+    // агент печатает нельзя: шаг обгонит доставку и прочитает пустой чат.
+    const canTakeNudge = !pending && !(typeof stillWorking === "function" && stillWorking());
+    if (canTakeNudge) {
+      const nudgeRes = await relayPost({ action: "pull", slotId, nudgeOnly: true,
+        projectId: ACTIVE_PROFILE?.id || "", projectName: ACTIVE_PROFILE?.name || "" }).catch(() => null);
+      if (nudgeRes && nudgeRes.nudge) {
+        log("Пульт просит дочитать ответ — делаю шаг без новой работы.", false, { ntfy: "quiet" });
+        if (typeof tick === "function") await tick(true);
+        return;
+      }
+    }
     if (pending || waiting) {
       // Не берём новую работу поверх текущего локального хода. Для admin это
       // было непрозрачно: пульт видел hello, но не знал, почему pull не случился.

@@ -230,13 +230,23 @@ function operatorGuidance(shot) {
     };
   }
   if (heldAdmin?.localWaiting === "expect:plan" && !heldAdmin.localPaused) return {
-    tone: "ok", mark: "…", title: "ScriptCat ждёт результат плана Координатора",
-    detail: `Ожидание plan — активный ход, а не команда для повторного «Шага». Не сбрасывайте его и не запускайте дубликат. Когда ScriptCat обнаружит CF_COORDINATOR_RESULT, он передаст выбранную карточку в очередь Relay; Relay выберет слот/аккаунт и при необходимости создаст агента. Сам факт вставки или отправки промпта не подтверждает, что Arena обработала его.`,
+    // Раньше здесь стояло «не нажимайте Шаг, не запускайте дубликат» — и
+    // человек оставался без единого действия, хотя ответ Координатора уже
+    // лежал в чате. Теперь шаг разрешён и назван своим именем: «Дожать ход»
+    // только читает маркер и передаёт карточку дальше. Новую работу он не
+    // выдаёт, дубля задания не создаёт.
+    tone: "warn", mark: "…", title: "Ход у Координатора: ответ ждёт применения",
+    detail: `Вкладка «${heldAdmin.slotId}» приняла ход и держит ожидание plan: ответ Координатора (CF_COORDINATOR_RESULT) ` +
+      `надо прочитать и передать карточку дальше. Нажмите «Дожать ход» — вкладка сделает шаг в течение пятнадцати секунд. ` +
+      `Это безопасно: шаг только применяет уже полученный ответ, новую работу не выдаёт и дубль задания не создаёт. ` +
+      `Если маркера ещё нет, шаг честно ответит «ещё отвечает» — и его можно повторить.`,
     canStep: false,
   };
   if (shot.turnRequest && heldAdmin) return {
     tone: "warn", mark: "…", title: "Координатор ждёт Admin; ScriptCat удерживает опрос",
-    detail: `${localHoldDescription(heldAdmin)}. Relay сохранил запрос ${shot.turnRequest.id} и не сбросил его. Не нажимайте «Шаг» повторно — нажмите «Скопировать диагностику» и пришлите отчёт агенту.`,
+    detail: `${localHoldDescription(heldAdmin)}. Relay сохранил запрос ${shot.turnRequest.id} и не сбросил его. ` +
+      `Нажмите «Дожать ход»: вкладка сделает шаг и либо применит уже полученный ответ, либо подтвердит, что ещё отвечает. ` +
+      `Если шаг не проходит — «Скопировать диагностику» и пришлите отчёт агенту.`,
     canStep: false,
   };
   if (shot.turnRequest && pausedAdmin) {
@@ -314,6 +324,36 @@ function operatorGuidance(shot) {
   };
 }
 
+/**
+ * Локальное ожидание вкладки: активный ход или тупик?
+ *
+ * Кнопка «Шаг» раньше блокировалась при любом `localBusy`. Но `expect:plan` —
+ * это не «вкладка занята чужой работой», а «вкладка держит ход». Ждать ей
+ * нечего: если Координатор уже ответил маркером, ответ надо применить; если
+ * ещё печатает — шаг просто вернётся с «ещё отвечает». Поэтому такой клиент
+ * не повод запирать пульт: у человека должен остаться способ дожать ход.
+ *
+ * Тупик — только когда ожидание живое и не про этот ход: карточка выдана
+ * рабочему слоту, и лезть в неё планирующим шагом нельзя.
+ */
+function localHoldKind(client = {}) {
+  const waiting = String(client.localWaiting || "");
+  // `expect:plan` — ход Координатора: маркер читается из чата и применяется.
+  if (waiting === "expect:plan") return "turn";
+  if (!waiting && !client.localBusy) return "";
+  if (waiting === "pending") return "sending";
+  return "work";
+}
+
+/** Можно ли дожать ход этой вкладки кнопкой «Шаг». */
+function stepCanNudge(shot = {}) {
+  const admins = adminClientsFor(shot);
+  if (!admins.length) return false;
+  const holds = admins.map(localHoldKind);
+  // Ход держит админ-вкладка, и он не про чужую выдачу.
+  return holds.some((kind) => kind === "turn" || kind === "sending");
+}
+
 function syncControls(shot = snapshot) {
   if (!shot) return;
   const guidance = operatorGuidance(shot);
@@ -324,16 +364,25 @@ function syncControls(shot = snapshot) {
     // не мог сделать вообще ничего. Теперь она предлагает перезапросить ход
     // (запрос не был взят вкладкой, поэтому снять его безопасно).
     const stale = shot.turnRequest && !shot.turnRequest.claimed;
-    stepButton.disabled = busy || controlBusy || (!guidance.canStep && !stale);
+    // Дожать ход можно всегда, когда его держит админ-вкладка: маркер читается
+    // из чата, а не создаётся заново. Раньше это состояние запирало кнопку
+    // («Ожидает ScriptCat»), и человек не мог продолжить миссию вообще.
+    const nudge = !stale && stepCanNudge(shot);
+    stepButton.disabled = busy || controlBusy || (!guidance.canStep && !stale && !nudge);
     stepButton.textContent = stale
       ? "Запросить ход заново"
-      : adminClientsFor(shot).some((client) => client.localBusy || client.localWaiting)
-        ? "Ожидает ScriptCat"
-        : "Шаг";
+      : nudge
+        ? "Дожать ход"
+        : adminClientsFor(shot).some((client) => localHoldKind(client) === "work")
+          ? "Ждёт выдачу"
+          : "Шаг";
     stepButton.title = stale
       ? "Снять старый запрос хода и запросить новый. Работа в очереди не теряется"
-      : guidance.canStep ? "Запросить один планирующий ход" : guidance.detail;
+      : nudge
+        ? "Прочитать ответ Координатора и применить его. Новая работа не выдаётся"
+        : guidance.canStep ? "Запросить один планирующий ход" : guidance.detail;
     stepButton.dataset.retry = stale ? "1" : "";
+    stepButton.dataset.nudge = nudge ? "1" : "";
   }
   for (const id of ["btn-mode", "btn-pause"]) {
     const button = $(id);
@@ -808,6 +857,28 @@ async function retryTurn() {
   }
 }
 
+/**
+ * «Дожать ход».
+ *
+ * Ставит в службе просьбу «разбудить админ-вкладку». Вкладка на своём
+ * пятнадцатисекундном тике получает её и делает ручной шаг: читает ответ
+ * Координатора из чата и применяет маркер. Новая работа не выдаётся, дубль
+ * задания не отправляется — это тот же «Шаг», который человек раньше нажимал
+ * в старой версии.
+ */
+async function nudgeTurn() {
+  controlBusy = true;
+  announceAction("Прошу админ-вкладку дочитать ответ…");
+  try {
+    const result = await post("/api/control", { action: "nudge" });
+    if (result && result.ok === false) banner(result.why || "вкладка не подтвердила просьбу");
+    else announceAction(result?.why || "просьба передана вкладке");
+  } finally {
+    controlBusy = false;
+    await refresh();
+  }
+}
+
 async function step() {
   if (busy || controlBusy) return;
   if (snapshot) {
@@ -1095,8 +1166,10 @@ async function copyDiagnostics() {
 
 function bind() {
   $("btn-step").onclick = (event) => {
-    // Та же кнопка, но в состоянии «зависший запрос» она просит новый ход.
+    // Та же кнопка в трёх ролях: «Шаг» — новый ход, «Запросить ход заново» —
+    // снять зависший запрос, «Дожать ход» — заставить вкладку прочитать ответ.
     if (event?.currentTarget?.dataset?.retry === "1") return retryTurn();
+    if (event?.currentTarget?.dataset?.nudge === "1") return nudgeTurn();
     return step();
   };
   $("btn-refresh").onclick = async () => {

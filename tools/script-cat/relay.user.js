@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Relay — передача хода между агентами
 // @namespace    https://arena.ai/
-// @version      1.35.5
+// @version      1.35.6
 // @updateURL    https://raw.githubusercontent.com/Creative36711/relay-wotr/main/tools/script-cat/relay.user.js
 // @downloadURL  https://raw.githubusercontent.com/Creative36711/relay-wotr/main/tools/script-cat/relay.user.js
 // @description  Цикл Координатор → исполнитель → Координатор: агент сам коммитит, пушит и мержит PR; ScriptCat ждёт мерж и нажимает Continue.
@@ -97,7 +97,7 @@
     // D-073: отпечаток сборки вшивает build.mjs (SHA-256 источника). Номер версии
     // говорит «какой выпуск», отпечаток — «какая именно сборка»: без него проверка
     // «работает новая версия, а не прежняя под новым номером» невозможна.
-    buildFingerprint: "f2577b287e2ec5ef",
+    buildFingerprint: "b9f7d79f296fa2e2",
     repo: "", // для ссылки на PR из номера
     tickMs: 15000,
     mergeGraceMs: 90000, // сколько ждём мерж, прежде чем нажать кнопки за агента
@@ -900,7 +900,7 @@
 
   const NTFY_BASE = "https://ntfy.sh";
   const SCRIPT_VERSION =
-    (typeof GM_info !== "undefined" && GM_info?.script?.version) || "1.35.5";
+    (typeof GM_info !== "undefined" && GM_info?.script?.version) || "1.35.6";
 
   /** «https://ntfy.sh/topic?x=1» и «topic» одинаково дают topic. */
   function normalizeNtfyTopic(raw) {
@@ -23025,6 +23025,23 @@ function reviewPullRequest({ files, pr, zone } = {}) {
     }
     const pending = GM_getValue(K.pending, null);
     const waiting = GM_getValue(K.expect, null);
+    // Просьба пульта «дожать ход» проверяется раньше удержания — но только
+    // когда вкладка свободна.
+    //
+    // Удержание `expect:plan` означает «ход мой, жду маркер». Именно такой
+    // вкладке шаг и нужен, и раньше она выходила из тика, не увидев просьбу.
+    // Но лезть с шагом поверх незавершённой отправки (`pending`) или пока
+    // агент печатает нельзя: шаг обгонит доставку и прочитает пустой чат.
+    const canTakeNudge = !pending && !(typeof stillWorking === "function" && stillWorking());
+    if (canTakeNudge) {
+      const nudgeRes = await relayPost({ action: "pull", slotId, nudgeOnly: true,
+        projectId: ACTIVE_PROFILE?.id || "", projectName: ACTIVE_PROFILE?.name || "" }).catch(() => null);
+      if (nudgeRes && nudgeRes.nudge) {
+        log("Пульт просит дочитать ответ — делаю шаг без новой работы.", false, { ntfy: "quiet" });
+        if (typeof tick === "function") await tick(true);
+        return;
+      }
+    }
     if (pending || waiting) {
       // Не берём новую работу поверх текущего локального хода. Для admin это
       // было непрозрачно: пульт видел hello, но не знал, почему pull не случился.
