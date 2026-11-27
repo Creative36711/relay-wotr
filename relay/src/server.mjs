@@ -592,7 +592,15 @@ export function createTransportServer({
         const file = join(WEB_ROOT, safe);
         try {
           const data = await readFile(file);
-          return send(response, 200, data.toString("utf8"), { "Content-Type": MIME[extname(file)] || "application/octet-stream" });
+          // Пульт — не сборка, а живые файлы: после обновления репозитория
+          // человек перезапускает службу и открывает страницу, а браузер без
+          // этой строки показывал старый app.js из кэша. Тогда новая кнопка
+          // «есть в коде» и «нет на экране» — и это снова выглядит как «ничего
+          // не изменилось».
+          return send(response, 200, data.toString("utf8"), {
+            "Content-Type": MIME[extname(file)] || "application/octet-stream",
+            "Cache-Control": "no-store, must-revalidate",
+          });
         } catch {
           if (url.pathname !== "/") return send(response, 404, { ok: false, why: `нет файла ${safe}` });
         }
