@@ -121,6 +121,10 @@ export function createService({
     }
     const { rows } = await store.read("settings");
     const values = parseSettings(rows);
+    // Настройка таймаута должна действительно управлять Apps Script bridge.
+    // Раньше книга могла содержать 45000 мс, но адаптер молча обрывал запросы
+    // на фиксированных 20000 мс — ровно ошибка, которую видел владелец.
+    if (typeof store.setTimeoutMs === "function") store.setTimeoutMs(values["net.gmTimeoutMs"]);
     memory.settingsCache = values;
     memory.settingsAt = now();
     return values;
@@ -452,7 +456,7 @@ export function createService({
    * пара (роль, слот) — единственный ключ, который у неё есть и который
    * совпадает с ключом в листе.
    */
-  async function agentReady({ role = "", slotId = "", url = "", tab = "", note = "", failed = false } = {}) {
+  async function agentReady({ role = "", slotId = "", url = "", tab = "", note = "", failed = false, queueId = "" } = {}) {
     const name = String(role).trim();
     const target = String(slotId).trim();
     const address = String(url).trim();
@@ -493,11 +497,16 @@ export function createService({
     // Задание закрывается здесь же: вкладка создала агента, и строка очереди
     // в состоянии «взято» больше никому не нужна. Иначе следующая вкладка
     // этого слота получит то же задание повторно.
-    const taskIndex = data.queue.findIndex((item) =>
-      norm(item["Вид"]) === PROVISION_KIND &&
-      norm(item["Роль"]) === norm(name) &&
-      norm(item["Слот"]) === norm(target) &&
-      norm(item["Статус"]) !== QUEUE.CANCELLED);
+    // Закрываем именно активное задание, предпочтительно по выданному queueId.
+    // Старые завершённые строки той же пары остаются в книге; выбирать первую
+    // по роли/слоту означало бы повторно закрыть историю и оставить новую строку
+    // leased навсегда.
+    const taskIndex = data.queue.findIndex((item) => {
+      const active = [QUEUE.WAITING, QUEUE.LEASED].includes(norm(item["Статус"]));
+      const matchesPair = norm(item["Вид"]) === PROVISION_KIND &&
+        norm(item["Роль"]) === norm(name) && norm(item["Слот"]) === norm(target);
+      return active && matchesPair && (!queueId || norm(item["ID"]) === norm(queueId));
+    });
     if (taskIndex >= 0) {
       const item = data.queue[taskIndex];
       await store.updateRange("queue", taskIndex + 2, [queueToRow({
@@ -1397,7 +1406,7 @@ export function createService({
       case ACTIONS.BEAT: return beat(body);
       case ACTIONS.AGENT: return agentReady({
         role: body.role, slotId: body.slotId || body.slot, url: body.url,
-        tab: body.tab, note: body.note, failed: body.ok === false,
+        tab: body.tab, note: body.note, failed: body.ok === false, queueId: body.queueId,
       });
       case ACTIONS.REPORT: return report(body);
       case ACTIONS.EVENT: return event(body);

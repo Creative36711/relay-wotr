@@ -73,6 +73,21 @@ test("адрес, сообщённый вкладкой, попадает в «�
   assert.equal(task["Статус"], "done", "задание закрыто, второй раз его не выдадут");
 });
 
+test("agentReady закрывает точный активный queueId, а не старую completed-строку той же пары", async () => {
+  const { service, store } = makeService({ queue: [
+    queueRow({ id: "old-q", card: "", role: "Technical Artist", slot: "worker-2", status: "done", kind: "provision" }),
+    queueRow({ id: "new-q", card: "", role: "Technical Artist", slot: "worker-2", status: "leased", kind: "provision" }),
+  ] });
+  const result = await service.agentReady({
+    role: "Technical Artist", slotId: "worker-2", queueId: "new-q",
+    url: "https://arena.example/agent/new", tab: "aa11",
+  });
+  assert.equal(result.ok, true);
+  const tasks = store.objects("queue").filter((row) => row["Вид"] === "provision");
+  assert.equal(tasks.find((row) => row["ID"] === "old-q")["Статус"], "done", "история осталась нетронутой");
+  assert.equal(tasks.find((row) => row["ID"] === "new-q")["Статус"], "done", "закрыто именно текущее задание");
+});
+
 test("после создания агента та же карточка достаётся вкладке с адресом", async () => {
   const { service } = makeService({ queue: [queueRow({ id: "q-1", card: "c-1", role: "Technical Artist" })] });
   const pulled = await service.pull({ slotId: "worker-2", tab: "aa11" });

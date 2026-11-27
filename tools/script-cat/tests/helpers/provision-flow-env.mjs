@@ -29,7 +29,7 @@ export function makeWorld({ cfg = {}, mode = 'auto', replace = false } = {}) {
   };
   const C = { ...defaults, ...cfg, notion: 'token', requests: 'requests-ds' };
   const K = {
-    provision: 'provision', provisionRequest: 'request', provisionLock: 'lock',
+    provision: 'provision', provisionRequest: 'request', provisionLock: 'lock', provisionRelayQueue: 'relayQueue',
     pending: 'pending', expect: 'expect', pilotWait: 'pilotWait', paused: 'paused', pause: 'pause', auto: 'auto',
   };
   const pages = new Map();
@@ -43,6 +43,7 @@ export function makeWorld({ cfg = {}, mode = 'auto', replace = false } = {}) {
   const world = {
     store, session, pages, C, K, patches: [], schemaPatches: [], delivers: [], logs: [], pauses: [], archives: [], renames: [], repoSelects: [],
     cards: [], options: [], sidebar: new Map([[OLD, { textContent: 'Old Name' }]]),
+    relayReports: [], relaySlot: 'worker-2', relayAdmin: false,
     pendingReplies: [], markerObj: null, working: false, renameFails: false, compileFail: false,
     captcha: false, toolLimit: false, visibleError: null, auto: true,
   };
@@ -155,9 +156,12 @@ export function makeWorld({ cfg = {}, mode = 'auto', replace = false } = {}) {
       return { attempts: 1 };
     },
     provisionArchiveAgent: async (uuid) => { world.archives.push(uuid); world.sidebar.delete(String(uuid).toLowerCase()); return { archived: true, unverified: false }; },
+    relayClient: { admin: false },
+    relayIdentity: async () => world.relaySlot,
+    relayPost: async (body) => { world.relayReports.push(body); return { ok: true }; },
   };
   const names = Object.keys(deps);
-  const api = new Function(...names, `${source}\nreturn { consumeProvision, provisionStartRequest, provisionCancelRequest, provisionState, provisionRequestState, provisionActiveJob };`)(...names.map((n) => deps[n]));
+  const api = new Function(...names, `${source}\nreturn { consumeProvision, provisionStartRequest, provisionStartRelayTask, provisionCancelRequest, provisionState, provisionRequestState, provisionActiveJob };`)(...names.map((n) => deps[n]));
   const approve = (jobs) => {
     const request = store.get(K.provisionRequest);
     world.markerObj = { request_id: request.requestId, jobs, reason: 'ok' };

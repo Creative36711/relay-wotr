@@ -221,6 +221,18 @@ test("числовая настройка приводится и огранич
   assert.equal(values["net.notionTimeoutMs"], 2000, "нижний предел соблюдается");
 });
 
+test("net.gmTimeoutMs из книги передаётся адаптеру Apps Script", async () => {
+  const store = createFakeStore({
+    slots: slotRows(),
+    settings: settingsRows({ "net.gmTimeoutMs": "67000" }),
+  });
+  let applied = 0;
+  store.setTimeoutMs = (value) => { applied = value; };
+  const service = createService({ store });
+  await service.loadAll();
+  assert.equal(applied, 67000, "значение настройки управляет timeout bridge, а не только отображается в таблице");
+});
+
 test("неизвестный режим цикла откатывается к ручному", () => {
   const values = parseSettings([["cycle.mode", "турбо", "enum", "basic", "manual", ""]]);
   assert.equal(values["cycle.mode"], "manual");

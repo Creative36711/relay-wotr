@@ -111,6 +111,33 @@ test('не стартует при активном командном ходе 
   assert.deepEqual(env.store.get(env.world.K.pending), { roleName: 'Executor Core' });
 });
 
+test('Relay-задание само авторизует создание экземпляра пары и отправляет URL обратно', async () => {
+  const env = makeWorld({ cfg: { agentProvisionEnabled: false } });
+  env.world.pages.get(CAND).status = 'Активна';
+  env.world.pages.get(CAND).agentState = 'не требуется';
+
+  await env.api.provisionStartRelayTask({ roleName: 'Executor Core', slotId: 'worker-2', queueId: 'relay-q-17' });
+  await env.api.consumeProvision(); // создание новой Arena-сессии и bootstrap
+  await env.api.consumeProvision(); // URL захвачен, ждём ответ bootstrap
+  env.world.pendingReplies = [{ raw: 'assistant bootstrap reply' }];
+  await env.api.consumeProvision(); // rename и отчёт Relay
+  await env.api.consumeProvision(); // закрыть локальный request
+
+  const report = env.world.relayReports.find((item) => item.action === 'agent');
+  assert.ok(report, 'клиент отправил адрес через действие agent');
+  assert.equal(report.role, 'Executor Core');
+  assert.equal(report.slotId, 'worker-2');
+  assert.equal(report.queueId, 'relay-q-17');
+  assert.equal(report.url, `https://arena.ai/agent/${NEW}`);
+  assert.equal(report.ok, true);
+  assert.equal(env.world.pages.get(CAND).url, '', 'Relay-экземпляр не перезаписывает общий Agent URL роли в Notion');
+  assert.equal(env.world.pages.get(CAND).agentState, 'не требуется', 'Agent State роли не меняется');
+  assert.equal(env.world.patches.length, 0, 'Notion не патчится в парном Relay-контуре');
+  assert.equal(env.store.get(env.world.K.pending), undefined, 'обычный ход не затронут');
+  assert.equal(env.store.get(env.world.K.expect), undefined, 'ожидание обычного хода не затронуто');
+  assert.equal(env.api.provisionRequestState(), null);
+});
+
 test('одобрение принимает только свежая админ-роль', async () => {
   const env = makeWorld();
   await toAwaiting(env);
