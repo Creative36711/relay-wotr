@@ -63,7 +63,7 @@ const SLOT_CACHE_MS = 30000;
 
 /** Кеш справочника ролей: настройка, а не данные миссии. */
 const ROLES_CACHE_MS = 60000;
-const SUPPORTED_SCRIPT_VERSION = "1.33.0";
+const SUPPORTED_SCRIPT_VERSION = "1.34.1";
 const TURN_REQUEST_TTL_MS = 15 * 60_000;
 const TURN_REQUEST_CLAIM_MS = 30_000;
 const CLIENT_ACTIVE_MS = 3 * 60_000;
@@ -721,8 +721,8 @@ export function createService({
       String(item.projectId || "").toLowerCase() === id && item.projectApproved === false &&
       item.projectBlockReason === "unapproved" && now() - Number(item.seenAt || 0) <= CLIENT_ACTIVE_MS);
     if (!client) return { ok: false, why: "Живая админ-вкладка с этим профилем не найдена или причина блокировки другая. Обновите пульт; профиль, очередь и ожидания не изменены." };
-    if (!versionAtLeast(client.scriptVersion, "1.33.2"))
-      return { ok: false, why: `Для проверки из пульта нужен ScriptCat 1.33.2 или новее; сейчас ${client.scriptVersion || "версия неизвестна"}. Обновите вкладку и повторите.` };
+    if (!versionAtLeast(client.scriptVersion, SUPPORTED_SCRIPT_VERSION))
+      return { ok: false, why: `Для проверки и работы нужен ScriptCat ${SUPPORTED_SCRIPT_VERSION} или новее; сейчас ${client.scriptVersion || "версия неизвестна"}. Обновите запись ScriptCat и вкладку.` };
     const requestId = `approval-${now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
     if (!(memory.projectApprovalRequests instanceof Map)) memory.projectApprovalRequests = new Map();
     memory.projectApprovalRequests.set(id, { id: requestId, at: now() });

@@ -289,12 +289,11 @@ const makeHarness = ({ activeMission, maxTries = 3, holdMs = 1800000 }) => {
   assert.match(cycle, /projectBlockedText\(\)/, 'шаг называет причину');
   assert.match(cycle, /noteFeedbackPipelineHeld\(\)/, 'шаг говорит и про очередь обратной связи');
   assert.match(cycle, /armFeedbackWatch\(\)/, 'шаг вооружает сторожей, когда допуск появился');
-  const panelFrom = at('  document.getElementById(ui.step).onclick = () => {');
-  const panel = src.slice(panelFrom, src.indexOf('\n    };', panelFrom));
-  assert.match(panel, /projectBlockedText\(\)/, 'панель называет причину');
-  assert.match(panel, /noteFeedbackPipelineHeld\(\)/, 'панель объясняет и простой очереди');
-  assert.match(panel, /releaseProjectHold\(\)/, 'ручной шаг снимает удержание вкладки');
-  assert.match(panel, /tick\(true\)/, 'и только затем делает шаг');
+  const mountFrom = at('  function mount() {');
+  const mountEnd = at('  async function toggleAuto()', mountFrom);
+  const panel = src.slice(mountFrom, mountEnd);
+  assert.doesNotMatch(panel, /ui\.step|ui\.wake|ui\.toggle/, 'executor widget no longer duplicates Relay cycle controls');
+  assert.match(panel, /ui\.relay/, 'executor widget links to the main Relay console');
   assert.ok(!/log\("Проект ещё не разрешён к работе: проверьте его в управлении проектами\.", true\);\s*\n\s*return;/.test(src),
     'прежнее универсальное сообщение не осталось ни в одной точке');
 
@@ -319,8 +318,8 @@ const makeHarness = ({ activeMission, maxTries = 3, holdMs = 1800000 }) => {
 }
 
 // ── 5. Оформление выпуска и настройки ───────────────────────────────────────
-assert.match(src, /^\/\/ @version\s+1\.34\.0\s*$/m, 'сборка 1.34.0 объявлена');
-assert.match(src, /\|\| "1.34.0";/, 'SCRIPT_VERSION совпадает с @version');
+assert.match(src, /^\/\/ @version\s+1\.34\.1\s*$/m, 'сборка 1.34.1 объявлена');
+assert.match(src, /\|\| "1.34.1";/, 'SCRIPT_VERSION совпадает с @version');
 {
   const from = at('  const C = {');
   const cfg = src.slice(from, src.indexOf('\n  };', from));

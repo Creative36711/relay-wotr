@@ -65,7 +65,7 @@ test("вкладка забирает работу через /api/agent", async
     const pull = await (await fetch(`${ctx.base}/api/agent`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ action: "pull", slotId: "worker-2", tab: "aa11", scriptVersion: "1.33.0" }),
+      body: JSON.stringify({ action: "pull", slotId: "worker-2", tab: "aa11", scriptVersion: "1.34.1" }),
     })).json();
     assert.equal(pull.ok, true);
     assert.equal(pull.work.card, "c-1");
@@ -110,7 +110,7 @@ test("запрос допуска из пульта требует same-origin �
     const hello = await (await fetch(`${ctx.base}/api/agent`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ action: "hello", account: "creative36711@gmail.com", tab: "approval-tab", scriptVersion: "1.34.0",
+      body: JSON.stringify({ action: "hello", account: "creative36711@gmail.com", tab: "approval-tab", scriptVersion: "1.34.1",
         projectId, projectName: "WOTR", projectApproved: false, projectBlockReason: "unapproved" }),
     })).json();
     assert.equal(hello.ok, true);
@@ -127,7 +127,7 @@ test("запрос допуска из пульта требует same-origin �
     });
     const result = await response.json();
     assert.equal(result.ok, true);
-    const delivered = await ctx.service.hello({ account: "creative36711@gmail.com", tab: "approval-tab", scriptVersion: "1.34.0",
+    const delivered = await ctx.service.hello({ account: "creative36711@gmail.com", tab: "approval-tab", scriptVersion: "1.34.1",
       projectId, projectName: "WOTR", projectApproved: false, projectBlockReason: "unapproved" });
     assert.equal(delivered.projectApprovalRequest.id, result.requestId);
   } finally {
@@ -157,7 +157,7 @@ test("пульт сохраняет секреты локально; тольк�
 
     const helloResponse = await fetch(`${ctx.base}/api/agent`, {
       method: "POST", headers: { origin: "https://arena.ai", "content-type": "application/json" },
-      body: JSON.stringify({ action: "hello", account: "creative36711@gmail.com", tab: "settings-tab", scriptVersion: "1.34.0",
+      body: JSON.stringify({ action: "hello", account: "creative36711@gmail.com", tab: "settings-tab", scriptVersion: "1.34.1",
         projectId: project.id, projectName: project.name, projectConfigUpdatedAt: "", projectApproved: true,
         projectBlockReason: "", localBusy: false }),
     });
@@ -193,7 +193,7 @@ test("пульт сохраняет секреты локально; тольк�
     assert.equal((await activate.json()).activeProjectId, nextProject.id);
     const oldTabHello = await fetch(`${ctx.base}/api/agent`, {
       method: "POST", headers: { origin: "https://arena.ai", "content-type": "application/json" },
-      body: JSON.stringify({ action: "hello", account: "creative36711@gmail.com", tab: "old-project-tab", scriptVersion: "1.34.0",
+      body: JSON.stringify({ action: "hello", account: "creative36711@gmail.com", tab: "old-project-tab", scriptVersion: "1.34.1",
         projectId: project.id, projectName: project.name, localBusy: false }),
     });
     const selection = await oldTabHello.json();
@@ -209,7 +209,7 @@ test("пульт сохраняет секреты локально; тольк�
     });
     const clearedHello = await fetch(`${ctx.base}/api/agent`, {
       method: "POST", headers: { origin: "https://arena.ai", "content-type": "application/json" },
-      body: JSON.stringify({ action: "hello", account: "creative36711@gmail.com", tab: "active-cleared-tab", scriptVersion: "1.34.0",
+      body: JSON.stringify({ action: "hello", account: "creative36711@gmail.com", tab: "active-cleared-tab", scriptVersion: "1.34.1",
         projectId: nextProject.id, projectName: nextProject.name, projectConfigUpdatedAt: "", projectApproved: true, localBusy: false }),
     });
     const cleared = await clearedHello.json();

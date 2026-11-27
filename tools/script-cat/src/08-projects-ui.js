@@ -255,7 +255,7 @@
     const profileUnchanged = () => JSON.stringify(resolveProfile(ACTIVE_PROFILE.id)) === JSON.stringify(ACTIVE_PROFILE);
     try {
       if (!settings.notion || !settings.gwUrl || !settings.gwKey)
-        throw new Error("Не заданы подключения Notion и Drive. Сохраните их в текущем профиле, затем повторите проверку из пульта.");
+        throw new Error("Для допуска не хватает подключений профиля Relay: Notion token, Drive Gateway URL и Gateway key. Введите их в разделе «Проект», нажмите «Сохранить», дождитесь подтверждения и повторите проверку из admin-вкладки. Секреты из старого ScriptCat не импортируются автоматически.");
       if (!profileUnchanged()) throw new Error("Профиль изменился в другой вкладке; обновите эту Arena-вкладку и повторите.");
       log("Пульт запросил проверку проекта. Проверяю Notion, Drive, GitHub и схему только чтением…");
       const results = await Promise.all([probeNotionConnection(settings), probeDriveConnection(settings), probeGithubConnection(settings)]);
@@ -278,7 +278,8 @@
         data: { projectApprovalResult: true, projectId: ACTIVE_PROFILE.id } });
       return true;
     } catch (error) {
-      const failureText = `Проверка из пульта не завершена: ${connectionProblem(error, settings)}. Допуск не изменён.`;
+      const reason = connectionProblem(error, settings).replace(/[.。]+$/, "");
+      const failureText = `Проверка из пульта не завершена: ${reason}. Допуск не изменён.`;
       log(failureText, true);
       if (typeof relayPost === "function") await relayPost({ action: "event", slotId: relayClient?.slotId || "",
         kind: "state", level: "warn", text: failureText,

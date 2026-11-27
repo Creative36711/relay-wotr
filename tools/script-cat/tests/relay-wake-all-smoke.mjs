@@ -210,17 +210,10 @@ function makeWake({ initial = {}, path = '/agent/role-a-1234' } = {}) {
   assert.doesNotMatch(navBlock, /wakeAll\(/, 'и не продлевает окно при каждом нажатии в чужом контейнере');
   // Постановка задания чужой роли — источник отметки.
   assert.match(polls, /wakeForPending\(GM_getValue\(K.pending, null\)/, 'sendToRole будит адресата');
-  // Кнопка есть, подписана и не отправляет сама.
-  assert.match(panel, /ui\.wake\}/, 'кнопка на панели');
-  assert.match(panel, /getElementById\(ui\.wake\)\.onclick/, 'у кнопки есть обработчик');
-  assert.match(core, /wake: "cfn-wake"/, 'кнопка названа в ui');
-  const handler = panel.slice(panel.indexOf('document.getElementById(ui.wake).onclick'), panel.indexOf('document.getElementById(ui.toggle).onclick'));
-  assert.doesNotMatch(handler, /sendToRole|navigateTo/, 'кнопка не отправляет задание и не уводит страницу');
-  assert.match(handler, /wakeAll\(/, 'кнопка ставит отметку');
-  // Пауза и удержание остаются за Мастером, но кнопка обязана сказать об этом.
-  assert.match(handler, /projectHeld\(\)/, 'кнопка не снимает удержание');
-  assert.match(handler, /K\.paused/, 'кнопка не снимает паузу');
-  assert.doesNotMatch(handler, /GM_setValue\(K\.paused|resume\(/, 'паузу своим решением не снимает');
+  // Auto-wake remains transport behavior; the compact widget no longer duplicates a pult action.
+  assert.match(polls, /wakeForPending\(GM_getValue\(K.pending, null\)/, 'queued work wakes its target slot automatically');
+  assert.doesNotMatch(panel, /ui\.wake|cfn-wake/, 'there is no redundant wake-all control in the executor widget');
+  assert.doesNotMatch(core, /wake: "cfn-wake"/, 'the old wake button id is removed from the UI map');
 }
 
 console.log('OK: D-006 (1.18.2) — «Все вкладки»: одна кнопка, откликается та вкладка, чья работа');

@@ -51,19 +51,35 @@ async function loadProjectProfiles(selectId = "") {
   }
 }
 
+function updateProjectCredentialStatus(status = {}) {
+  const node = $("project-credential-status");
+  if (!node) return;
+  const missing = [];
+  if (!status.notion) missing.push("Notion token");
+  if (!status.gwUrl) missing.push("Drive Gateway URL");
+  if (!status.gwKey) missing.push("Drive Gateway key");
+  node.classList.toggle("warn", missing.length > 0);
+  node.classList.toggle("ok", missing.length === 0);
+  node.textContent = missing.length
+    ? `Для допуска не хватает: ${missing.join(", ")}. Введите значения выше и нажмите «Сохранить». Старые секреты ScriptCat не переносятся автоматически.`
+    : "Обязательные подключения сохранены локально. Теперь откройте admin-вкладку и запустите проверку допуска; цикл не включится автоматически.";
+}
+
 function showProjectProfile(id) {
   const found = projectProfiles.find((item) => item.id === id);
   $("btn-project-activate")?.classList.toggle("hidden", !found || found.id === activeProjectId);
   if (!found) return;
   const { secretStatus = {}, updatedAt = "", ...profile } = found;
   $("project-json").value = JSON.stringify(profile, null, 2);
+  $("project-json-details").open = false;
   $("project-ntfy-topic").value = String(profile.ntfyTopic || "");
   $("project-notion").value = "";
   $("project-gw-key").value = "";
   $("project-github").value = "";
   $("project-ntfy").value = "";
   $("project-gw-url").value = "";
-  $("project-note").textContent = `Сохранённые: Notion ${secretStatus.notion ? "✓" : "—"}, Drive URL/key ${secretStatus.gwUrl && secretStatus.gwKey ? "✓" : "—"}, GitHub ${secretStatus.github ? "✓" : "не задан"}. Изменено: ${updatedAt || "неизвестно"}.`;
+  updateProjectCredentialStatus(secretStatus);
+  $("project-note").textContent = `Сохранено: Notion ${secretStatus.notion ? "✓" : "нет"}; Drive URL ${secretStatus.gwUrl ? "✓" : "нет"}, ключ ${secretStatus.gwKey ? "✓" : "нет"}.`;
 }
 
 function newProjectProfile() {
@@ -77,8 +93,10 @@ function newProjectProfile() {
   };
   $("project-select").value = "";
   $("project-json").value = JSON.stringify(profile, null, 2);
+  $("project-json-details").open = true;
   $("project-ntfy-topic").value = "";
-  $("project-note").textContent = "Заполните реальные UUID источников, ссылки, репозиторий и папку Drive; затем укажите необходимые подключения.";
+  updateProjectCredentialStatus({});
+  $("project-note").textContent = "Заполните метаданные в раскрытом JSON и обязательные подключения выше.";
 }
 
 async function importProjectProfileFile() {
@@ -90,9 +108,10 @@ async function importProjectProfileFile() {
     const profile = parsed?.format === "scriptcat-project-config" ? parsed.profile : parsed?.profile || parsed;
     if (!profile || typeof profile !== "object" || Array.isArray(profile)) throw new Error("JSON не содержит объекта профиля.");
     $("project-json").value = JSON.stringify(profile, null, 2);
+    $("project-json-details").open = true;
     $("project-ntfy-topic").value = String(profile.ntfyTopic || "");
     $("project-select").value = "";
-    $("project-note").textContent = "Профиль загружен в редактор. Экспорт не включает credentials — их можно повторно ввести ниже.";
+    $("project-note").textContent = "Профиль загружен. Проверьте метаданные и сохраните обязательные подключения отдельно.";
   } catch (error) {
     $("project-note").textContent = `Импорт не выполнен: ${error.message}`;
   } finally { $("project-file").value = ""; }
@@ -185,13 +204,26 @@ function operatorGuidance(shot) {
   };
   if (blockedProject) {
     const reason = String(blockedProject.projectBlockReason || "");
-    const why = reason === "unapproved" ? "не пройдена проверка допуска"
-      : reason === "invalid" ? "профиль недоступен или повреждён"
-        : reason === "legacy" ? "вкладка не выбрала профиль"
-          : reason || "проверка проекта не завершена";
+    const profile = projectProfiles.find((item) => item.id === blockedProject.projectId);
+    const status = profile?.secretStatus || {};
+    const missing = profile ? [
+      !status.notion && "Notion token",
+      !status.gwUrl && "Drive Gateway URL",
+      !status.gwKey && "Drive Gateway key",
+    ].filter(Boolean) : [];
+    const why = missing.length
+      ? `в профиле Relay не сохранены ${missing.join(", ")}`
+      : reason === "unapproved" ? "не пройдена проверка допуска"
+        : reason === "invalid" ? "профиль недоступен или повреждён"
+          : reason === "legacy" ? "вкладка не выбрала профиль"
+            : reason === "credentials-missing" ? "вкладке не доставлены обязательные подключения из Relay"
+              : reason || "проверка проекта не завершена";
+    const next = missing.length
+      ? "Введите их в разделе «Проект» выше, нажмите «Сохранить» и повторите проверку из admin-вкладки."
+      : "Исправьте указанную причину и повторите проверку из admin-вкладки.";
     return {
-      tone: "warn", mark: "!", title: "Проект заблокировал запуск",
-      detail: `Админская вкладка сообщила: профиль «${blockedProject.projectName || blockedProject.projectId || "проекта"}» — ${why}. Новый ход не отправляю, чтобы не повторять бесполезные запросы.`,
+      tone: "warn", mark: "!", title: missing.length ? "Для проекта не заданы подключения" : "Проект заблокировал запуск",
+      detail: `Профиль «${blockedProject.projectName || blockedProject.projectId || "проекта"}»: ${why}. ${next} Новый ход не отправляю.`,
       canStep: false,
     };
   }
@@ -639,7 +671,7 @@ function renderScriptCatStatus(shot) {
     ));
   } else if (pausedAdmin) {
     node.append(document.createTextNode(
-      `Административная вкладка обнаружена (ScriptCat ${adminClients.map((client) => client.scriptVersion).join(", ")}), но локальная пауза ScriptCat блокирует получение команд. Снимите паузу в виджете; новые действия останутся в пульте. `,
+      `Административная вкладка обнаружена (ScriptCat ${adminClients.map((client) => client.scriptVersion).join(", ")}), но локальная пауза ScriptCat блокирует получение команд. Раскройте виджет → «Обслуживание» → «Снять локальную паузу…»; основной режим работы выбирайте в пульте. `,
     ));
   } else if (shot.turnRequest && adminClients.length && !adminPolledRecently) {
     node.append(document.createTextNode(

@@ -368,8 +368,6 @@
     status: "cfn-status",
     toggle: "cfn-toggle",
     step: "cfn-step",
-    // D-006: будильник вкладок стоит рядом с «Шаг» и «Включить».
-    wake: "cfn-wake",
     stop: "cfn-stop",
     clear: "cfn-clear",
     reset: "cfn-reset",
@@ -379,5 +377,6 @@
     count: "cfn-log-count",
     debug: "cfn-debug-toggle",
     agents: "cfn-agents",
+    localResume: "cfn-local-resume",
     relay: "cfn-open-relay",
   };
