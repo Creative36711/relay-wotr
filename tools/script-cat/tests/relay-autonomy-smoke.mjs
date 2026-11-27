@@ -173,10 +173,10 @@ for (const kind of Object.keys(HEAL_MASTER_ONLY)) {
 {
   const blocks = src('prompt-blocks.js');
   const coordinator = blocks.slice(blocks.indexOf('def("authority.coordinator"'), blocks.indexOf('def("authority.reviewer"'));
-  assert.match(coordinator, /Зона записи\/Гейт\/Репозиторий\/Функция — твои по решению приёмки/,
-    'процессные поля отданы Координатору решением приёмки');
-  assert.match(coordinator, /Статус, Agent URL, Agent Admin и удаление — Мастер/,
-    'права остались за Мастером');
+  assert.match(coordinator, /Не проверяй Status, worker URL\/Agent State, слот или квоту/,
+    'Coordinator role selection excludes phase, URL and account/container state');
+  assert.match(coordinator, /Admin URL\/права\/удаление — Мастер/,
+    'administrative identity remains owner-managed');
   const provision = blocks.slice(blocks.indexOf('def("authority.provision"'));
   assert.match(provision, /Процессные поля неадминской строки/, 'приёмка одобряет процессные поля сама');
 }

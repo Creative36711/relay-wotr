@@ -425,9 +425,10 @@ const roleRow = (name, extra = {}) => ({
   assert.match(pendingFn.slice(0, 2000), /accountLimitBlocks/, 'очередь ждёт сброса окна, а не съедает попытку');
 
   const prompt = src('25-legacy-adr.js');
-  assert.match(prompt, /accountPlanNote\(\)/, 'план Координатора несёт недоступные аккаунты');
-  assert.match(prompt, /accountIdleNote\(queue\.ready/, 'и вопрос «нечем работать» — один раз на окно');
-  assert.match(prompt, /accountLimitBlocks\(\{ account: row\.account \}\)/, 'дефект роли называет лимит аккаунта');
+  assert.doesNotMatch(prompt, /accountPlanNote\(\)/, 'аккаунтные ограничения не входят в план роли');
+  assert.doesNotMatch(prompt, /accountIdleNote\(queue\.ready/, 'Coordinator не решает, что свободного аккаунта нет');
+  assert.match(prompt, /const planNote = String\(note \|\| ""\)\.trim\(\)/,
+    'planning turn receives only a concrete transport/handoff note');
 
   const schema = src('08-projects-ui.js');
   // Поля аддитивны, как Repository: база без них работает по-старому, но если
@@ -448,7 +449,7 @@ const roleRow = (name, extra = {}) => ({
 // ── 11. Оформление выпуска ────────────────────────────────────────────────
 {
   const bundle = readFileSync(join(here, '..', 'relay.user.js'), 'utf8');
-  assert.match(bundle, /^\/\/ @version\s+1\.35\.1\s*$/m, 'выпуск 1.35.1 объявлен');
+  assert.match(bundle, /^\/\/ @version\s+1\.35\.2\s*$/m, 'выпуск 1.35.2 объявлен');
 }
 
 console.log('OK: 1.19.0 (D-005, D-009) — почта аккаунта из Notion, ввода в ⚙ нет; квоты D-004 сохранены: лимит принадлежит аккаунту, админский останавливает цикл, «Статус» не трогается');

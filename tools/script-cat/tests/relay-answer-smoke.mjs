@@ -115,8 +115,8 @@ assert.match(
 );
 assert.match(
   src,
-  /const canTake = Boolean\(named && \(named\.status \|\| ""\) === "Активна" && named\.url\);/,
-  'остановка с активной ролью тоже не принимается',
+  /const canTake = Boolean\(named && \["Executor", "Auditor"\]\.includes\(named\.fn\)\);/,
+  'blocked is rejected when the named worker role is structurally defined, regardless of status or URL',
 );
 assert.match(src, /kind: "blocked-norole"/, 'упорство без роли — пауза с честной причиной');
 assert.match(src, /verdict === "master"/, 'приёмка может позвать Мастера');

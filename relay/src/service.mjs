@@ -999,6 +999,17 @@ export function createService({
   async function report({ slotId = "", tab = "", payload = {} } = {}) {
     const at = isoNow(now());
 
+    if (payload.turnClaimRenew) {
+      const request = memory.coordinatorTurnRequest;
+      const data = await loadAll();
+      const slot = slotById(data.slots, slotId);
+      const matches = request && slot?.admin && String(request.id) === String(payload.turnRequestId || "") &&
+        String(request.claimedBy || "") === String(tab || "") &&
+        now() - Number(request.createdAt || 0) <= TURN_REQUEST_TTL_MS;
+      if (matches) request.claimUntil = now() + TURN_REQUEST_CLAIM_MS;
+      return { ok: true, turnClaimRenewed: Boolean(matches) };
+    }
+
     // Маркер хода без выдачи (D-026): план Координатора и вердикт приёмки —
     // служебные ходы, у них нет Run ID в книге. Вкладка присылает текст
     // маркера, служба применяет FSM хода; строгость ниже («выдачи нет») к

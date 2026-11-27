@@ -23,9 +23,9 @@ assert.match(prompt, /пусто — не ход/, 'пустая очередь 
 assert.match(prompt, /next — имя роли выдаваемой карточки или done/, 'next должен называть исполнителя');
 assert.match(prompt, /CF_COORDINATOR_RESULT/, 'маркер на месте');
 assert.match(prompt, /CASEA-1\.10 · Регрессия и отчёт/, 'черновики видны Координатору списком');
-assert.match(prompt, /Нарезка|нарезка/, 'выдача — работа Координатора');
+assert.match(prompt, /Веди очередь и назначай точную Executor\/Auditor-роль/, 'assignment is semantic Coordinator planning');
 assert.match(prompt, /Accepted\/Rework\/Ready — ты/, 'Ready — право Координатора');
-assert.match(prompt, /Draft→Ready/, 'черновик можно выдать, а не пересоздавать');
+assert.match(prompt, /Черновики правь под оракул, выдавай сам/, 'a fitting draft can be promoted and assigned');
 assert.ok(!/перевести Draft в Ready[^.]*не вправе/.test(prompt), 'запрета на выдачу черновика нет');
 
 // ── 1a. Журнал ответа: ссылку получает Координатор, а не исполнитель ────────
@@ -115,27 +115,24 @@ assert.deepEqual(
 {
   const route = decisionRoute('UI/UX', { roles, readyRoles: [] });
   assert.equal(route.kind, 'ask', 'неизвестная роль не отправляется');
-  assert.match(route.note, /нет среди активных/, 'сказано, что роли нет');
+  assert.match(route.note, /не найдена в базе «Роли»/, 'structural role lookup is named, not active-status lookup');
 }
 
-// 2.5b. Карточка этой роли в Ready есть, но роль не активна — причина другая.
+// A Ready card naming an unknown role remains a structural definition issue.
 {
   const route = decisionRoute('UI/UX', { roles, readyRoles: ['UI/UX'] });
-  assert.equal(route.kind, 'ask', 'неактивная роль не отправляется');
-  assert.match(route.note, /карточка в Ready есть, но выдать её некому/, 'сказано, в чём дело');
-  assert.match(route.note, /Активные роли: Coordinator, Architect, FixtureExecutor/, 'видно, кому выдать можно');
+  assert.equal(route.kind, 'ask');
+  assert.match(route.note, /не найдена в базе «Роли»/);
 }
 
-// 2.5c. Роль есть в базе, но со статусом «Ждёт» и заполненным Agent URL.
+// An existing worker role is dispatchable regardless of legacy Status/URL.
 {
   const directory = [
-    { name: 'Coordinator', status: 'Активна', url: 'https://arena.ai/agent/c' },
-    { name: 'Build/Release', status: 'Ждёт', url: 'https://arena.ai/agent/01a16d5c' },
+    { name: 'Coordinator', fn: 'Coordinator', status: 'Активна', url: 'https://arena.ai/agent/c' },
+    { name: 'Build/Release', fn: 'Auditor', status: 'Ждёт', url: '' },
   ];
   const route = decisionRoute('Build/Release', { roles, readyRoles: ['Build/Release'], directory });
-  assert.match(route.note, /Статус «Ждёт», Agent URL заполнен/, 'причина названа без домыслов');
-  assert.match(route.note, /Статус роли и Agent URL ставит Мастер/, 'сказано, кто это решает');
-  assert.doesNotMatch(route.note, /Agent URL пуст/, 'заполненная ссылка не объявляется пустой');
+  assert.deepEqual(route, { kind: 'dispatch', roleName: 'Build/Release' });
 }
 
 // 2.5a. Постоянные промахи не превращаются в бесконечную переписку.
