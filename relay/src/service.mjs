@@ -1338,6 +1338,30 @@ export function createService({
     return { ok: true, paused: true, reason };
   }
 
+  /**
+   * Перезапросить планирующий ход Координатора.
+   *
+   * Зачем кнопка. Пока запрос хода жив, пульт блокировал «Шаг» («Шаг уже
+   * ожидает»), чтобы человек не создал второй ход. Но если админ-вкладка
+   * стоит на паузе (капча, ошибка), запрос живёт 15 минут, и всё это время
+   * кнопка была мёртвой: «нельзя совершить никаких действий». Выхода не было
+   * вообще — только ждать или лезть в ScriptCat руками.
+   *
+   * Теперь запрос можно снять и попросить заново. Это безопасно: старый
+   * запрос не был взят вкладкой (взятый обрабатывается), а новый получит та
+   * вкладка, которая первой спросит работу.
+   */
+  async function retryTurn() {
+    const previous = memory.coordinatorTurnRequest;
+    if (!previous) return { ok: false, why: "запроса хода нет: нажмите «Шаг»" };
+    if (Number(previous.claimUntil || 0) > now()) {
+      return { ok: false, why: "запрос уже взят админ-вкладкой: дождитесь ответа или снимите паузу в ScriptCat" };
+    }
+    clearCoordinatorTurnRequest();
+    await record({ kind: "ui", text: `старый запрос плана ${previous.id} снят человеком; запрашиваю заново` });
+    return step({ origin: "panel" });
+  }
+
   async function resume() {
     memory.paused = false;
     memory.pauseReason = "";
@@ -1798,6 +1822,7 @@ export function createService({
       case CONTROL.STEP: return step({ requested: body.requested ?? null, origin: body.origin || "panel" });
       case CONTROL.PAUSE: return pause({ reason: body.reason });
       case CONTROL.RESUME: return resume();
+      case CONTROL.RETRY_TURN: return retryTurn();
       case CONTROL.MODE: return setMode({ mode: body.mode });
       case CONTROL.ENQUEUE: return enqueue(body);
       case CONTROL.CANCEL: return cancel(body);
@@ -1812,7 +1837,7 @@ export function createService({
   return {
     handle, hello, pull, beat, report, event, step, pause, resume, setMode, agentReady,
     bootAutoRunner, stopAutoRunner,
-    enqueue, cancel, setup, requestProjectApproval, notionTokenSet, notionNet, rolesToBook, measureBook, snapshot, incidentPackage, loadAll, record, memory, sheetTitles,
+    enqueue, cancel, setup, requestProjectApproval, notionTokenSet, notionNet, rolesToBook, measureBook, retryTurn, snapshot, incidentPackage, loadAll, record, memory, sheetTitles,
     // Только для тестов: эти функции не входят в протокол и не должны
     // вызываться из вкладки. Отдельным объектом, чтобы «наружу» случайно не
     // уехал лишний вход.

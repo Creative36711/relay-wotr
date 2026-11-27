@@ -239,11 +239,27 @@ function operatorGuidance(shot) {
     detail: `${localHoldDescription(heldAdmin)}. Relay сохранил запрос ${shot.turnRequest.id} и не сбросил его. Не нажимайте «Шаг» повторно — нажмите «Скопировать диагностику» и пришлите отчёт агенту.`,
     canStep: false,
   };
-  if (shot.turnRequest && pausedAdmin) return {
+  if (shot.turnRequest && pausedAdmin) {
+    // Капча — самая частая причина этой паузы, и она решается в одном месте:
+    // называем её в заголовке, а не только в тексте.
+    const captcha = /капч|security verification|recaptcha/i.test(String(pausedAdmin.localPauseReason || ""));
+    if (captcha) return {
+      tone: "warn", mark: "Ⅱ",
+      title: `Arena просит подтвердить, что вы человек — контейнер «${pausedAdmin.slotId}»`,
+      detail: `Запрос ${shot.turnRequest.id} остаётся в Relay, ничего не потеряно. ` +
+        `Откройте вкладку контейнера «${pausedAdmin.slotId}», поставьте галочку в окне проверки, ` +
+        `затем в виджете ScriptCat нажмите «▶ Продолжить» — ход продолжится с того же места, новый «Шаг» не нужен. ` +
+        `Если ждать не хотите: «Запросить ход заново» снимает старый запрос и создаёт новый. ` +
+        `Остальные контейнеры работают: с 1.35.5 пауза у каждой вкладки своя.`,
+      canStep: false,
+    };
+    return {
     tone: "warn", mark: "Ⅱ", title: "Запрос Координатора сохранён, но ScriptCat на паузе",
-    detail: `Запрос ${shot.turnRequest.id} остаётся в Relay. Ничего не потеряно; отправьте агенту диагностику, не создавайте повторный «Шаг».`,
+    detail: `Запрос ${shot.turnRequest.id} остаётся в Relay. Ничего не потеряно. Решите капчу в контейнере — ход продолжится сам. ` +
+      `Если ждать не хотите: кнопка «Запросить ход заново» снимает старый запрос и создаёт новый.`,
     canStep: false,
-  };
+    };
+  }
   if (shot.turnRequest && shot.turnRequest.claimed) return {
     tone: "ok", mark: "✓", title: "Admin принял ход Координатора",
     detail: `Запрос ${shot.turnRequest.id} обрабатывается. Новый «Шаг» сейчас не нужен.`,
@@ -251,7 +267,8 @@ function operatorGuidance(shot) {
   };
   if (shot.turnRequest) return {
     tone: "warn", mark: "…", title: "Ход Координатора уже ожидает Admin",
-    detail: `Запрос ${shot.turnRequest.id} сохранён. Не нажимайте «Шаг» ещё раз; если ожидание затянулось, скопируйте диагностику.`,
+    detail: `Запрос ${shot.turnRequest.id} сохранён и ждёт админ-вкладку. ` +
+      `Если ожидание затянулось — кнопка «Запросить ход заново» снимет его и запросит новый; работа в очереди не теряется.`,
     canStep: false,
   };
   if (heldAdmin) return {
@@ -259,15 +276,30 @@ function operatorGuidance(shot) {
     detail: `${localHoldDescription(heldAdmin)}. Relay не очищает такое состояние автоматически. Сначала отправьте диагностику агенту.`,
     canStep: false,
   };
-  if (pausedAdmin) return {
-    tone: "warn", mark: "Ⅱ", title: "Админская вкладка на локальной паузе ScriptCat",
-    detail: `Relay видит вкладку, но она не забирает команды. Снимите паузу: виджет → «Обслуживание» → «Снять локальную паузу…» ` +
-      `либо нажмите ↺ в виджете (снимает ход и паузу вместе). ` +
-      (pausedAdmin.localPauseReason
-        ? `Причина из ScriptCat: «${redactDiagnosticText(String(pausedAdmin.localPauseReason).slice(0, 200))}». `
-        : "Причина не передана (вкладка на старой версии скрипта); скопируйте диагностику."),
-    canStep: false,
-  };
+  if (pausedAdmin) {
+    // Капча — не поломка транспорта. Это стоп-сигнал, который снимает ЧЕЛОВЕК
+    // в самом контейнере: пока окно висит, отправлять нечего, и «продолжить»
+    // отсюда значило бы просто разбудить ту же ошибку.
+    const captcha = /капч|security verification|recaptcha/i.test(String(pausedAdmin.localPauseReason || ""));
+    if (captcha) return {
+      tone: "warn", mark: "Ⅱ", title: "Координатор просит подтвердить, что вы человек",
+      detail: `В контейнере «${pausedAdmin.slotId}» Arena показала проверку (капча). ` +
+        `Решать её нужно там: откройте вкладку этого контейнера, поставьте галочку в окне проверки, ` +
+        `затем в виджете ScriptCat нажмите «▶ Продолжить». ` +
+        `Задание сохранено: заново «Шаг» жать не нужно, ход продолжится с того же места. ` +
+        `Остальные контейнеры не затронуты — с версии 1.35.5 пауза у каждой вкладки своя.`,
+      canStep: false,
+    };
+    return {
+      tone: "warn", mark: "Ⅱ", title: "Админская вкладка на локальной паузе ScriptCat",
+      detail: `Relay видит вкладку, но она не забирает команды. Снимите паузу: виджет → «Обслуживание» → «Снять локальную паузу…» ` +
+        `либо нажмите ↺ в виджете (снимает ход и паузу вместе). ` +
+        (pausedAdmin.localPauseReason
+          ? `Причина из ScriptCat: «${redactDiagnosticText(String(pausedAdmin.localPauseReason).slice(0, 200))}». `
+          : "Причина не передана (вкладка на старой версии скрипта); скопируйте диагностику."),
+      canStep: false,
+    };
+  }
   if (Number(shot.counts?.waiting || 0) > 0) return {
     tone: "ok", mark: "✓", title: "Работа в очереди",
     detail: `В очереди ${shot.counts.waiting} заданий. При выдаче Relay подберёт подходящий слот/аккаунт с учётом квоты; если пары роль×слот ещё нет, сначала запустит provisioning, затем отправит карточку. Автоцикл сделает это сам; в ручном режиме нажмите «Шаг».`,
@@ -287,13 +319,21 @@ function syncControls(shot = snapshot) {
   const guidance = operatorGuidance(shot);
   const stepButton = $("btn-step");
   if (stepButton) {
-    stepButton.disabled = busy || controlBusy || !guidance.canStep;
-    stepButton.textContent = shot.turnRequest
-      ? "Шаг уже ожидает"
+    // Зависший запрос хода — не тупик. Пока админ-вкладка на паузе, запрос
+    // живёт 15 минут; раньше кнопка всё это время была мёртвой, и человек
+    // не мог сделать вообще ничего. Теперь она предлагает перезапросить ход
+    // (запрос не был взят вкладкой, поэтому снять его безопасно).
+    const stale = shot.turnRequest && !shot.turnRequest.claimed;
+    stepButton.disabled = busy || controlBusy || (!guidance.canStep && !stale);
+    stepButton.textContent = stale
+      ? "Запросить ход заново"
       : adminClientsFor(shot).some((client) => client.localBusy || client.localWaiting)
         ? "Ожидает ScriptCat"
         : "Шаг";
-    stepButton.title = guidance.canStep ? "Запросить один планирующий ход" : guidance.detail;
+    stepButton.title = stale
+      ? "Снять старый запрос хода и запросить новый. Работа в очереди не теряется"
+      : guidance.canStep ? "Запросить один планирующий ход" : guidance.detail;
+    stepButton.dataset.retry = stale ? "1" : "";
   }
   for (const id of ["btn-mode", "btn-pause"]) {
     const button = $(id);
@@ -749,6 +789,25 @@ async function refresh() {
   }
 }
 
+/**
+ * Перезапросить ход Координатора.
+ *
+ * Отдельная функция, а не «Шаг»: пульт должен сначала снять старый запрос,
+ * иначе служба справедливо ответит «ход уже ожидает».
+ */
+async function retryTurn() {
+  controlBusy = true;
+  announceAction("Снимаю старый запрос хода и запрашиваю новый…");
+  try {
+    const result = await post("/api/control", { action: "retry-turn" });
+    if (result && result.ok === false) banner(result.why || "новый запрос хода не создан");
+    else announceAction(result?.why || "новый запрос хода создан");
+  } finally {
+    controlBusy = false;
+    await refresh();
+  }
+}
+
 async function step() {
   if (busy || controlBusy) return;
   if (snapshot) {
@@ -1035,7 +1094,11 @@ async function copyDiagnostics() {
 }
 
 function bind() {
-  $("btn-step").onclick = step;
+  $("btn-step").onclick = (event) => {
+    // Та же кнопка, но в состоянии «зависший запрос» она просит новый ход.
+    if (event?.currentTarget?.dataset?.retry === "1") return retryTurn();
+    return step();
+  };
   $("btn-refresh").onclick = async () => {
     announceAction("Обновляю состояние Relay…");
     await refresh();

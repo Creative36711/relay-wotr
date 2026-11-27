@@ -164,7 +164,7 @@ const guardSrc = cut('  async function captchaGuard() {', '  /** Enter в пол
 
 // ── 3b. «Продолжить» после капчи: ответа на неотправленное не ждём ──────────
 const verifySrc = cut('  async function verifyAfterCaptcha(ctx) {', '  function roleFromPath()');
-assert.match(src, /const ctx = GM_getValue\(K\.pause, null\) \|\| \{\};/, 'вид паузы запоминается');
+assert.match(src, /tabPauseContext\(\) : GM_getValue\(K\.pause, null\)\) \|\| \{\}/, 'вид паузы запоминается');
 assert.match(src, /await verifyAfterCaptcha\(ctx\);\n\s+tick\(true\);/, 'проверка идёт до шага');
 {
   const calls = { rolled: 0, cleared: 0 };

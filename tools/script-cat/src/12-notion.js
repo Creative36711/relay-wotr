@@ -355,11 +355,18 @@
 
   /** Пауза прошлого хода к новой миссии не относится. */
   function dropPauseOfMission(cleared = []) {
-    if (!GM_getValue(K.paused, "")) return false;
-    const ctx = GM_getValue(K.pause, null);
+    const ownPause = typeof tabPauseReason === "function" ? tabPauseReason() : GM_getValue(K.paused, "");
+    if (!ownPause) return false;
+    const ctx = typeof tabPauseContext === "function" ? tabPauseContext() : GM_getValue(K.pause, null);
     if (ctx && PAUSE_BEYOND_MISSION.has(ctx.kind)) return false;
-    GM_setValue(K.paused, "");
-    GM_setValue(K.pause, null);
+    // Только пауза этой вкладки — соседние контейнеры не трогаем.
+    if (typeof tabPauseSet === "function") {
+      tabPauseSet("");
+      tabPauseContextSet(null);
+    } else {
+      GM_setValue(K.paused, "");
+      GM_setValue(K.pause, null);
+    }
     cleared.push(`пауза прошлой миссии (${ctx?.kind || "без контекста"})`);
     return true;
   }
