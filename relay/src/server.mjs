@@ -409,13 +409,27 @@ export function createTransportServer({
             body.projectBlockReason = "inactive-project";
           }
         }
-        // First-run migration: seed only the non-secret project metadata from
-        // the already-running client. Never overwrite an owner-edited Relay
-        // profile and never copy GM secrets or runtime queues.
-        if (body.action === "hello" && body.projectProfile && body.projectProfile.id === body.projectId) {
+        // First-run migration: seed project metadata and move credentials that
+        // already exist in the local ScriptCat profile into Relay's local file.
+        // Existing Relay values win; runtime queues are never included.
+        if (body.action === "hello" && !body.projectConfigUpdatedAt && body.projectProfile && body.projectProfile.id === body.projectId) {
           try {
-            let existing = await projectConfigStore.get(body.projectId);
-            if (!existing) existing = await projectConfigStore.save({ profile: body.projectProfile, secrets: {} });
+            const existing = await projectConfigStore.get(body.projectId);
+            const localCredentials = body.projectCredentials && typeof body.projectCredentials === "object"
+              ? body.projectCredentials : {};
+            // Автоматически переносим секреты из уже настроенного профиля
+            // ScriptCat в локальный Relay. Заполненное в Relay значение всегда
+            // главнее; пустые/невалидные значения не сохраняются.
+            const secrets = { ...(existing?.secrets || {}) };
+            for (const key of ["notion", "gwUrl", "gwKey", "github", "ntfyToken"]) {
+              if (!secrets[key] && typeof localCredentials[key] === "string" && localCredentials[key].trim())
+                secrets[key] = localCredentials[key].trim();
+            }
+            if (!secrets.notion && typeof notionToken === "string" && /^(ntn_|secret_)/.test(notionToken))
+              secrets.notion = notionToken;
+            if (!existing || Object.entries(secrets).some(([key, value]) => value && !existing.secrets?.[key])) {
+              await projectConfigStore.save({ profile: existing?.profile || body.projectProfile, secrets });
+            }
           } catch (error) {
             log(`профиль проекта не импортирован из Arena-вкладки: ${error.message}`);
           }

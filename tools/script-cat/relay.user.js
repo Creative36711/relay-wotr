@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Relay — передача хода между агентами
 // @namespace    https://arena.ai/
-// @version      1.34.1
+// @version      1.34.2
 // @updateURL    https://raw.githubusercontent.com/Creative36711/relay-wotr/main/tools/script-cat/relay.user.js
 // @downloadURL  https://raw.githubusercontent.com/Creative36711/relay-wotr/main/tools/script-cat/relay.user.js
 // @description  Цикл Координатор → исполнитель → Координатор: агент сам коммитит, пушит и мержит PR; ScriptCat ждёт мерж и нажимает Continue.
@@ -97,7 +97,7 @@
     // D-073: отпечаток сборки вшивает build.mjs (SHA-256 источника). Номер версии
     // говорит «какой выпуск», отпечаток — «какая именно сборка»: без него проверка
     // «работает новая версия, а не прежняя под новым номером» невозможна.
-    buildFingerprint: "cf17ef4fcfa05021",
+    buildFingerprint: "8cc52d6502fc89e8",
     repo: "", // для ссылки на PR из номера
     tickMs: 15000,
     mergeGraceMs: 90000, // сколько ждём мерж, прежде чем нажать кнопки за агента
@@ -364,6 +364,14 @@
     "cfn-notion-token": "notion", "cfn-gw-url": "gwUrl", "cfn-gw-key": "gwKey",
     "cfn-github-token": "github", "cfn-ntfy-token": "ntfyToken",
   };
+  // Передаём уже сохранённые настройки в локальный Relay при первом знакомстве.
+  // Это миграция между двумя локальными хранилищами, а не повторный ввод.
+  function projectCredentialsSnapshot() {
+    if (ACTIVE_PROFILE.legacy || ACTIVE_PROFILE.invalid) return {};
+    return Object.fromEntries(Object.entries(PROJECT_SECRET_FIELDS)
+      .map(([storageKey, field]) => [field, String(rawGet(projectStorageKey(ACTIVE_PROFILE.id, storageKey), "") || "").trim()])
+      .filter(([, value]) => value));
+  }
   GM_getValue = (key, fallback) => {
     if (String(key) === "cfn-ntfy-topic" && Object.hasOwn(ACTIVE_PROFILE, "ntfyTopic"))
       return String(ACTIVE_PROFILE.ntfyTopic || "");
@@ -407,8 +415,9 @@
   }
   function applyRelayProjectSettingsUnavailable(data) {
     if (!data || data.projectId !== ACTIVE_PROFILE.id) return false;
+    // Не удаляем локальные секреты: Relay может быть пустым при первом
+    // подключении. Сначала мигрируем их в Relay, только затем применяем его копию.
     RELAY_PROJECT_CREDENTIALS = null;
-    for (const key of Object.keys(PROJECT_SECRET_FIELDS)) rawSet(projectStorageKey(ACTIVE_PROFILE.id, key), "");
     const markerKey = projectStorageKey(ACTIVE_PROFILE.id, "cfn-relay-settings-updated-at");
     if (data.updatedAt) rawSet(markerKey, String(data.updatedAt));
     rawSet(projectStorageKey(ACTIVE_PROFILE.id, "cfn-project-approved"), false);
@@ -881,7 +890,7 @@
 
   const NTFY_BASE = "https://ntfy.sh";
   const SCRIPT_VERSION =
-    (typeof GM_info !== "undefined" && GM_info?.script?.version) || "1.34.1";
+    (typeof GM_info !== "undefined" && GM_info?.script?.version) || "1.34.2";
 
   /** «https://ntfy.sh/topic?x=1» и «topic» одинаково дают topic. */
   function normalizeNtfyTopic(raw) {
@@ -22707,12 +22716,15 @@ function reviewPullRequest({ files, pr, zone } = {}) {
     const localWaiting = waitingState
       ? `expect:${String(waitingState.kind || "ход")}`
       : pendingState ? "pending" : "";
+    const projectConfigUpdatedAt = String(GM_getValue("cfn-relay-settings-updated-at", "") || "");
     const res = await relayPost({
       action: "hello", account: email, expectedSlot, localBusy, localWaiting,
       projectId: typeof ACTIVE_PROFILE !== "undefined" ? ACTIVE_PROFILE.id : "",
       projectName: typeof ACTIVE_PROFILE !== "undefined" ? ACTIVE_PROFILE.name : "",
       projectProfile: typeof projectProfileSnapshot === "function" ? projectProfileSnapshot() : null,
-      projectConfigUpdatedAt: String(GM_getValue("cfn-relay-settings-updated-at", "") || ""),
+      projectCredentials: !projectConfigUpdatedAt && typeof projectCredentialsSnapshot === "function"
+        ? projectCredentialsSnapshot() : {},
+      projectConfigUpdatedAt,
       projectApproved: typeof projectApproved === "function" ? projectApproved() : undefined,
       projectBlockReason: typeof projectBlockReason === "function" ? projectBlockReason() : "",
       path: typeof location !== "undefined" ? location.pathname : "",

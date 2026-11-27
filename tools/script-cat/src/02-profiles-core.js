@@ -174,6 +174,14 @@
     "cfn-notion-token": "notion", "cfn-gw-url": "gwUrl", "cfn-gw-key": "gwKey",
     "cfn-github-token": "github", "cfn-ntfy-token": "ntfyToken",
   };
+  // Передаём уже сохранённые настройки в локальный Relay при первом знакомстве.
+  // Это миграция между двумя локальными хранилищами, а не повторный ввод.
+  function projectCredentialsSnapshot() {
+    if (ACTIVE_PROFILE.legacy || ACTIVE_PROFILE.invalid) return {};
+    return Object.fromEntries(Object.entries(PROJECT_SECRET_FIELDS)
+      .map(([storageKey, field]) => [field, String(rawGet(projectStorageKey(ACTIVE_PROFILE.id, storageKey), "") || "").trim()])
+      .filter(([, value]) => value));
+  }
   GM_getValue = (key, fallback) => {
     if (String(key) === "cfn-ntfy-topic" && Object.hasOwn(ACTIVE_PROFILE, "ntfyTopic"))
       return String(ACTIVE_PROFILE.ntfyTopic || "");
@@ -217,8 +225,9 @@
   }
   function applyRelayProjectSettingsUnavailable(data) {
     if (!data || data.projectId !== ACTIVE_PROFILE.id) return false;
+    // Не удаляем локальные секреты: Relay может быть пустым при первом
+    // подключении. Сначала мигрируем их в Relay, только затем применяем его копию.
     RELAY_PROJECT_CREDENTIALS = null;
-    for (const key of Object.keys(PROJECT_SECRET_FIELDS)) rawSet(projectStorageKey(ACTIVE_PROFILE.id, key), "");
     const markerKey = projectStorageKey(ACTIVE_PROFILE.id, "cfn-relay-settings-updated-at");
     if (data.updatedAt) rawSet(markerKey, String(data.updatedAt));
     rawSet(projectStorageKey(ACTIVE_PROFILE.id, "cfn-project-approved"), false);

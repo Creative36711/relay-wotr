@@ -192,12 +192,15 @@
     const localWaiting = waitingState
       ? `expect:${String(waitingState.kind || "ход")}`
       : pendingState ? "pending" : "";
+    const projectConfigUpdatedAt = String(GM_getValue("cfn-relay-settings-updated-at", "") || "");
     const res = await relayPost({
       action: "hello", account: email, expectedSlot, localBusy, localWaiting,
       projectId: typeof ACTIVE_PROFILE !== "undefined" ? ACTIVE_PROFILE.id : "",
       projectName: typeof ACTIVE_PROFILE !== "undefined" ? ACTIVE_PROFILE.name : "",
       projectProfile: typeof projectProfileSnapshot === "function" ? projectProfileSnapshot() : null,
-      projectConfigUpdatedAt: String(GM_getValue("cfn-relay-settings-updated-at", "") || ""),
+      projectCredentials: !projectConfigUpdatedAt && typeof projectCredentialsSnapshot === "function"
+        ? projectCredentialsSnapshot() : {},
+      projectConfigUpdatedAt,
       projectApproved: typeof projectApproved === "function" ? projectApproved() : undefined,
       projectBlockReason: typeof projectBlockReason === "function" ? projectBlockReason() : "",
       path: typeof location !== "undefined" ? location.pathname : "",
