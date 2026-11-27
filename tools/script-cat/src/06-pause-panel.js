@@ -565,6 +565,10 @@
     return id || "";
   }
 
+  function relayManagedMode() {
+    return typeof relayControlActive === "function" && relayControlActive();
+  }
+
   function setStatus(extra) {
     const el = document.getElementById(ui.status);
     if (!el) return;
@@ -588,17 +592,20 @@
       } catch { return ""; }
     })();
     const text = extra || (paused ? `Пауза${label ? ` (${label})` : ""}: ${short}` : auto ? "Работает" : "Выключен");
-    const tail = [account, me].filter(Boolean).join(" · ");
+    const relayLabel = typeof relayConnectionLabel === "function" ? relayConnectionLabel() : "";
+    const tail = [relayLabel, account, me].filter(Boolean).join(" · ");
     el.textContent = tail ? `${text} · ${tail}` : text;
-    el.title = paused || text;
+    el.title = paused || [text, relayLabel].filter(Boolean).join(" · ");
     // Красным — только пауза, которая действительно ждёт человека.
     el.style.color = paused ? (who && who !== "master" ? "#e8d08a" : "#ff9a9a") : auto ? "#8ee28e" : "inherit";
     const toggle = document.getElementById(ui.toggle);
     if (toggle) {
       toggle.textContent = paused ? "▶ Продолжить" : auto ? "⏸ Стоп" : "▶ Включить";
+      if (relayManagedMode()) toggle.title = "Временный локальный автоцикл ScriptCat; основной ручной запуск — в пульте Relay";
       toggle.style.background = paused ? "#3a3320" : auto ? "#3a2a2a" : "#24402a";
       toggle.style.borderColor = paused ? "#6b5a2a" : auto ? "#6b3a3a" : "#3f6b45";
     }
+    paintPanelChrome();
   }
 
   const paintDebugButton = () => {
@@ -630,9 +637,19 @@
     panel.style.width = collapsed ? "208px" : "360px";
     const log = document.getElementById(ui.log);
     if (log) log.style.display = collapsed ? "none" : "";
+    const relayMode = typeof relayControlActive === "function" && relayControlActive();
+    const relayConfiguredNow = typeof relayConfigured === "function" && relayConfigured();
     for (const id of [ui.step, ui.wake, ui.questions, ui.debug, ui.reset, ui.clear, ui.setup]) {
       const el = document.getElementById(id);
-      if (el) el.style.display = collapsed ? "none" : "";
+      if (!el) continue;
+      const superseded = relayMode && [ui.step, ui.wake].includes(id);
+      el.style.display = collapsed || superseded ? "none" : "";
+    }
+    const relayLink = document.getElementById(ui.relay);
+    if (relayLink) {
+      const base = typeof relayBase === "function" ? relayBase() : "";
+      relayLink.href = base || "#";
+      relayLink.style.display = relayConfiguredNow && !collapsed ? "" : "none";
     }
     const status = document.getElementById(ui.status);
     if (status) status.style.maxWidth = collapsed ? "120px" : "190px";
@@ -672,6 +689,7 @@
         <span style="flex:1"></span>
         <button id="${ui.step}" title="Один шаг цикла" style="${btnStyle()}">Шаг</button>
         <button id="${ui.wake}" title="D-006: разбудить вкладки других аккаунтов — работу продолжит та, чей это аккаунт" style="${btnStyle()}">📣 Все вкладки</button>
+        <a id="${ui.relay}" href="#" target="_blank" rel="noopener noreferrer" style="${btnStyle()};text-decoration:none;display:none">↗ Пульт Relay</a>
         <button id="${ui.toggle}" style="${btnStyle()}">▶ Включить</button>
         <button id="${ui.questions}" aria-label="Открыть обратную связь в Notion" title="Обратная связь — вопросы и предложения в Notion" style="${btnStyle()}">💬 Обратная связь<span id="${ui.qBadge}" style="display:none;margin-left:3px;padding:0 4px;border-radius:7px;background:#b23b3b;color:#fff;font-size:10px;line-height:14px;vertical-align:middle">0</span></button>
         <button id="${ui.agents}" title="Provisioning Arena-агентов: создание и замена ролей" style="${btnStyle()}">🤖 Агенты</button>

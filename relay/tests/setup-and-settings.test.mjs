@@ -440,7 +440,7 @@ test("роли читаются из книги: Notion для работы не
   const data = await service.loadAll();
   assert.equal(data.settings["notion.rolesDb"], "ds-roles");
   // Роли достаются тем же вызовом, что и при выдаче.
-  const pull = await service.pull({ scriptVersion: "1.27.0",  slotId: "worker-1", tab: "t1" });
+  const pull = await service.pull({ scriptVersion: "1.28.0", slotId: "worker-1", tab: "t1" });
   assert.equal(pull.ok, true, pull.why);
   const roles = service.memory.rolesCache || [];
   assert.ok(Array.isArray(roles));
@@ -503,7 +503,7 @@ test("справочник ролей читается: настройки не 
 
   // Справочник читается там, где нужен, — при выдаче работы: без него нельзя
   // понять, административная роль или нет. `snapshot` его не тянет и не должен.
-  await service.pull({ scriptVersion: "1.27.0",  slotId: "worker-1", tab: "t1" });
+  await service.pull({ scriptVersion: "1.28.0", slotId: "worker-1", tab: "t1" });
   assert.ok(queries.some((url) => url.includes("databases/ds-roles/query")), "справочник ролей запрошен");
   const shot = await service.snapshot();
   assert.equal(shot.notion.ready, true);

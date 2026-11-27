@@ -301,4 +301,5 @@
     count: "cfn-log-count",
     debug: "cfn-debug-toggle",
     agents: "cfn-agents",
+    relay: "cfn-open-relay",
   };

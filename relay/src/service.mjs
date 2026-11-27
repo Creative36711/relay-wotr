@@ -61,7 +61,7 @@ const SLOT_CACHE_MS = 30000;
 
 /** Кеш справочника ролей: настройка, а не данные миссии. */
 const ROLES_CACHE_MS = 60000;
-const SUPPORTED_SCRIPT_VERSION = "1.27.0";
+const SUPPORTED_SCRIPT_VERSION = "1.28.0";
 const TURN_REQUEST_TTL_MS = 15 * 60_000;
 const TURN_REQUEST_CLAIM_MS = 30_000;
 const CLIENT_ACTIVE_MS = 3 * 60_000;
@@ -583,7 +583,7 @@ export function createService({
     return run;
   }
 
-  function rememberClient({ slotId = "", tab = "", scriptVersion = "" } = {}) {
+  function rememberClient({ slotId = "", tab = "", scriptVersion = "", localPaused = false } = {}) {
     if (!slotId || !tab) return;
     const clients = memory.clients instanceof Map ? memory.clients : new Map();
     memory.clients = clients;
@@ -592,7 +592,12 @@ export function createService({
       if (nowMs - Number(client.seenAt || 0) > CLIENT_ACTIVE_MS * 3) clients.delete(key);
     }
     const key = `${slotId}:${tab}`;
-    clients.set(key, { slotId, tab, scriptVersion: String(scriptVersion || "").trim(), seenAt: nowMs });
+    const version = String(scriptVersion || "").trim();
+    const paused = Boolean(localPaused);
+    const previous = clients.get(key);
+    const changed = !previous || previous.scriptVersion !== version || previous.localPaused !== paused;
+    clients.set(key, { slotId, tab, scriptVersion: version, localPaused: paused, seenAt: nowMs });
+    return changed;
   }
 
   function clearCoordinatorTurnRequest() {
@@ -607,7 +612,7 @@ export function createService({
    * контейнера не должно ломать транспорт. Неизвестный аккаунт — честный
    * отказ с подсказкой, какой слот добавить.
    */
-  async function hello({ account = "", tab = "", path = "", scriptVersion = "" } = {}) {
+  async function hello({ account = "", tab = "", path = "", scriptVersion = "", localPaused = false } = {}) {
     const slots = await loadSlots(true);
     const slot = slotByAccount(slots, account);
     if (!slot) {
@@ -622,12 +627,14 @@ export function createService({
         slots: slots.map((item) => ({ slotId: item.slotId, account: item.account, admin: item.admin })),
       };
     }
-    rememberClient({ slotId: slot.slotId, tab, scriptVersion });
-    await record({
-      slot: slot.slotId, account, tab, kind: "state",
-      text: `вкладка ${tab || "?"} опознана как слот ${slot.slotId} (${slot.admin ? "административный" : "рабочий"})`,
-      data: { path, scriptVersion: String(scriptVersion || "") },
-    });
+    const clientChanged = rememberClient({ slotId: slot.slotId, tab, scriptVersion, localPaused });
+    if (clientChanged) {
+      await record({
+        slot: slot.slotId, account, tab, kind: "state",
+        text: `вкладка ${tab || "?"} опознана как слот ${slot.slotId} (${slot.admin ? "административный" : "рабочий"})`,
+        data: { path, scriptVersion: String(scriptVersion || ""), localPaused: Boolean(localPaused) },
+      });
+    }
     return {
       ok: true,
       slot: { slotId: slot.slotId, admin: slot.admin, container: slot.container, account: slot.account },
@@ -643,12 +650,12 @@ export function createService({
    * Третье — не ошибка вкладки, а расхождение раскладки: административный
    * контейнер не берёт рабочие роли, и вкладка должна об этом сказать человеку.
    */
-  async function pull({ slotId = "", tab = "", roleHint = "", scriptVersion = "" } = {}) {
+  async function pull({ slotId = "", tab = "", roleHint = "", scriptVersion = "", localPaused = false } = {}) {
     const data = await loadAll();
     const slot = slotById(data.slots, slotId);
     if (!slot) return { ok: false, why: `слота ${slotId} нет в таблице` };
     if (!slot.enabled) return idle(`слот ${slotId} выключен`);
-    rememberClient({ slotId, tab, scriptVersion });
+    rememberClient({ slotId, tab, scriptVersion, localPaused });
 
     const liveRuns = data.runs.filter(isLiveRun);
 
@@ -773,8 +780,8 @@ export function createService({
   }
 
   /** `beat`: вкладка жива. Продлевает выдачу и говорит, чего она ждёт. */
-  async function beat({ slotId = "", runId = "", tab = "", waiting = "", silentMs = 0, scriptVersion = "" } = {}) {
-    rememberClient({ slotId, tab, scriptVersion });
+  async function beat({ slotId = "", runId = "", tab = "", waiting = "", silentMs = 0, scriptVersion = "", localPaused = false } = {}) {
+    rememberClient({ slotId, tab, scriptVersion, localPaused });
     const at = isoNow(now());
     const data = await loadAll();
     const index = data.runs.findIndex((run) => norm(run["Run ID"]) === norm(runId));

@@ -32,9 +32,22 @@
     helloAt: 0,
     lastBeatAt: 0,
     lastContactAt: 0,
+    lastPresenceAt: 0,
     lastMarker: { hash: "", at: 0 },
     warned: { hello: "", pull: "", version: "" },
   };
+
+  function relayControlActive() {
+    return relayConfigured() && Boolean(relayClient.lastContactAt) && Date.now() - relayClient.lastContactAt <= 180000;
+  }
+
+  function relayConnectionLabel() {
+    if (!relayConfigured()) return "Node Relay не настроен";
+    if (!relayClient.slotId) return "Node Relay: нет связи";
+    const localPaused = typeof isPaused === "function" && isPaused();
+    if (!relayControlActive()) return `Node Relay: нет сигнала (${relayClient.slotId})`;
+    return `Node Relay: ${relayClient.slotId}${localPaused ? " · ScriptCat на паузе" : " · подключён"}`;
+  }
 
   /** Идентификатор вкладки: один на загрузку страницы, не общий на вкладки. */
   function relayTabId() {
@@ -67,7 +80,13 @@
       const data = await request(
         "POST", `${base}/api/agent`,
         { "Content-Type": "application/json" },
-        JSON.stringify({ ...body, scriptVersion: SCRIPT_VERSION, v: 1, tab: relayTabId() }),
+        JSON.stringify({
+          ...body,
+          scriptVersion: SCRIPT_VERSION,
+          localPaused: typeof isPaused === "function" ? isPaused() : false,
+          v: 1,
+          tab: relayTabId(),
+        }),
         { retry: false },
       );
       if (data && typeof data === "object") relayClient.lastContactAt = Date.now();
@@ -91,6 +110,7 @@
     const res = await relayPost({ action: "hello", account: email, path: typeof location !== "undefined" ? location.pathname : "" });
     relayClient.helloAt = nowMs;
     if (res && res.ok && res.slot) {
+      relayClient.lastPresenceAt = nowMs;
       relayClient.slotId = String(res.slot.slotId || "");
       relayClient.account = email;
       relayClient.admin = Boolean(res.slot.admin);
@@ -242,9 +262,21 @@
   /** Тик клиента: опознание → работа или удар сердца. Никаких решений. */
   async function relayClientTick() {
     if (!relayConfigured()) return;
-    if (typeof isPaused === "function" && isPaused()) return;
+    // Объявляем вкладку службе даже при локальной паузе. Иначе пульт видит
+    // «административный клиент не найден» и не может объяснить, что именно
+    // мешает команде. Пауза по-прежнему запрещает брать работу/turn.
     const slotId = await relayIdentity().catch(() => "");
     if (!slotId) return;
+    const paused = typeof isPaused === "function" && isPaused();
+    if (paused) {
+      // Пауза запрещает pull, но не должна делать вкладку невидимой пульту.
+      // Лёгкий hello раз в минуту поддерживает свежий статус без спама в журнал.
+      if (Date.now() - Number(relayClient.lastPresenceAt || 0) >= 60000) {
+        await relayIdentity({ force: true }).catch(() => "");
+      }
+      if (typeof setStatus === "function") setStatus();
+      return;
+    }
     const pending = GM_getValue(K.pending, null);
     const waiting = GM_getValue(K.expect, null);
     if (pending || waiting) {
