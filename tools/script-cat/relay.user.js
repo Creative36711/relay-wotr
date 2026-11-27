@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Relay — передача хода между агентами
 // @namespace    https://arena.ai/
-// @version      1.35.3
+// @version      1.35.4
 // @updateURL    https://raw.githubusercontent.com/Creative36711/relay-wotr/main/tools/script-cat/relay.user.js
 // @downloadURL  https://raw.githubusercontent.com/Creative36711/relay-wotr/main/tools/script-cat/relay.user.js
 // @description  Цикл Координатор → исполнитель → Координатор: агент сам коммитит, пушит и мержит PR; ScriptCat ждёт мерж и нажимает Continue.
@@ -97,7 +97,7 @@
     // D-073: отпечаток сборки вшивает build.mjs (SHA-256 источника). Номер версии
     // говорит «какой выпуск», отпечаток — «какая именно сборка»: без него проверка
     // «работает новая версия, а не прежняя под новым номером» невозможна.
-    buildFingerprint: "3a2524a4fa1398b6",
+    buildFingerprint: "88064b5091d58b63",
     repo: "", // для ссылки на PR из номера
     tickMs: 15000,
     mergeGraceMs: 90000, // сколько ждём мерж, прежде чем нажать кнопки за агента
@@ -900,7 +900,7 @@
 
   const NTFY_BASE = "https://ntfy.sh";
   const SCRIPT_VERSION =
-    (typeof GM_info !== "undefined" && GM_info?.script?.version) || "1.35.3";
+    (typeof GM_info !== "undefined" && GM_info?.script?.version) || "1.35.4";
 
   /** «https://ntfy.sh/topic?x=1» и «topic» одинаково дают topic. */
   function normalizeNtfyTopic(raw) {
@@ -8934,6 +8934,16 @@
     GM_setValue(K.pending, null);
     GM_setValue(K.expect, null);
     GM_setValue(K.lastSend, null);
+    // D-037: «начать с чистого листа» — значит и без паузы прошлого хода.
+    // После сброса вкладка пуста, а локальная пауза (в том числе
+    // восстановительная после обновления) оставляла кнопку «Шаг» мёртвой:
+    // пульт видел localPaused и запрещал шаг, пока Мастер искал причину в
+    // виджете. ↺ — явное действие Мастера, оно снимает и удержание тоже.
+    if (GM_getValue(K.paused, "")) {
+      GM_setValue(K.paused, "");
+      GM_setValue(K.pause, null);
+      log("Локальная пауза снята вместе с ходом — кнопка «Шаг» снова доступна.", false, { ntfy: "quiet" });
+    }
     // Снимок недоприменённого хода — часть хода: ↺ снимает его вместе с
     // очередью и ожиданием, иначе «Продолжить» вернул бы снятое Мастером.
     GM_setValue(K.planRecover, null);
@@ -22552,6 +22562,12 @@ function reviewPullRequest({ files, pr, zone } = {}) {
           ...body,
           scriptVersion: SCRIPT_VERSION,
           localPaused: typeof isPaused === "function" ? isPaused() : false,
+          // D-037: пульт и отчёт саппорта должны видеть, ПОЧЕМУ вкладка на
+          // паузе, а не только факт паузы — иначе после сброса хода кнопка
+          // «Шаг» мертва без единой объяснимой строки.
+          localPauseReason: typeof isPaused === "function" && isPaused() && typeof GM_getValue === "function"
+            ? String(GM_getValue(K.paused, "") || "").replace(/\s+/g, " ").slice(0, 160)
+            : "",
           v: 1,
           tab: relayTabId(),
         }),

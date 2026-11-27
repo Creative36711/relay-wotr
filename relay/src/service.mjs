@@ -588,7 +588,7 @@ export function createService({
     return run;
   }
 
-  function rememberClient({ slotId = "", tab = "", scriptVersion = "", localPaused = false, localBusy = false, localWaiting = "", projectId = "", projectName = "", projectApproved, projectBlockReason = "", projectApprovalFailure, source = "hello" } = {}) {
+  function rememberClient({ slotId = "", tab = "", scriptVersion = "", localPaused = false, localPauseReason = "", localBusy = false, localWaiting = "", projectId = "", projectName = "", projectApproved, projectBlockReason = "", projectApprovalFailure, source = "hello" } = {}) {
     if (!slotId || !tab) return;
     const clients = memory.clients instanceof Map ? memory.clients : new Map();
     memory.clients = clients;
@@ -608,6 +608,7 @@ export function createService({
       ));
     const next = {
       ...previous, slotId, tab, scriptVersion: version, localPaused: paused,
+      localPauseReason: paused ? String(localPauseReason || previous.localPauseReason || "").replace(/\s+/g, " ").slice(0, 160) : "",
       localBusy: Boolean(localBusy), localWaiting: String(localWaiting || "").slice(0, 120), seenAt: nowMs,
       projectId: String(projectId || previous.projectId || "").slice(0, 120),
       projectName: String(projectName || previous.projectName || "").slice(0, 120),
@@ -638,7 +639,7 @@ export function createService({
    * контейнера не должно ломать транспорт. Неизвестный аккаунт — честный
    * отказ с подсказкой, какой слот добавить.
    */
-  async function hello({ account = "", tab = "", path = "", scriptVersion = "", localPaused = false, localBusy = false, localWaiting = "", expectedSlot = "", projectId = "", projectName = "", projectApproved, projectBlockReason = "", projectApprovalFailure } = {}) {
+  async function hello({ account = "", tab = "", path = "", scriptVersion = "", localPaused = false, localPauseReason = "", localBusy = false, localWaiting = "", expectedSlot = "", projectId = "", projectName = "", projectApproved, projectBlockReason = "", projectApprovalFailure } = {}) {
     const slots = await loadSlots(true);
     const slot = slotByAccount(slots, account);
     if (!slot) {
@@ -669,7 +670,7 @@ export function createService({
       for (const key of memory.slotMismatches.keys()) if (key.startsWith(`${tab}:`)) memory.slotMismatches.delete(key);
     }
     const clientChanged = rememberClient({
-      slotId: slot.slotId, tab, scriptVersion, localPaused, localBusy, localWaiting,
+      slotId: slot.slotId, tab, scriptVersion, localPaused, localPauseReason, localBusy, localWaiting,
       projectId, projectName, projectApproved, projectBlockReason, projectApprovalFailure, source: "hello",
     });
     if (clientChanged) {
@@ -684,6 +685,7 @@ export function createService({
         text: `вкладка ${tab || "?"} опознана как слот ${slot.slotId} (${slot.admin ? "административный" : "рабочий"})${projectStatus}`,
         data: {
           path, scriptVersion: String(scriptVersion || ""), localPaused: Boolean(localPaused),
+          localPauseReason: localPaused ? String(localPauseReason || "").replace(/\s+/g, " ").slice(0, 160) : "",
           ...(typeof projectApproved === "boolean" ? {
             projectId: String(projectId || "").slice(0, 120),
             projectName: String(projectName || "").slice(0, 120),
@@ -744,13 +746,13 @@ export function createService({
    * Третье — не ошибка вкладки, а расхождение раскладки: административный
    * контейнер не берёт рабочие роли, и вкладка должна об этом сказать человеку.
    */
-  async function pull({ slotId = "", tab = "", roleHint = "", scriptVersion = "", localPaused = false,
+  async function pull({ slotId = "", tab = "", roleHint = "", scriptVersion = "", localPaused = false, localPauseReason = "",
     projectId = "", projectName = "", projectApproved, projectBlockReason = "" } = {}) {
     const data = await loadAll();
     const slot = slotById(data.slots, slotId);
     if (!slot) return { ok: false, why: `слота ${slotId} нет в таблице` };
     if (!slot.enabled) return idle(`слот ${slotId} выключен`);
-    rememberClient({ slotId, tab, scriptVersion, localPaused, projectId, projectName, projectApproved,
+    rememberClient({ slotId, tab, scriptVersion, localPaused, localPauseReason, projectId, projectName, projectApproved,
       projectBlockReason, source: "pull" });
 
     const liveRuns = data.runs.filter(isLiveRun);
@@ -890,8 +892,8 @@ export function createService({
   }
 
   /** `beat`: вкладка жива. Продлевает выдачу и говорит, чего она ждёт. */
-  async function beat({ slotId = "", runId = "", tab = "", waiting = "", silentMs = 0, scriptVersion = "", localPaused = false } = {}) {
-    rememberClient({ slotId, tab, scriptVersion, localPaused, localBusy: true, localWaiting: waiting, source: "beat" });
+  async function beat({ slotId = "", runId = "", tab = "", waiting = "", silentMs = 0, scriptVersion = "", localPaused = false, localPauseReason = "" } = {}) {
+    rememberClient({ slotId, tab, scriptVersion, localPaused, localPauseReason, localBusy: true, localWaiting: waiting, source: "beat" });
     const at = isoNow(now());
     const data = await loadAll();
     const index = data.runs.findIndex((run) => norm(run["Run ID"]) === norm(runId));
@@ -1175,10 +1177,10 @@ export function createService({
   }
 
   /** `event`: любая запись журнала от вкладки или пульта. */
-  async function event({ slotId = "", account = "", tab = "", scriptVersion = "", localPaused = false, kind = "state", level = "info", text = "", card = "", runId = "", durationMs = "", data = null } = {}) {
+  async function event({ slotId = "", account = "", tab = "", scriptVersion = "", localPaused = false, localPauseReason = "", kind = "state", level = "info", text = "", card = "", runId = "", durationMs = "", data = null } = {}) {
     if (data && data.relayClientState === true) {
       rememberClient({
-        slotId, tab, scriptVersion, localPaused,
+        slotId, tab, scriptVersion, localPaused, localPauseReason,
         localBusy: Boolean(data.localBusy), localWaiting: String(data.localWaiting || ""),
         projectId: String(data.projectId || ""), projectName: String(data.projectName || ""),
         projectApproved: typeof data.projectApproved === "boolean" ? data.projectApproved : undefined,

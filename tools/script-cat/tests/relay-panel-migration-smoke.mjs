@@ -27,6 +27,10 @@ test("Node Relay: вкладка видима при локальной пауз
   assert.match(web, /adminPolledRecently/, "пульт различает hello и фактический pull");
   assert.match(web, /bannerHistoryNext/, "временные плашки записываются в историю");
   assert.match(web, /локальной паузе/, "пульт объясняет, почему admin вкладка не забирает команду");
+  assert.match(client, /localPauseReason/, "клиент шлёт причину локальной паузы");
+  assert.match(service, /localPauseReason/, "служба хранит причину паузы в записи вкладки");
+  assert.match(web, /Причина из ScriptCat/, "пульт показывает причину паузы из ScriptCat");
+  assert.match(web, /снимает ход и паузу вместе/, "пульт предлагает ↺ как путь снятия паузы");
   assert.match(web, /if \(adminClients\.length && outdated\.length\)/, "ссылка на обновление видна только при реально устаревшем клиенте");
   assert.match(web, /timeZone: "Europe\/Moscow"/, "временные метки пульта форматируются в московской зоне");
   assert.match(web, /МСК`/, "в журнале явно указана московская зона");
