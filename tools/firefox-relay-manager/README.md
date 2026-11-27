@@ -14,6 +14,13 @@ boundaries.
   container in the background. It never moves a tab or copies cookies.
 - Keeps the admin slot available for an outstanding coordinator turn or while
   Relay auto mode is enabled; opens worker slots for assigned work.
+- **Never changes which window or tab is in front.** The add-on used to raise the
+  Admin window on every new coordinator turn; that turned "sending works" into a
+  requirement for the owner to keep that tab in front. ScriptCat now stretches
+  its own deadlines in a background tab, so the add-on leaves the foreground
+  alone. To look at a container tab, use the pult's **Открыть вкладку** button:
+  the page asks the content bridge, and the bridge forwards one `focus` request.
+  Requests are accepted only from the local pult (`127.0.0.1:8787`).
 - Tells the ScriptCat tab bridge whether the Relay auto mode is on. Relay mode
   is the source of truth; page scripts cannot call the extension APIs.
 - Closes only worker tabs created by this add-on, after three idle minutes and
@@ -46,7 +53,8 @@ No signing credentials or browser policy bypass is part of this repository.
 
 - Permissions are limited to container identities, tabs/storage/alarms, the
   local Relay address, and Arena pages. The add-on does not read passwords or
-  cookies.
+  cookies. The bridge that runs on the pult page forwards one message type and
+  receives one answer; it has no access to `browser.tabs` from the page.
 - New setups start in auto mode. On upgrade, the old `manual` value is migrated
   to `auto` only when the sheet marks it as the former default; a deliberate
   manual choice made in this release remains manual after restart. The Relay

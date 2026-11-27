@@ -188,6 +188,47 @@ test("hello переносит уже сохранённые локальные 
   }
 });
 
+test("настройки проекта доезжают до вкладки, которая держит ход (дедлок «дожать»)", async () => {
+  // Владелец: «Дожать ход» не сработал, в журнале — «Relay ещё не
+  // синхронизировал credentials». Механически это дедлок: вкладка с
+  // `expect:plan` была занята, сервер откладывал настройки «до простоя», а
+  // вкладка без настроек не проходила гейт — и так по кругу.
+  const ctx = await startServer();
+  try {
+    const project = {
+      id: "123e4567-e89b-12d3-a456-426614174300", name: "WOTR",
+      roles: "123e4567-e89b-12d3-a456-426614174301", missions: "123e4567-e89b-12d3-a456-426614174302",
+      requests: "123e4567-e89b-12d3-a456-426614174303", questions: "123e4567-e89b-12d3-a456-426614174304",
+      pageUrl: "https://www.notion.so/workspace/page-123e4567e89b12d3a456426614174305",
+      questionsUrl: "https://www.notion.so/workspace/questions-123e4567e89b12d3a456426614174306",
+      repo: "Creative36711/open-bfme", branch: "main", driveFolder: "wotr",
+      repos: [{ repo: "Creative36711/open-bfme", branch: "main", main: true }], roleRepos: [],
+    };
+    const saved = await fetch(`${ctx.base}/api/projects`, {
+      method: "POST", headers: { origin: ctx.base, "content-type": "application/json" },
+      body: JSON.stringify({ profile: project, secrets: {
+        notion: "ntn_busy_tab", gwUrl: "https://script.google.com/macros/s/busy/exec", gwKey: "busy_key",
+      } }),
+    });
+    assert.equal((await saved.json()).ok, true);
+
+    // Вкладка занята планом и просит настройки первым же hello.
+    const busyHello = await fetch(`${ctx.base}/api/agent`, {
+      method: "POST", headers: { origin: "https://arena.ai", "content-type": "application/json" },
+      body: JSON.stringify({ action: "hello", account: "creative36711@gmail.com", tab: "busy-plan-tab",
+        projectId: project.id, projectName: project.name, projectProfile: project,
+        projectConfigUpdatedAt: "", localBusy: true, localWaiting: "expect:plan" }),
+    });
+    const hello = await busyHello.json();
+    assert.equal(hello.projectSettings?.credentials?.notion, "ntn_busy_tab",
+      "занятая вкладка получает сохранённые подключения, а не ждёт простоя");
+    assert.equal(hello.projectSettings?.credentials?.gwKey, "busy_key");
+    assert.equal(hello.projectSettings?.secretsMigrated, true);
+  } finally {
+    await ctx.close();
+  }
+});
+
 test("новый профиль автоматически получает Notion token, уже заданный в BAT", async () => {
   const ctx = await startServer({ notionToken: "ntn_from_bat_config" });
   try {

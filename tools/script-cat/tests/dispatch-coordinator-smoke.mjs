@@ -19,7 +19,7 @@ assert.ok(version, 'the active userscript declares an x.y.z version');
 assert.match(source, /^\/\/ @match\s+https:\/\/arena\.ai\/\*/m, 'the active script is bound to Arena');
 
 const tests = readdirSync(testDir).filter((name) => name.endsWith('.mjs'));
-assert.equal(tests.length, 134, 'набор тестов включает transport smoke tests и проверки консоли профилей');
+assert.equal(tests.length, 135, 'набор тестов включает transport smoke tests и проверки консоли профилей');
 for (const added of ['prompts-smoke.mjs', 'delivery-smoke.mjs', 'pilot-smoke.mjs', 'docs-smoke.mjs']) {
   assert.ok(tests.includes(added), `${added} suite present`);
 }

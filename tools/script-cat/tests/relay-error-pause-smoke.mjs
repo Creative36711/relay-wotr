@@ -147,7 +147,10 @@ assert.match(src, /Relay owns profile and credential settings/, 'configuration o
 // Перезагрузки ограничены двумя конкретными recovery-путями: временный
 // отказ Arena «Something went wrong» и неотрисовавшаяся страница адресата.
 const reloadSites = src.split('\n').filter((line) => line.includes('location.reload()'));
-assert.equal(reloadSites.length, 4, 'only bounded recovery and safe existing-profile reloads remain');
+// Пятая точка — отложенная перезагрузка занятой вкладки: смена профиля
+// принята, но страницу нельзя рвать посреди хода (D-022).
+assert.equal(reloadSites.length, 5, 'only bounded recovery and safe existing-profile reloads remain');
+assert.match(relayClientSrc, /settingsReloadPending && !localBusy && !busy/, 'отложенная перезагрузка ждёт простоя');
 assert.match(relayClientSrc, /res\?\.projectSelection && !localBusy && !busy && !\(Number\(projectAsyncWork\) > 0\)/,
   'profile switching waits for empty queue, expectation and async work');
 assert.match(relayClientSrc, /applyRelayProjectSelection\(res\.projectSelection\)[\s\S]*?location\.reload\(\)/,

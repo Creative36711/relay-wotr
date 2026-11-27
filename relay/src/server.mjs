@@ -480,10 +480,22 @@ export function createTransportServer({
             text: `вкладка забрала выдачу ${result.work.runId}`, runId: result.work.runId, card: result.work.card,
           }).catch(() => {});
         }
-        const responseResult = !body.localBusy
-          ? { ...result, ...(projectSettings ? { projectSettings } : {}), ...(projectSelection ? { projectSelection } : {}),
-              ...(projectSettingsUnavailable ? { projectSettingsUnavailable } : {}) }
-          : result;
+        // Настройки проекта уезжают во вкладку всегда, в том числе когда она
+        // держит ход (`localBusy`). Раньше они откладывались до «свободного»
+        // hello — и вкладка, ждущая `expect:plan`, не получала их никогда:
+        // шаг упирался в «Relay ещё не синхронизировал credentials», пульт
+        // советовал «дожать», «дожать» упирался в тот же гейт. Тумблер
+        // «применять настройки только на простое» оставлен в клиенте: он
+        // решает, когда менять профиль и перезагружать страницу, а не
+        // получать уже сохранённые значения. Переключение профиля
+        // (`projectSelection`) по-прежнему ждёт простоя: оно перезагружает
+        // страницу и не должно обрывать ход.
+        const responseResult = {
+          ...result,
+          ...(projectSettings ? { projectSettings } : {}),
+          ...(projectSelection && !body.localBusy ? { projectSelection } : {}),
+          ...(projectSettingsUnavailable && !body.localBusy ? { projectSettingsUnavailable } : {}),
+        };
         return send(response, result.ok === false && result.why?.includes("нет в таблице") ? 404 : 200,
           responseResult, projectSettings || projectSelection || projectSettingsUnavailable ? privateCorsHeaders(request) : {});
       }
@@ -580,7 +592,15 @@ export function createTransportServer({
         const file = join(WEB_ROOT, safe);
         try {
           const data = await readFile(file);
-          return send(response, 200, data.toString("utf8"), { "Content-Type": MIME[extname(file)] || "application/octet-stream" });
+          // Пульт — не сборка, а живые файлы: после обновления репозитория
+          // человек перезапускает службу и открывает страницу, а браузер без
+          // этой строки показывал старый app.js из кэша. Тогда новая кнопка
+          // «есть в коде» и «нет на экране» — и это снова выглядит как «ничего
+          // не изменилось».
+          return send(response, 200, data.toString("utf8"), {
+            "Content-Type": MIME[extname(file)] || "application/octet-stream",
+            "Cache-Control": "no-store, must-revalidate",
+          });
         } catch {
           if (url.pathname !== "/") return send(response, 404, { ok: false, why: `нет файла ${safe}` });
         }

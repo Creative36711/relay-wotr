@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Relay — передача хода между агентами
 // @namespace    https://arena.ai/
-// @version      1.35.6
+// @version      1.35.7
 // @updateURL    https://raw.githubusercontent.com/Creative36711/relay-wotr/main/tools/script-cat/relay.user.js
 // @downloadURL  https://raw.githubusercontent.com/Creative36711/relay-wotr/main/tools/script-cat/relay.user.js
 // @description  Цикл Координатор → исполнитель → Координатор: агент сам коммитит, пушит и мержит PR; ScriptCat ждёт мерж и нажимает Continue.
@@ -97,7 +97,7 @@
     // D-073: отпечаток сборки вшивает build.mjs (SHA-256 источника). Номер версии
     // говорит «какой выпуск», отпечаток — «какая именно сборка»: без него проверка
     // «работает новая версия, а не прежняя под новым номером» невозможна.
-    buildFingerprint: "b9f7d79f296fa2e2",
+    buildFingerprint: "f3a69c50f276a407",
     repo: "", // для ссылки на PR из номера
     tickMs: 15000,
     mergeGraceMs: 90000, // сколько ждём мерж, прежде чем нажать кнопки за агента
@@ -900,7 +900,7 @@
 
   const NTFY_BASE = "https://ntfy.sh";
   const SCRIPT_VERSION =
-    (typeof GM_info !== "undefined" && GM_info?.script?.version) || "1.35.6";
+    (typeof GM_info !== "undefined" && GM_info?.script?.version) || "1.35.7";
 
   /** «https://ntfy.sh/topic?x=1» и «topic» одинаково дают topic. */
   function normalizeNtfyTopic(raw) {
@@ -22588,6 +22588,8 @@ function reviewPullRequest({ files, pr, zone } = {}) {
     lastPresenceAt: 0,
     lastLocalHold: "",
     lastHoldReportAt: 0,
+    // Смена профиля, отложенная до конца текущего хода (занятая вкладка).
+    settingsReloadPending: false,
     lastMarker: { hash: "", at: 0 },
     warned: { hello: "", pull: "", version: "" },
     projectApprovalRequests: new Set(),
@@ -22779,17 +22781,33 @@ function reviewPullRequest({ files, pr, zone } = {}) {
         log("Подключения удалены в пульте. Допуск снят; локальные очереди и ожидания сохранены.", true);
     }
     let settingsRefresh = { applied: false, profileChanged: false, settingsChanged: false };
-    if (res?.projectSettings && !localBusy && !busy && !(Number(projectAsyncWork) > 0) &&
-        typeof applyRelayProjectSettings === "function") {
+    // Настройки проекта применяются и на занятой вкладке: credentials — это
+    // не «новая работа», а вход в Notion/Drive, который нужен любому шагу.
+    // Пока здесь стояло «только на простое», вкладка с `expect:plan` не
+    // получала их никогда: «дожать» упиралось в «Relay ещё не синхронизировал
+    // credentials», хотя владелец уже сохранил их в пульте. Смена ПРОФИЛЯ
+    // по-прежнему ждёт простоя: она перезагружает страницу и оборвала бы ход.
+    if (res?.projectSettings && typeof applyRelayProjectSettings === "function") {
       settingsRefresh = applyRelayProjectSettings(res.projectSettings);
-      if (settingsRefresh.profileChanged) {
+      if (settingsRefresh.profileChanged && localBusy) {
+        // Настройки и секреты в памяти уже обновлены; страницу перезагрузим,
+        // когда вкладка освободится, — иначе перезагрузка съест незавершённую
+        // отправку или ожидание маркера.
+        relayClient.settingsReloadPending = true;
+        log("Настройки профиля из пульта приняты; страницу перезагружу после текущего хода.", true, { ntfy: "quiet" });
+      } else if (settingsRefresh.profileChanged) {
         log("Настройки профиля из пульта приняты. Перезагружаю вкладку без изменения очереди и ожиданий.");
         location.reload();
         return "";
-      }
-      if (settingsRefresh.settingsChanged) {
+      } else if (settingsRefresh.settingsChanged) {
         log("Подключения обновлены из пульта. Допуск сброшен для повторной проверки; очередь и ожидания сохранены.", true);
       }
+    }
+    if (relayClient.settingsReloadPending && !localBusy && !busy && !(Number(projectAsyncWork) > 0)) {
+      relayClient.settingsReloadPending = false;
+      log("Текущий ход завершён — перезагружаю вкладку с принятыми настройками профиля.");
+      location.reload();
+      return "";
     }
     const approvalRequest = res?.projectApprovalRequest;
     if (approvalRequest && approvalRequest.projectId === String(ACTIVE_PROFILE?.id || "") &&
@@ -23038,6 +23056,9 @@ function reviewPullRequest({ files, pr, zone } = {}) {
         projectId: ACTIVE_PROFILE?.id || "", projectName: ACTIVE_PROFILE?.name || "" }).catch(() => null);
       if (nudgeRes && nudgeRes.nudge) {
         log("Пульт просит дочитать ответ — делаю шаг без новой работы.", false, { ntfy: "quiet" });
+        // Шаг только читает уже полученный ответ, поэтому гейт Notion/Drive
+        // credentials его не касается (см. readOnlyStep в цикле).
+        if (typeof requestReadOnlyStep === "function") requestReadOnlyStep();
         if (typeof tick === "function") await tick(true);
         return;
       }
@@ -23493,7 +23514,37 @@ function reviewPullRequest({ files, pr, zone } = {}) {
     }, delayMs);
   }
 
+  /**
+   * Шаг только читает уже отправленный ход: маркер в чате, ожидание плана,
+   * карточку приёмки. Ему не нужен сетевой вход в Notion/Drive — он ничего не
+   * пишет и не читает в базах. Поэтому гейт credentials его не касается.
+   *
+   * Что случилось. 28.11 в 01:31 владелец нажал «Дожать ход», пульт передал
+   * просьбу, вкладка сделала шаг — и упёрлась в «Relay ещё не синхронизировал
+   * сохранённые Notion/Drive credentials». Ход при этом лежал в чате целиком,
+   * его надо было только прочитать. Кнопка обещала действие и не сделала его
+   * из-за входа, который этому действию не нужен.
+   */
+  const readOnlyStep = (fromToggle, mode = "") =>
+    Boolean(fromToggle) && (mode === "read" || mode === "nudge");
+
+  /**
+   * Режим следующего шага. Сигнатура `tick` остаётся прежней: её проверяют
+   * пробы транспорта, и второй параметр там был бы изменением контракта ради
+   * одной ветки. Заявка одноразовая и снимается при входе в шаг.
+   */
+  let requestedStepMode = "";
+  const requestReadOnlyStep = () => { requestedStepMode = "read"; };
+  const takeStepMode = () => {
+    const mode = requestedStepMode;
+    requestedStepMode = "";
+    return mode;
+  };
+
   async function tick(fromToggle = false) {
+    // Пробы транспорта собирают `tick` из фрагментов, без соседних замыканий:
+    // отсутствие заявки — это «обычный шаг», а не поломка.
+    const mode = typeof takeStepMode === "function" ? takeStepMode() : "";
     if (typeof projectApproved === "function" && !projectApproved()) {
       if (fromToggle) {
         log(typeof projectBlockedText === "function" ? projectBlockedText()
@@ -23502,7 +23553,7 @@ function reviewPullRequest({ files, pr, zone } = {}) {
       }
       return;
     }
-    if (typeof projectCredentialsReady === "function" && !projectCredentialsReady()) {
+    if (typeof projectCredentialsReady === "function" && !projectCredentialsReady() && !readOnlyStep(fromToggle, mode)) {
       if (fromToggle) log("Шаг не начат: Relay ещё не синхронизировал сохранённые Notion/Drive credentials. Повторю после подключения; вводить уже сохранённые значения не нужно.", true);
       return;
     }

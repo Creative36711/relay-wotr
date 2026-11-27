@@ -300,7 +300,37 @@
     }, delayMs);
   }
 
+  /**
+   * Шаг только читает уже отправленный ход: маркер в чате, ожидание плана,
+   * карточку приёмки. Ему не нужен сетевой вход в Notion/Drive — он ничего не
+   * пишет и не читает в базах. Поэтому гейт credentials его не касается.
+   *
+   * Что случилось. 28.11 в 01:31 владелец нажал «Дожать ход», пульт передал
+   * просьбу, вкладка сделала шаг — и упёрлась в «Relay ещё не синхронизировал
+   * сохранённые Notion/Drive credentials». Ход при этом лежал в чате целиком,
+   * его надо было только прочитать. Кнопка обещала действие и не сделала его
+   * из-за входа, который этому действию не нужен.
+   */
+  const readOnlyStep = (fromToggle, mode = "") =>
+    Boolean(fromToggle) && (mode === "read" || mode === "nudge");
+
+  /**
+   * Режим следующего шага. Сигнатура `tick` остаётся прежней: её проверяют
+   * пробы транспорта, и второй параметр там был бы изменением контракта ради
+   * одной ветки. Заявка одноразовая и снимается при входе в шаг.
+   */
+  let requestedStepMode = "";
+  const requestReadOnlyStep = () => { requestedStepMode = "read"; };
+  const takeStepMode = () => {
+    const mode = requestedStepMode;
+    requestedStepMode = "";
+    return mode;
+  };
+
   async function tick(fromToggle = false) {
+    // Пробы транспорта собирают `tick` из фрагментов, без соседних замыканий:
+    // отсутствие заявки — это «обычный шаг», а не поломка.
+    const mode = typeof takeStepMode === "function" ? takeStepMode() : "";
     if (typeof projectApproved === "function" && !projectApproved()) {
       if (fromToggle) {
         log(typeof projectBlockedText === "function" ? projectBlockedText()
@@ -309,7 +339,7 @@
       }
       return;
     }
-    if (typeof projectCredentialsReady === "function" && !projectCredentialsReady()) {
+    if (typeof projectCredentialsReady === "function" && !projectCredentialsReady() && !readOnlyStep(fromToggle, mode)) {
       if (fromToggle) log("Шаг не начат: Relay ещё не синхронизировал сохранённые Notion/Drive credentials. Повторю после подключения; вводить уже сохранённые значения не нужно.", true);
       return;
     }

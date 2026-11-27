@@ -39,6 +39,8 @@
     lastPresenceAt: 0,
     lastLocalHold: "",
     lastHoldReportAt: 0,
+    // Смена профиля, отложенная до конца текущего хода (занятая вкладка).
+    settingsReloadPending: false,
     lastMarker: { hash: "", at: 0 },
     warned: { hello: "", pull: "", version: "" },
     projectApprovalRequests: new Set(),
@@ -230,17 +232,33 @@
         log("Подключения удалены в пульте. Допуск снят; локальные очереди и ожидания сохранены.", true);
     }
     let settingsRefresh = { applied: false, profileChanged: false, settingsChanged: false };
-    if (res?.projectSettings && !localBusy && !busy && !(Number(projectAsyncWork) > 0) &&
-        typeof applyRelayProjectSettings === "function") {
+    // Настройки проекта применяются и на занятой вкладке: credentials — это
+    // не «новая работа», а вход в Notion/Drive, который нужен любому шагу.
+    // Пока здесь стояло «только на простое», вкладка с `expect:plan` не
+    // получала их никогда: «дожать» упиралось в «Relay ещё не синхронизировал
+    // credentials», хотя владелец уже сохранил их в пульте. Смена ПРОФИЛЯ
+    // по-прежнему ждёт простоя: она перезагружает страницу и оборвала бы ход.
+    if (res?.projectSettings && typeof applyRelayProjectSettings === "function") {
       settingsRefresh = applyRelayProjectSettings(res.projectSettings);
-      if (settingsRefresh.profileChanged) {
+      if (settingsRefresh.profileChanged && localBusy) {
+        // Настройки и секреты в памяти уже обновлены; страницу перезагрузим,
+        // когда вкладка освободится, — иначе перезагрузка съест незавершённую
+        // отправку или ожидание маркера.
+        relayClient.settingsReloadPending = true;
+        log("Настройки профиля из пульта приняты; страницу перезагружу после текущего хода.", true, { ntfy: "quiet" });
+      } else if (settingsRefresh.profileChanged) {
         log("Настройки профиля из пульта приняты. Перезагружаю вкладку без изменения очереди и ожиданий.");
         location.reload();
         return "";
-      }
-      if (settingsRefresh.settingsChanged) {
+      } else if (settingsRefresh.settingsChanged) {
         log("Подключения обновлены из пульта. Допуск сброшен для повторной проверки; очередь и ожидания сохранены.", true);
       }
+    }
+    if (relayClient.settingsReloadPending && !localBusy && !busy && !(Number(projectAsyncWork) > 0)) {
+      relayClient.settingsReloadPending = false;
+      log("Текущий ход завершён — перезагружаю вкладку с принятыми настройками профиля.");
+      location.reload();
+      return "";
     }
     const approvalRequest = res?.projectApprovalRequest;
     if (approvalRequest && approvalRequest.projectId === String(ACTIVE_PROFILE?.id || "") &&
@@ -489,6 +507,9 @@
         projectId: ACTIVE_PROFILE?.id || "", projectName: ACTIVE_PROFILE?.name || "" }).catch(() => null);
       if (nudgeRes && nudgeRes.nudge) {
         log("Пульт просит дочитать ответ — делаю шаг без новой работы.", false, { ntfy: "quiet" });
+        // Шаг только читает уже полученный ответ, поэтому гейт Notion/Drive
+        // credentials его не касается (см. readOnlyStep в цикле).
+        if (typeof requestReadOnlyStep === "function") requestReadOnlyStep();
         if (typeof tick === "function") await tick(true);
         return;
       }

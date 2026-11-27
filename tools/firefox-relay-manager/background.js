@@ -8,10 +8,13 @@ const STATUS_KEY = "relayManagerStatusV1";
 let polling = false;
 let latestMode = "manual";
 let latestSnapshot = null;
-// Один планирующий ход — одно привлечение admin-вкладки: пока id запроса
-// тот же, фокус не воруем (D-035).
+// Один планирующий ход — одно напоминание, а не перехват фокуса: пока id
+// запроса тот же, второй раз не напоминаем (D-035, пересмотрено D-022).
 let focusedTurnId = "";
 let focusedPlanTabId = 0;
+// Вкладка, которую менеджер уже просил выйти на передний план по явному
+// нажатию человека («Открыть вкладку» в пульте), — один раз на слот.
+let focusRequestedFor = "";
 
 const norm = (value) => String(value || "").trim().toLocaleLowerCase();
 const isArena = (url) => /^https:\/\/(?:www\.)?arena\.ai\//i.test(String(url || ""));
@@ -97,15 +100,39 @@ async function setTabMode(tabId, slotId, mode, active, leader = true) {
   } catch { /* page has not loaded its bridge yet; next poll retries */ }
 }
 
-// `tabs.update({active:true})` selects a tab inside its window but may leave
-// another browser window in front. A coordinator turn must reach a visible,
-// foreground document: Arena can defer composer actions and timers in a
-// background window. Focus the owning window explicitly, then activate the tab.
+// Своих вкладок менеджер больше не выводит на передний план (D-022).
+//
+// До этой версии каждый новый планирующий ход поднимал окно Firefox и
+// Arena-вкладку Admin: «чтобы отправилось». Владелец сформулировал цену прямо:
+// «пока ты вручную не переключишься на нужную вкладку, никакие сообщения не
+// отправляются». Причина была не в фокусе как таковом, а в коротких дедлайнах
+// отправки, которые истекут в фоне; их растягивает `patience` в ScriptCat
+// (D-036). Перехват окна поверх этого — не лечение, а побочный эффект: работа
+// идёт во всех контейнерах сразу, и «самая важная» вкладка каждый раз разная.
+//
+// Фокус остался ровно там, где его просит человек: сообщение из пульта
+// `relay-manager-focus` (кнопка «Открыть вкладку»). Ни одно состояние Relay
+// само по себе передний план не переключает.
 async function focusManagedTab(tab) {
   if (Number.isInteger(tab.windowId)) {
     await browser.windows.update(tab.windowId, { focused: true });
   }
   await browser.tabs.update(tab.id, { active: true });
+}
+
+/** Открыть вкладку слота по явной просьбе человека: 127.0.0.1:8787/api/snapshot → пульт. */
+async function bringSlotForward(slotId) {
+  const map = await readTabMap();
+  const entry = map[String(slotId || "")];
+  const tabId = Number(entry?.tabId || 0);
+  if (!tabId) return { ok: false, why: `у слота «${slotId}» ещё нет открытой вкладки` };
+  try {
+    const tab = await browser.tabs.get(tabId);
+    await focusManagedTab(tab);
+    return { ok: true, tabId };
+  } catch (error) {
+    return { ok: false, why: error.message || String(error) };
+  }
 }
 
 async function pollRelay() {
@@ -161,25 +188,16 @@ async function pollRelay() {
             ? busyClients.find((client) => client.localWaiting === "expect:plan")
             : null;
           const requestId = String(shot.turnRequest?.id || "");
-          const needsTurnFocus = Boolean(slot.admin && requestId && requestId !== focusedTurnId);
-          const needsPlanFocus = Boolean(slot.admin && !requestId && planWait && focusedPlanTabId !== tab.id);
-          if (needsTurnFocus || needsPlanFocus) {
-            try {
-              const current = await browser.tabs.get(tab.id);
-              await focusManagedTab(current);
-              // Фиксируем только успешный фокус: при отказе Firefox следующий
-              // опрос попробует снова. Не фокусируем дважды на transition
-              // turnRequest → expect:plan в одной и той же вкладке.
-              focusedPlanTabId = tab.id;
-              focusedTurnId = requestId || `plan:${slot.slotId}:${tab.id}`;
-            } catch (error) {
-              slotErrors.push(`${slot.slotId}: не удалось вывести вкладку Координатора на передний план — ${error.message || error}`);
-            }
+          // Новый ход или ожидание плана — повод сказать человеку, что вкладка
+          // работает, но НЕ повод переключать его окно. Вкладка делает шаг в
+          // фоне (D-022), а пульт показывает состояние сам.
+          if (slot.admin && (requestId || planWait)) {
+            focusedTurnId = requestId || `plan:${slot.slotId}:${tab.id}`;
+            focusedPlanTabId = tab.id;
           } else if (slot.admin && !requestId && !planWait) {
-            // Следующий план, даже в той же вкладке, должен снова получить
-            // один focus после завершения нынешнего ожидания.
             focusedTurnId = "";
             focusedPlanTabId = 0;
+            focusRequestedFor = "";
           }
           const active = scriptAutoActive(slot, shot);
           for (const candidate of tabs) {
@@ -242,6 +260,15 @@ browser.runtime.onMessage.addListener((message) => {
     return browser.storage.local.get(STATUS_KEY).then((stored) => stored[STATUS_KEY] || { connected: false, errors: ["ещё нет снимка Relay"] });
   }
   if (message?.type === "relay-manager-poll") return pollRelay().then(() => ({ ok: true }));
+  // Единственный путь к переднему плану — явная просьба человека из пульта.
+  // Проверяем, что просит страница пульта, а не произвольный сайт.
+  if (message?.type === "relay-manager-focus") {
+    const from = String(message?.from || "");
+    if (!/^http:\/\/127\.0\.0\.1:8787\//.test(from)) {
+      return Promise.resolve({ ok: false, why: "передний план переключает только пульт Relay" });
+    }
+    return bringSlotForward(String(message.slotId || ""));
+  }
   return undefined;
 });
 
