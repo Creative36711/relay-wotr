@@ -61,7 +61,7 @@ const SLOT_CACHE_MS = 30000;
 
 /** Кеш справочника ролей: настройка, а не данные миссии. */
 const ROLES_CACHE_MS = 60000;
-const SUPPORTED_SCRIPT_VERSION = "1.29.0";
+const SUPPORTED_SCRIPT_VERSION = "1.30.0";
 const TURN_REQUEST_TTL_MS = 15 * 60_000;
 const TURN_REQUEST_CLAIM_MS = 30_000;
 const CLIENT_ACTIVE_MS = 3 * 60_000;

@@ -10,9 +10,12 @@
       gwUrl: String(GM_getValue(K.gwUrl, "") || "").trim(),
       gwKey: String(GM_getValue(K.gwKey, "") || "").trim(),
       github: String(GM_getValue(K.ghToken, "") || "").trim(),
-      // D-015: адрес службы Relay — не секрет и не шлюз Drive. Без него скрипт
-      // не видит лист «Экземпляры» и не может назвать адрес пары (роль, слот).
-      relayUrl: String(GM_getValue("cfn-relay-url", "") || "").trim().replace(/\/+$/, ""),
+      // D-030: обычный локальный Relay подхватывается автоматически; поле
+      // остаётся только для нестандартного порта/хоста.
+      relayUrl: typeof relayBase === "function"
+        ? relayBase()
+        : String(GM_getValue("cfn-relay-url", "") || "http://127.0.0.1:8787").trim().replace(/\/+$/, ""),
+      relayAuto: !String(GM_getValue("cfn-relay-url", "") || "").trim(),
     };
   }
 
@@ -172,8 +175,8 @@
             <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap"><strong id="cfn-connection-relay-title" style="font-size:15px;color:#fff">Служба Relay</strong><span style="${quiet}">лист «Экземпляры» и адреса агентов</span></div>
             <div id="cfn-connection-relay-status" role="status" style="${quiet};margin:4px 0 8px"></div>
             <label for="cfn-connection-relay-url" style="font-weight:600">Адрес службы</label>
-            <input id="cfn-connection-relay-url" type="url" autocomplete="off" spellcheck="false" placeholder="http://localhost:8787" style="${field}">
-            <div style="${quiet};margin-top:8px">Адрес, который печатает транспорт при запуске. По нему скрипт читает «Экземпляры»: рабочее место агента — пара (роль, слот), а не поле «Agent URL» в «Ролях». Пусто — скрипт работает по старым правилам и адрес у неадминских ролей не найдёт.</div>
+            <input id="cfn-connection-relay-url" type="url" autocomplete="off" spellcheck="false" placeholder="Авто: http://127.0.0.1:8787" style="${field}">
+            <div style="${quiet};margin-top:8px">Обычно адрес подставляется автоматически: http://127.0.0.1:8787. Меняйте его только при нестандартном порте или отдельном сервере. localhost автоматически переводится на IPv4, чтобы избежать выбора недоступного ::1.</div>
           </section>
           <section style="${card}" aria-labelledby="cfn-connection-notion-title">
             <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap"><strong id="cfn-connection-notion-title" style="font-size:15px;color:#fff">Notion</strong><span style="${quiet}">базы и очередь</span></div>
@@ -257,6 +260,7 @@
       gwKey: driveRemove.checked ? "" : keyInput.value.trim() || saved.gwKey,
       github: githubRemove.checked ? "" : githubInput.value.trim() || saved.github,
       relayUrl: relayInput.value.trim().replace(/\/+$/, ""),
+      relayAuto: saved.relayAuto && relayInput.value.trim().replace(/\/+$/, "") === saved.relayUrl,
     });
     const needsTrust = (settings, endpoint = connectionEndpoint(settings.gwUrl)) =>
       endpoint.ok && Boolean(settings.gwUrl) && (!endpoint.standard ||
@@ -286,8 +290,9 @@
       status("drive", !endpoint.ok ? "Сохранён небезопасный или неверный URL. Замените его на HTTPS." :
         saved.gwUrl && saved.gwKey ? "Сохранён · ещё не проверен" : "Не настроен полностью", endpoint.ok ? "idle" : "error");
       status("github", saved.github ? "Сохранён · ещё не проверен" : "Без токена · доступ не проверен");
-      status("relay", !saved.relayUrl ? "Не задан · адреса пар не читаются"
-        : /^https?:\/\//.test(saved.relayUrl) ? "Задан · проверю связь при сохранении" : "Нужен полный адрес, начиная с http://");
+      status("relay", !saved.relayUrl ? "Не задан · скрипт использует автоадрес"
+        : saved.relayAuto ? `Автоматически · ${saved.relayUrl}`
+          : /^https?:\/\//.test(saved.relayUrl) ? "Задан · проверю связь при сохранении" : "Нужен полный адрес, начиная с http://");
     };
     const changed = () => !sameConnections(read(), saved);
     const close = () => {

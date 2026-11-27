@@ -28,7 +28,7 @@ const block = (from, to) => {
 // Разбито нарочно. relayBase и снимок — настоящие (сеть подменена стабом
 // `request`), а relayCurrentSlot (почта вкладки) и дальше — стабы, потому что
 // аккаунта в Node нет: подставляем слот параметром.
-const relayBaseBlock = block('function relayBase()', 'let relaySnapshotCache');
+const relayBaseBlock = block('const RELAY_DEFAULT_BASE', 'let relaySnapshotCache');
 const snapshotBlock = block('let relaySnapshotCache', 'async function relayCurrentSlot(');
 const instancesBlock = block('function relayInstances(shot)', 'async function roleDeliveryUrl(') +
   (() => {
@@ -47,6 +47,24 @@ const roleRowsBlock = (() => {
   assert.ok(end > deliveryAt, 'конец roleDeliveryUrl на месте');
   return src.slice(at, end);
 })();
+
+const relayBaseApi = (stored = "", contactAt = 0) => {
+  const factory = new Function(
+    "GM_getValue", `${relayBaseBlock}\n return { relayBase, relayConfigured, markContact: (value) => { relayContactAt = value; } };`,
+  );
+  const api = factory((key, fallback) => key === "cfn-relay-url" ? stored : fallback);
+  if (contactAt) api.markContact(contactAt);
+  return api;
+};
+
+{
+  const automatic = relayBaseApi();
+  assert.equal(automatic.relayBase(), "http://127.0.0.1:8787", "стандартный локальный Relay подключается без ручного URL");
+  assert.equal(automatic.relayConfigured(), false, "до ответа службы автообнаружение не подавляет прежний режим");
+  assert.equal(relayBaseApi("http://localhost:8787").relayBase(), "http://127.0.0.1:8787", "localhost принудительно направляется на IPv4");
+  assert.equal(relayBaseApi("http://relay.example:8787").relayBase(), "http://relay.example:8787", "пользовательский сервер сохраняется");
+  assert.equal(relayBaseApi("", Date.now()).relayConfigured(), true, "живой автоответ включает Relay режим");
+}
 
 const makeUrl = (instances) => {
   const fn = new Function(

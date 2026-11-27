@@ -95,7 +95,7 @@ assert.match(upload, /contents\/\$\{encodeURI\(path\)\}/, 'путь пишетс
 }
 
 // ── 6. Версия и решения ─────────────────────────────────────────────────────
-assert.match(src, /@version\s+1\.(?:14\.(?:1[6-9]|2[0-9]|3[0-9])|1[5-9]\.\d+|2\d\.\d+)/, 'сборка не старее 1.14.16');
+assert.match(src, /@version\s+1\.(?:14\.(?:1[6-9]|2[0-9]|3[0-9])|1[5-9]\.\d+|2\d\.\d+|3\d\.\d+)/, 'сборка не старее 1.14.16');
 const decisions = readFileSync(new URL('../upstream-fixtures/docs/DECISIONS.md', import.meta.url), 'utf8');
 assert.match(decisions, /## D-086/, 'решение D-086 в журнале');
 assert.match(decisions, /example-org\/fixture-source/, 'целевой репозиторий записан, а не подразумевается');
