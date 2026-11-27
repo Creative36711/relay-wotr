@@ -1,7 +1,8 @@
   // ─────────────── D-026: клиент протокола службы Relay ───────────────
   //
-  // Вкладка — глупый исполнитель (D-009): решения принимает служба, здесь
-  // только шесть действий протокола и одна обязанность — не терять выдачу.
+  // Вкладка — исполнитель (D-009): решения принимает служба, здесь действия
+  // протокола и обязанность не терять выдачу. Pull-задача provision запускает
+  // разрешённое создание именно в своём worker-слоте; планирования нет.
   //
   //   hello  — «я вкладка аккаунта X» → слот (один раз, дальше кеш);
   //   pull   — «дай работу» → строка очереди книги (карточка миссии);
@@ -26,6 +27,7 @@
   const relayClient = {
     slotId: "",
     account: "",
+    admin: false,
     tab: "",
     helloAt: 0,
     lastBeatAt: 0,
@@ -76,6 +78,7 @@
     if (res && res.ok && res.slot) {
       relayClient.slotId = String(res.slot.slotId || "");
       relayClient.account = email;
+      relayClient.admin = Boolean(res.slot.admin);
       if (relayClient.warned.hello !== relayClient.slotId) {
         relayClient.warned.hello = relayClient.slotId;
         log(`Служба Relay: вкладка опознана как слот ${relayClient.slotId} (${email}).`);
@@ -206,6 +209,13 @@
       if (waiting) await relayBeat(slotId, waiting);
       return;
     }
+    const provision = typeof provisionRequestState === "function" ? provisionRequestState() : null;
+    const queuedProvision = GM_getValue(K.provisionRelayQueue, []).some((item) => String(item.slotId || "") === slotId);
+    const ownProvision = Boolean(provision && ((!provision.relay) || String(provision.targetSlot || "") === slotId));
+    if (ownProvision || queuedProvision) {
+      if (typeof consumeProvision === "function") await consumeProvision();
+      return;
+    }
     const res = await relayPost({ action: "pull", slotId });
     if (!res || !res.ok) {
       if (res && res.ok === false && relayClient.warned.pull !== String(res.why || "")) {
@@ -216,13 +226,14 @@
     }
     relayClient.warned.pull = "";
     if (res.kind === "provision") {
-      // Задание на создание агента. Контур создания — свой (provisioning
-      // вкладки, решение Мастера): здесь только факт в журнал, иначе строка
-      // выглядит брошенной, а создание идёт своим ходом.
-      await relayPost({
-        action: "event", slotId, kind: "provision",
-        text: `задание на агента «${res.role || "?"}» получено — создаёт контур provisioning вкладки`,
-      });
+      // Задание очереди Relay само является разрешением на создание. Сценарий
+      // сохраняет локальное состояние до навигации Arena, создаёт агента в
+      // текущем worker-контейнере и возвращает URL вместе с queueId.
+      if (typeof provisionStartRelayTask === "function") {
+        await provisionStartRelayTask({ roleName: res.role, slotId: res.slot || slotId, queueId: res.queueId });
+      } else {
+        await relayPost({ action: "agent", role: res.role, slotId: res.slot || slotId, queueId: res.queueId, ok: false, note: "ScriptCat provisioning-интеграция отсутствует" });
+      }
       return;
     }
     if (res.work) await relayTakeWork(res.work, slotId);

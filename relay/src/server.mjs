@@ -107,7 +107,7 @@ export function createTransportServer({
   // Чем читать книгу, когда настроен мост. Отдельно от storeFactory: мост
   // может появиться на ходу (адрес ввели в браузере), а storeFactory уже
   // выбран при старте — под Google-токен или под что-то ещё.
-  bridgeStoreFactory = ({ url, key }) => createAppsScriptStore({ url, key, fetchImpl }),
+  bridgeStoreFactory = ({ url, key, timeoutMs = 45000 }) => createAppsScriptStore({ url, key, fetchImpl, timeoutMs }),
   onBridgeChange = null,
   // Куда положить принятый из пульта токен Notion (пусто — только память).
   saveNotionToken = null,
@@ -124,6 +124,9 @@ export function createTransportServer({
   // заставлять его перезапускать службу ради этого — лишний шаг, который мы и
   // убираем. Поэтому они живут в изменяемой паре, а не в параметрах.
   let bridge = { url: bridgeUrl, key: bridgeKey };
+  // Первый запрос к Settings ещё не знает значения из книги; используем тот
+  // же безопасный дефолт 45 с, затем loadSettings применит net.gmTimeoutMs.
+  let bridgeTimeoutMs = 45000;
   const bridgeReady = () => Boolean(bridge.url);
   // Рабочие запросы к Notion — через мост, когда он настроен: прямой путь с
   // машины владельца может резаться VPN или фильтром по домену, а мост живёт
@@ -150,6 +153,12 @@ export function createTransportServer({
     // Самовосстановление листа: книга владельца живёт с прошлой версии, и
     // нового листа («Экземпляры», 1.20.0) в ней может не быть вовсе.
     ensureSheet: async (...args) => (await getStore()).ensureSheet(...args),
+    setTimeoutMs: (value) => {
+      const numeric = Number(value);
+      bridgeTimeoutMs = Number.isFinite(numeric) ? Math.min(180000, Math.max(5000, Math.floor(numeric))) : 45000;
+      cachedStore?.setTimeoutMs?.(bridgeTimeoutMs);
+      return bridgeTimeoutMs;
+    },
   };
   let cachedStore = null;
   let cachedToken = "";
@@ -157,7 +166,7 @@ export function createTransportServer({
     // Мост первым: если он настроен, книга есть, и демо больше не при чём.
     if (bridgeReady()) {
       if (!cachedStore) {
-        cachedStore = bridgeStoreFactory({ url: bridge.url, key: bridge.key });
+        cachedStore = bridgeStoreFactory({ url: bridge.url, key: bridge.key, timeoutMs: bridgeTimeoutMs });
       }
       return cachedStore;
     }

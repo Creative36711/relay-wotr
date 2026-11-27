@@ -108,7 +108,7 @@ const { server, service } = createTransportServer({
   // Мост подменяет собой хранилище целиком: служба не знает, откуда строки.
   // Собирается он внутри сервера, а не здесь: адрес может появиться уже
   // после старта — из формы в браузере, — и тогда фабрика нужна та же.
-  bridgeStoreFactory: ({ url, key }) => createAppsScriptStore({ url, key }),
+  bridgeStoreFactory: ({ url, key, timeoutMs = 45000 }) => createAppsScriptStore({ url, key, timeoutMs }),
   // Мост нужен и самому серверу: страница установки показывает, настроен ли
   // он, а проверка связи ходит к нему тем же ключом.
   bridgeUrl,

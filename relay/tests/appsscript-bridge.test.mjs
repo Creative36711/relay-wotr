@@ -86,6 +86,21 @@ test("мост отправляет text/plain: иначе браузер доб
   assert.equal(calls[0].init.redirect, "follow", "Apps Script отвечает редиректом на googleusercontent");
 });
 
+test("таймаут моста меняется без пересоздания клиента и применяется к следующему запросу", async () => {
+  const { fetchImpl } = fakeBridge();
+  const store = createAppsScriptStore({ url: "https://bridge/exec", key: "s3cret", fetchImpl, timeoutMs: 20000 });
+  const originalSetTimeout = globalThis.setTimeout;
+  let appliedDelay = 0;
+  globalThis.setTimeout = (_fn, delay) => { appliedDelay = delay; return 0; };
+  try {
+    assert.equal(store.setTimeoutMs(12345), 12345);
+    await store.read("slots");
+    assert.equal(appliedDelay, 12345, "таймер использует новое значение, а не старые 20000 мс");
+  } finally {
+    globalThis.setTimeout = originalSetTimeout;
+  }
+});
+
 test("мост переводит имена листов из схемы и отдаёт meta в форме Sheets", async () => {
   const { fetchImpl, calls } = fakeBridge();
   const store = createAppsScriptStore({ url: "https://bridge/exec", key: "s3cret", fetchImpl });

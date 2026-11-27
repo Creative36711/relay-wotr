@@ -260,6 +260,7 @@
     provision: "cfn-agent-provision-v1",
     provisionRequest: "cfn-agent-provision-request-v1",
     provisionLock: "cfn-agent-provision-lock",
+    provisionRelayQueue: "cfn-agent-provision-relay-queue-v1",
     // D-073: самовосстановление. Инцидент считается по ключу причины, поэтому
     // счётчики автопродолжений и передач Maintainer'у живут вместе с отметкой
     // «какая сборка сломалась» — иначе продолжение после переустановки не

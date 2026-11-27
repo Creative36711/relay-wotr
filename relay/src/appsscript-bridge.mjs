@@ -81,14 +81,20 @@ export async function bridgeReachability({ url = "", fetchImpl = globalThis.fetc
   }
 }
 
+const clampTimeout = (value) => {
+  const n = Number(value);
+  return Number.isFinite(n) ? Math.min(180000, Math.max(5000, Math.floor(n))) : 45000;
+};
+
 export function createAppsScriptStore({
   url,
   key = "",
   fetchImpl = globalThis.fetch,
-  timeoutMs = 20000,
+  timeoutMs = 45000,
 } = {}) {
   if (!url) throw new BridgeError("не задан адрес моста Apps Script", 400);
   if (typeof fetchImpl !== "function") throw new BridgeError("нет fetch", 500);
+  let requestTimeoutMs = clampTimeout(timeoutMs);
 
   const sheetName = (sheetKey) => {
     const sheet = SHEETS[sheetKey];
@@ -98,7 +104,7 @@ export function createAppsScriptStore({
 
   async function call(action, payload = {}) {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    const timer = setTimeout(() => controller.abort(), requestTimeoutMs);
     let text = "";
     try {
       const response = await fetchImpl(url, {
@@ -127,7 +133,7 @@ export function createAppsScriptStore({
       if (data && data.ok === false) throw new BridgeError(data.why || "мост отказал", 400);
       return data && typeof data === "object" ? data : {};
     } catch (error) {
-      if (error.name === "AbortError") throw new BridgeError(`мост не ответил за ${timeoutMs} мс`, 408);
+      if (error.name === "AbortError") throw new BridgeError(`мост не ответил за ${requestTimeoutMs} мс`, 408);
       if (error instanceof BridgeError) throw error;
       // Сетевая ошибка в браузере не говорит, что именно не так: адрес, CORS
       // или развёртывание. Называем три причины, чтобы не гадать.
@@ -169,5 +175,8 @@ export function createAppsScriptStore({
     return { created: data.created === true, name: data.name || name };
   }
 
-  return { read, write, append, updateRange, meta, ensureSheet, call, bridge: url };
+  return {
+    read, write, append, updateRange, meta, ensureSheet, call, bridge: url,
+    setTimeoutMs(value) { requestTimeoutMs = clampTimeout(value); return requestTimeoutMs; },
+  };
 }

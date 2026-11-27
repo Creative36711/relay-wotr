@@ -148,6 +148,9 @@ const info = (over = {}) => ({
   assert.equal(compiled.profileId, 'heal.report');
   assert.equal(compiled.marker, null, 'у разбора транспорта нет маркера — правило ответа своё');
   assert.ok(compiled.text.includes('FIXED'), 'правило ответа называет FIXED');
+  assert.ok(compiled.text.includes('diff не обязателен'), 'диагностика не требует предлагаемого патча');
+  assert.ok(compiled.text.includes('relay/**'), 'отличает инцидент Node-службы от ScriptCat');
+  assert.ok(compiled.text.includes('Node gate'), 'Node-ремонт отделён в отдельную карточку и гейт');
   assert.ok(compiled.metrics.overheadChars <= 900, 'overhead в бюджете 900');
   // Телеметрия выгружена на остановке: Drive-артефакт и запись в GitHub.
   const artifacts = env.requests.filter((r) => r.action === 'saveArtifact');

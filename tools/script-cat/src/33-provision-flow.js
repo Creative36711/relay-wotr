@@ -1,7 +1,8 @@
-  // ───────────────────────── provisioning: запрос → одобрение → job ─────────────────────────
-  // Контур не пишет K.pending/K.expect и не создаёт страницы Notion. Запрос
-  // уходит админ-роли напрямую; создание начинается только после маркера
-  // CF_AGENT_PROVISION_RESULT с выданным request_id.
+  // ───────────────────── provisioning: Relay-задача или админ-запрос ─────────────────────
+  // Оба пути не пишут K.pending/K.expect и не меняют общий Agent URL роли.
+  // Административный режим по-прежнему ждёт CF_AGENT_PROVISION_RESULT; pull
+  // Relay уже является разрешением, создаёт пару (роль, слот) и возвращает URL
+  // в очередь action=agent. Bootstrap/allowlist/лимит профиля общие для обоих.
 
   let provisionRunning = false;
 
@@ -16,17 +17,24 @@
     };
     provisionEvent(extra.event || "provision_paused", fields);
     if (job) {
-      job.state = extra.jobState || "paused";
+      // Relay-задания имеют собственный retry/отчётный контур. Не выключаем
+      // общий автоцикл и не ставим проект на глобальную паузу из-за одного
+      // контейнера; сначала сообщим Relay, чтобы карточка не ждала бесконечно.
+      job.state = request?.relay ? "relay_failed_pending" : (extra.jobState || "paused");
       job.error = reason;
       provisionSaveJob(job);
     }
     if (request) {
-      request.state = "paused";
+      request.state = request.relay ? "approved" : "paused";
       request.error = reason;
       saveProvisionRequest(request);
     }
-    autoSet(false);
-    pause(reason, { kind: "provision", ref: job?.rolePageId || request?.requestId || "", ...extra.pause });
+    if (!request?.relay) {
+      autoSet(false);
+      pause(reason, { kind: "provision", ref: job?.rolePageId || request?.requestId || "", ...extra.pause });
+    } else {
+      provisionLog(`Relay provisioning остановлен: ${reason}. Сообщу отказ службе.`, true);
+    }
     return true;
   }
 
@@ -307,8 +315,164 @@
     return false;
   }
 
+  function provisionRelayQueue() {
+    const value = GM_getValue(K.provisionRelayQueue, []);
+    return Array.isArray(value) ? value : [];
+  }
+
+  function provisionSaveRelayQueue(queue) {
+    GM_setValue(K.provisionRelayQueue, Array.isArray(queue) ? queue.slice(-50) : []);
+  }
+
+  function provisionQueueRelayTask(task) {
+    const queue = provisionRelayQueue();
+    const id = String(task?.queueId || "");
+    if (!id || queue.some((item) => String(item.queueId || "") === id)) return false;
+    queue.push({
+      queueId: id,
+      roleName: String(task.roleName || "").trim(),
+      slotId: String(task.slotId || "").trim(),
+      error: String(task.error || "").trim(),
+      at: nowIso(),
+    });
+    provisionSaveRelayQueue(queue);
+    return true;
+  }
+
+  async function provisionReportRelay(job, request, failed = false) {
+    const now = Date.now();
+    if (now - Number(job.relayReportAttemptAt || 0) < 15000) return true;
+    job.state = failed ? "relay_failed_pending" : "relay_ready_pending";
+    job.relayReportAttemptAt = now;
+    provisionSaveJob(job);
+    const result = await relayPost({
+      action: "agent", role: job.roleName, slotId: job.relaySlotId,
+      queueId: job.relayQueueId, url: failed ? "" : job.agentUrl,
+      ok: !failed, note: failed ? String(job.error || "создать не удалось").slice(0, 300) : "",
+    });
+    if (!result || !result.ok) {
+      provisionLog(`Relay provisioning: служба не подтвердила ${failed ? "отказ" : "адрес"} для «${job.roleName}» / ${job.relaySlotId}; повторю автоматически.`, true);
+      return true;
+    }
+    job.state = "done";
+    job.relayResult = failed ? "failed" : "created";
+    provisionSaveJob(job);
+    provisionEvent(failed ? "provision_rejected" : "provision_job_done", {
+      requestId: request.requestId, jobId: job.id, rolePageId: job.rolePageId,
+      repo: job.repo, step: failed ? "relay_failed" : "relay_ready",
+      reason: failed ? job.error : "",
+    });
+    provisionLog(failed
+      ? `Relay: создание «${job.roleName}» в ${job.relaySlotId} не удалось; очередь получила причину.`
+      : `Relay: адрес «${job.roleName}» сохранён для ${job.relaySlotId}.`);
+    return false;
+  }
+
+  async function provisionBeginRelayFailure(role, target, id, reason) {
+    let request = provisionRequestState();
+    if (request && !(request.relay && String(request.queueId || "") === id)) {
+      provisionQueueRelayTask({ queueId: id, roleName: role, slotId: target, error: reason });
+      return true;
+    }
+    const requestId = request?.requestId || uid();
+    const job = provisionNewJob({ rolePageId: "", roleName: role, fn: "Executor", repo: "", action: "create" }, requestId);
+    Object.assign(job, {
+      relay: true, relaySlotId: target, relayQueueId: id,
+      state: "relay_failed_pending", error: String(reason || "создать не удалось").slice(0, 300),
+    });
+    request = {
+      ...(request || {}),
+      requestId, state: "approved", relay: true, queueId: id, targetSlot: target,
+      roleName: role, resumeAuto: false, approvedJobs: [],
+      jobIds: [...(request?.jobIds || []), job.id],
+      createdAt: request?.createdAt || nowIso(), updatedAt: nowIso(), error: job.error,
+    };
+    saveProvisionRequest(request);
+    provisionSaveJob(job);
+    provisionAcquireLock(requestId, false);
+    await provisionReportRelay(job, request, true);
+    return true;
+  }
+
+  async function provisionStartRelayTask({ roleName = "", slotId = "", queueId = "", error = "" } = {}) {
+    const role = String(roleName || "").trim();
+    const target = String(slotId || "").trim();
+    const id = String(queueId || "").trim();
+    if (!role || !target || !id) {
+      provisionLog("Relay provisioning: в задании не хватает роли, слота или queueId.", true);
+      return false;
+    }
+    let active = provisionRequestState();
+    if (active) {
+      if (active.relay && String(active.queueId || "") === id && active.state === "relay_preparing") {
+        // Восстановление после перезагрузки до проверки роли/репозитория.
+      } else if (active.relay && String(active.queueId || "") === id) return true;
+      else {
+        provisionQueueRelayTask({ queueId: id, roleName: role, slotId: target, error });
+        provisionLog(`Relay: задание ${id} поставлено в локальную очередь provisioning; текущий процесс завершится первым.`);
+        return true;
+      }
+    } else {
+      const requestId = uid();
+      active = {
+        requestId, state: "relay_preparing", relay: true, queueId: id,
+        targetSlot: target, roleName: role, resumeAuto: false,
+        approvedJobs: [], jobIds: [], createdAt: nowIso(), updatedAt: nowIso(),
+      };
+      saveProvisionRequest(active);
+      provisionAcquireLock(requestId, false);
+    }
+    if (error) return provisionBeginRelayFailure(role, target, id, error);
+    const actualSlot = typeof relayIdentity === "function" ? await relayIdentity() : "";
+    if (!actualSlot || actualSlot !== target || relayClient.admin) {
+      const why = !actualSlot ? "контейнер не опознан" : relayClient.admin ? "административный контейнер не создаёт worker-агентов" : `задание для ${target}, вкладка опознана как ${actualSlot}`;
+      return provisionBeginRelayFailure(role, target, id, why);
+    }
+    const cfg = provisionConfig();
+    if (!provisionBootstrapClean(cfg.agentBootstrapPrompt)) {
+      const why = "в профиле не задан безопасный bootstrap-пробник";
+      return provisionBeginRelayFailure(role, target, id, why);
+    }
+    let row = null;
+    try {
+      row = (await rolesFresh()).find((item) => norm(item.name) === norm(role)) || null;
+    } catch (error) {
+      return provisionBeginRelayFailure(role, target, id, `не удалось перечитать роли: ${String(error?.message || error).slice(0, 180)}`);
+    }
+    const repo = normalizeProvisionRepo(row?.repo);
+    const allow = (cfg.agentProvisionRepoAllowlist || []).map(normalizeProvisionRepo);
+    if (!row || row.agentAdmin === true || !["Executor", "Auditor", "Auditory"].includes(row.fn) || row.status !== "Активна" || !repo || !allow.includes(repo)) {
+      const why = !row ? "роль не найдена в свежих данных Notion"
+        : row.agentAdmin === true || !["Executor", "Auditor", "Auditory"].includes(row.fn) ? "роль не является разрешённой worker-ролью"
+          : row.status !== "Активна" ? "роль не активна"
+            : !repo ? "репозиторий роли не задан в формате owner/repo" : "репозиторий роли не входит в allowlist профиля";
+      return provisionBeginRelayFailure(role, target, id, why);
+    }
+    if (!provisionDailyAllow(cfg)) {
+      const why = "достигнут суточный лимит создания агентов профиля";
+      return provisionBeginRelayFailure(role, target, id, why);
+    }
+    const requestId = active.requestId;
+    const candidate = {
+      rolePageId: row.pageId, roleName: String(row.name).trim(), fn: row.fn,
+      repo, action: "create", oldAgentUrl: "", roleAgentId: row.id || "",
+    };
+    const request = {
+      ...active, requestId, state: "approved", relay: true, queueId: id, targetSlot: target,
+      roleName: candidate.roleName, resumeAuto: false, approvedJobs: [candidate], jobIds: [],
+      updatedAt: nowIso(), error: "",
+    };
+    saveProvisionRequest(request);
+    provisionAcquireLock(requestId, false);
+    provisionLog(`Relay provisioning: задание ${id} разрешено очередью; создаю отдельный экземпляр «${candidate.roleName}» в ${target}.`);
+    await consumeProvision();
+    return true;
+  }
+
   async function provisionAdvanceJob(job, request) {
     const cfg = provisionConfig();
+    if (job.relay && job.state === "relay_ready_pending") return provisionReportRelay(job, request, false);
+    if (job.relay && job.state === "relay_failed_pending") return provisionReportRelay(job, request, true);
     const uuid = provisionAgentUuid(job.agentUrl);
     if (captchaDialog()) return provisionPause("Provisioning: капча Arena.", request, job);
     if (detectToolCallLimit()) return provisionPause("Provisioning: tool-call limit на bootstrap; продолжение не поддерживается.", request, job);
@@ -319,10 +483,9 @@
       if (GM_getValue(K.pending, null) || GM_getValue(K.expect, null)) {
         return provisionPause("Provisioning: появился активный командный ход; создание не начинаю.", request, job);
       }
-      if (!provisionDailyAllow(cfg)) return provisionPause("Provisioning: суточный лимит создания агентов.", request, job);
       if (!provisionBootstrapClean(cfg.agentBootstrapPrompt)) return provisionPause("Provisioning: bootstrap-пробник пуст или запрещён.", request, job);
-      const row = await provisionFreshRole(job.rolePageId);
-      if (!row || row.agentAdmin === true || !["запрошен", "создаётся"].includes(row.agentState)) {
+      const row = request.relay ? null : await provisionFreshRole(job.rolePageId);
+      if (!request.relay && (!row || row.agentAdmin === true || !["запрошен", "создаётся"].includes(row.agentState))) {
         return provisionPause("Provisioning: строка роли изменилась до создания.", request, job, { event: "provision_conflict" });
       }
       if (provisionCurrentAgentUuid()) {
@@ -397,6 +560,11 @@
     }
 
     if (job.state === "renamed") {
+      if (request.relay) {
+        job.state = "relay_ready_pending";
+        provisionSaveJob(job);
+        return provisionReportRelay(job, request, false);
+      }
       const paused = await provisionPatchNotion(job, request);
       if (paused) return true;
     }
@@ -444,6 +612,9 @@
     if (!job) {
       if (!provisionDailyAllow()) return provisionPause("Provisioning: суточный лимит создания агентов.", request, null);
       job = provisionNewJob(nextCandidate, request.requestId);
+      if (request.relay) Object.assign(job, {
+        relay: true, relaySlotId: request.targetSlot, relayQueueId: request.queueId,
+      });
       provisionSaveJob(job);
       request.jobIds = [...(request.jobIds || []), job.id];
       saveProvisionRequest(request);
@@ -471,9 +642,37 @@
   async function consumeProvision() {
     if (provisionRunning) return true;
     const cfg = provisionConfig();
-    if (!cfg.agentProvisionEnabled) return false;
-    if (provisionLockHeldByOther()) return Boolean(provisionRequestState());
-    const request = provisionRequestState();
+    let request = provisionRequestState();
+    if (provisionLockHeldByOther()) {
+      // Relay-задача принадлежит контейнеру, а не конкретной вкладке. После
+      // закрытия/замены вкладки любая вкладка того же слота может безопасно
+      // продолжить задание, сохраняя запрет на запуск в другом контейнере.
+      const slotId = request?.relay && typeof relayIdentity === "function"
+        ? await relayIdentity().catch(() => "") : "";
+      if (request?.relay && slotId && slotId === request.targetSlot) {
+        provisionAcquireLock(request.requestId, false);
+      } else return Boolean(request);
+    }
+    if (!request) {
+      const slotId = typeof relayIdentity === "function" ? await relayIdentity().catch(() => "") : "";
+      const pending = provisionRelayQueue();
+      const index = pending.findIndex((item) => String(item.slotId || "") === String(slotId || ""));
+      if (index >= 0) {
+        const [task] = pending.splice(index, 1);
+        provisionSaveRelayQueue(pending);
+        return provisionStartRelayTask(task);
+      }
+      if (!cfg.agentProvisionEnabled) return false;
+    } else {
+      if (!request.relay && !cfg.agentProvisionEnabled) return false;
+      if (request.relay) {
+        const slotId = typeof relayIdentity === "function" ? await relayIdentity().catch(() => "") : "";
+        if (!slotId || slotId !== request.targetSlot) return false;
+        if (request.state === "relay_preparing") {
+          return provisionStartRelayTask({ roleName: request.roleName, slotId: request.targetSlot, queueId: request.queueId });
+        }
+      }
+    }
     provisionRunning = true;
     try {
       if (!request) {

@@ -30,6 +30,9 @@ try {
   assert.equal((bundle.match(/^\/\/ @version\s/gm) || []).length, 1);
   assert.match(bundle, /^\/\/ @name\s+Relay — передача хода между агентами$/m);
   assert.match(bundle, /^\/\/ @namespace\s+https:\/\/arena\.ai\/$/m);
+  const published = 'https://raw.githubusercontent.com/Creative36711/relay-wotr/main/tools/script-cat/relay.user.js';
+  assert(bundle.includes(`// @updateURL    ${published}`), 'установка с raw URL знает, откуда обновляться');
+  assert(bundle.includes(`// @downloadURL  ${published}`), 'URL загрузки совпадает с каналом обновления');
   assert(bundle.includes('// local build probe'));
-  console.log('OK: детерминированная сборка, защита от устаревшего bundle и неизменное имя установки');
+  console.log('OK: детерминированная сборка, защита от устаревшего bundle, неизменное имя и URL автообновления');
 } finally { rmSync(temp, {recursive:true, force:true}); }

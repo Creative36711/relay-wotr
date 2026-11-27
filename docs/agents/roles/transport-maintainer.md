@@ -2,9 +2,11 @@
 
 Function: `Maintainer` — the only role with this function, owner of every technical part of the ScriptCat transport:
 repair **and** development. Repository: `Creative36711/relay-wotr` (the Notion role row's `Repository` must name it;
-Open BFME keeps no transport copy). Zone there: the whole repository tree — `tools/script-cat/**`, `tools/relay-*.mjs`,
-`package.json`, `.github/**`, `README.md` and the transport's own docs (`docs/scriptcat-update.md`,
-`docs/DECISIONS.md`, `docs/evidence/**`); since D-003 no project documents are mirrored there.
+Open BFME keeps no transport copy). Zone there is the transport preflight zone: `tools/script-cat/**`,
+`tools/relay-*.mjs`, `tools/*.mjs`, `relay/**`, `docs/**`, root `package.json`, `.gitignore`, `AGENTS.md`,
+`README.md`, `WARDEN-SCRIPTCAT-MIGRATION.md` and `.github/**`. `relay/**` is the long-running Node.js
+service and `tools/script-cat/**` is the browser userscript; their runtime, release version and deployment
+steps are distinct. Since D-003 no project documents are mirrored there; docs edits must remain transport-local.
 The card itself — its
 task text, scope and acceptance — is written in Open BFME, and no Open BFME role may perform this zone's work in its
 place: the bundle, its version, its gate and its release wiring belong here only.
