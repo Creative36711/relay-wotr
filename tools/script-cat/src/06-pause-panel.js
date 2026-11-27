@@ -11,6 +11,16 @@
    * всегда начинается с ручного «Включить».
    */
   let autoMem = false;
+  let relayManagerSlotId = "";
+  let relayManagerLeader = true;
+  let relayManagerActive = false;
+  let relayManagerSignalAt = 0;
+  function relayManagerExpectedSlot() {
+    return Date.now() - relayManagerSignalAt <= 20000 ? relayManagerSlotId : "";
+  }
+  function relayManagerMayPoll() {
+    return Date.now() - relayManagerSignalAt > 20000 || relayManagerLeader;
+  }
   function autoOn() {
     try {
       return sessionStorage.getItem(K.auto) === "1";
@@ -26,6 +36,28 @@
     } catch {
       // Приватный режим или запрет storage: остаётся память вкладки.
     }
+  }
+
+  // Firefox companion extension управляет режимом вкладки через изолированный
+  // content-script bridge. Пользовательский сайт не получает browser API; сюда
+  // попадает только простая команда режима, а не доступ к контейнерам.
+  if (typeof window !== "undefined") {
+    window.addEventListener("relay-container-manager-mode", (event) => {
+      let detail = event && event.detail;
+      if (typeof detail === "string") { try { detail = JSON.parse(detail); } catch { return; } }
+      if (!detail || detail.source !== "relay-container-manager") return;
+      relayManagerSignalAt = Date.now();
+      relayManagerLeader = detail.leader !== false;
+      relayManagerSlotId = String(detail.slotId || "").slice(0, 80);
+      const shouldAuto = detail.mode === "auto";
+      const wasActive = relayManagerActive;
+      relayManagerActive = Boolean(detail.active);
+      const changed = autoOn() !== shouldAuto;
+      autoSet(shouldAuto);
+      if (changed) log(`Автоцикл ScriptCat ${shouldAuto ? "включён" : "выключен"} менеджером Relay.`, false, { ntfy: "quiet" });
+      const wakeOneTick = (changed && shouldAuto) || (!wasActive && relayManagerActive);
+      if (!isPaused() && wakeOneTick && typeof tick === "function") setTimeout(() => tick(false), 0);
+    });
   }
 
   /** Старое значение в хранилище скрипта снимаем: оно больше не управляет циклом. */

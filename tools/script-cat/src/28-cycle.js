@@ -388,6 +388,10 @@
     const auto = autoOn();
     const pending = GM_getValue(K.pending, null);
     const waiting = GM_getValue(K.expect, null);
+    const managerOwnsScheduling = typeof relayManagerSignalAt !== "undefined" &&
+      Number(relayManagerSignalAt || 0) > 0 && Date.now() - Number(relayManagerSignalAt) <= 20000;
+    const relayOwnsScheduling = typeof relayControlActive === "function" && relayControlActive();
+    if ((managerOwnsScheduling || relayOwnsScheduling) && !fromToggle && !pending && !waiting && !GM_getValue(K.step, false)) return;
     if (!auto && !fromToggle && !pending && !waiting) return;
     // Пауза снимается только человеком: тик не имеет права её обойти.
     if (isPaused()) {

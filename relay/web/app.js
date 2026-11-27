@@ -35,13 +35,57 @@ const fmtTime = (iso) => {
   return `${parts.day}.${parts.month} ${parts.hour}:${parts.minute}:${parts.second} МСК`;
 };
 const shortId = (id) => String(id || "").slice(0, 10);
+const BANNER_HISTORY_KEY = "relay-banner-history-v1";
+let currentBannerText = "";
+
+function bannerHistoryNext(entries, text, at) {
+  const next = Array.isArray(entries) ? entries.slice() : [];
+  const message = String(text || "").trim().slice(0, 1200);
+  if (!message) return next;
+  const previous = next[next.length - 1];
+  if (previous && previous.text === message && at - Number(previous.at || 0) < 20000) {
+    next[next.length - 1] = { text: message, at, count: Number(previous.count || 1) + 1 };
+  } else next.push({ text: message, at, count: 1 });
+  return next.slice(-50);
+}
+
+function loadBannerHistory() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(BANNER_HISTORY_KEY) || "[]");
+    return Array.isArray(parsed) ? parsed : [];
+  } catch { return []; }
+}
+
+function renderBannerHistory(entries = loadBannerHistory()) {
+  const wrap = $("banner-history-wrap"), host = $("banner-history");
+  if (!wrap || !host) return;
+  host.replaceChildren();
+  for (const entry of entries.slice().reverse()) {
+    const row = document.createElement("li");
+    const stamp = Number(entry.at) ? fmtTime(new Date(Number(entry.at)).toISOString()) : "время неизвестно";
+    row.textContent = `${stamp} · ${entry.text}${Number(entry.count) > 1 ? ` (повторено ${entry.count} раз)` : ""}`;
+    host.append(row);
+  }
+  wrap.classList.toggle("hidden", entries.length === 0);
+}
+
+function rememberBanner(text) {
+  try {
+    const next = bannerHistoryNext(loadBannerHistory(), text, Date.now());
+    localStorage.setItem(BANNER_HISTORY_KEY, JSON.stringify(next));
+    renderBannerHistory(next);
+  } catch { /* приватный режим может запрещать storage; баннер всё равно виден */ }
+}
 
 function banner(text) {
   const node = $("banner");
   if (!text) {
+    currentBannerText = "";
     node.classList.add("hidden");
     return;
   }
+  if (text !== currentBannerText) rememberBanner(text);
+  currentBannerText = text;
   node.textContent = text;
   node.classList.remove("hidden");
 }
@@ -165,13 +209,17 @@ function renderHeader(shot) {
     const adminSlots = new Set((shot.slots || []).filter((slot) => slot.admin).map((slot) => slot.slotId));
     const adminClients = clients.filter((client) => adminSlots.has(client.slotId));
     const adminPaused = adminClients.some((client) => client.localPaused);
+    const latestAdminPull = Math.max(0, ...adminClients.map((client) => Date.parse(client.lastPullAt || "") || 0));
+    const adminPolledRecently = latestAdminPull > 0 && Date.now() - latestAdminPull <= 30000;
     banner(shot.turnRequest.claimed
       ? "Планирующий ход принят административной вкладкой; жду, пока ScriptCat обработает миссию."
       : adminPaused
         ? "Административная вкладка связана, но ScriptCat на локальной паузе. Снимите её в виджете ScriptCat; запрос останется в очереди."
-        : adminClients.length
-          ? "Административная вкладка на связи. Жду её следующего опроса Relay (обычно до 15 секунд)."
-          : `Запрос ждёт административную вкладку. ScriptCat автоматически подключается к http://127.0.0.1:8787; проверьте разрешение localhost/127.0.0.1 в менеджере скриптов и перезагрузите Arena под admin.`);
+        : adminClients.length && adminPolledRecently
+          ? "Админ-вкладка опросила Relay, но запрос плана ещё не принят. Причину проверьте в Журнале событий ниже."
+          : adminClients.length
+            ? "Admin зарегистрирован, но ScriptCat не прислал pull-опрос. Проверьте строку Node Relay в виджете; подробности сохраняются в истории сообщений и Журнале."
+            : `Запрос ждёт административную вкладку. ScriptCat автоматически подключается к http://127.0.0.1:8787; проверьте разрешение localhost/127.0.0.1 в менеджере скриптов и перезагрузите Arena под admin.`);
   } else banner("");
 }
 
@@ -200,6 +248,8 @@ function renderScriptCatStatus(shot) {
   const adminClients = clients.filter((client) => adminSlots.has(client.slotId));
   const outdated = clients.filter((client) => !versionAtLeast(client.scriptVersion, required));
   const pausedAdmin = adminClients.some((client) => client.localPaused);
+  const latestAdminPull = Math.max(0, ...adminClients.map((client) => Date.parse(client.lastPullAt || "") || 0));
+  const adminPolledRecently = latestAdminPull > 0 && Date.now() - latestAdminPull <= 30000;
   if (!adminClients.length) {
     node.append(document.createTextNode(
       `Пульт не получил сигнал от админской вкладки. Адрес Relay подставляется автоматически (http://127.0.0.1:8787): не вводите его вручную. Проверьте одноразовое разрешение localhost/127.0.0.1 в ScriptCat и перезагрузите Arena под admin. `,
@@ -212,6 +262,14 @@ function renderScriptCatStatus(shot) {
   } else if (pausedAdmin) {
     node.append(document.createTextNode(
       `Административная вкладка обнаружена (ScriptCat ${adminClients.map((client) => client.scriptVersion).join(", ")}), но локальная пауза ScriptCat блокирует получение команд. Снимите паузу в виджете; новые действия останутся в пульте. `,
+    ));
+  } else if (shot.turnRequest && adminClients.length && !adminPolledRecently) {
+    node.append(document.createTextNode(
+      "Admin успешно зарегистрирован, но не опрашивает очередь. Если в ScriptCat есть локальное ожидание, его причина будет записана в журнал; автоматический сброс состояния запрещён. ",
+    ));
+  } else if (shot.turnRequest && adminClients.length && adminPolledRecently && !shot.turnRequest.claimed) {
+    node.append(document.createTextNode(
+      "Admin недавно опросил Relay, но планирующий ход не был принят. Смотрите Журнал событий: там должна быть причина отказа или локального удержания. ",
     ));
   } else {
     node.classList.add("hidden");
@@ -494,5 +552,6 @@ function bind() {
 }
 
 bind();
+renderBannerHistory();
 refresh();
 setInterval(refresh, 5000);

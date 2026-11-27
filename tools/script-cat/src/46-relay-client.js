@@ -28,15 +28,34 @@
     slotId: "",
     account: "",
     admin: false,
+    expectedSlot: "",
     tab: "",
     helloAt: 0,
     lastBeatAt: 0,
     lastContactAt: 0,
     lastError: "",
     lastPresenceAt: 0,
+    lastLocalHold: "",
+    lastHoldReportAt: 0,
     lastMarker: { hash: "", at: 0 },
     warned: { hello: "", pull: "", version: "" },
   };
+
+  if (typeof window !== "undefined") {
+    window.addEventListener("relay-container-manager-mode", (event) => {
+      let detail = event && event.detail;
+      if (typeof detail === "string") { try { detail = JSON.parse(detail); } catch { return; } }
+      if (!detail || detail.source !== "relay-container-manager") return;
+      const expected = detail.leader === false ? "" : String(detail.slotId || "").slice(0, 80);
+      const managedTab = Number(detail.browserTabId) > 0 ? `ff-${Number(detail.browserTabId)}` : "";
+      if (expected !== relayClient.expectedSlot || (managedTab && managedTab !== relayClient.tab)) {
+        relayClient.expectedSlot = expected;
+        relayClient.slotId = "";
+        relayClient.lastPresenceAt = 0;
+        if (managedTab) relayClient.tab = managedTab;
+      }
+    });
+  }
 
   function relayControlActive() {
     return relayConfigured() && Boolean(relayClient.lastContactAt) && Date.now() - relayClient.lastContactAt <= 180000;
@@ -100,11 +119,17 @@
         relayContactAt = relayClient.lastContactAt;
         relayClient.lastError = "";
       } else {
-        relayClient.lastError = "служба Relay вернула ответ в неизвестном формате";
+        const detail = "служба Relay вернула ответ в неизвестном формате";
+        if (relayClient.lastError !== detail) log(`Служба Relay: ${detail}.`, true, { ntfy: "quiet" });
+        relayClient.lastError = detail;
       }
       return data;
     } catch (error) {
-      relayClient.lastError = String((error && error.message) || error || "ошибка связи").slice(0, 140);
+      const detail = String((error && error.message) || error || "ошибка связи").slice(0, 140);
+      if (relayClient.lastError !== detail) {
+        relayClient.lastError = detail;
+        log(`Служба Relay: запрос не прошёл — ${detail}.`, true, { ntfy: "quiet" });
+      }
       return null;
     }
   }
@@ -127,10 +152,20 @@
       const reason = read?.why === "icon-collapsed"
         ? "подпись аккаунта скрыта свернутой панелью Arena"
         : "почта текущей вкладки Arena не прочитана";
-      relayClient.lastError = reason;
+      if (relayClient.lastError !== reason) {
+        relayClient.lastError = reason;
+        log(`Служба Relay: ${reason}.`, true, { ntfy: "quiet" });
+      }
       return "";
     }
-    const res = await relayPost({ action: "hello", account: email, path: typeof location !== "undefined" ? location.pathname : "" });
+    const expectedSlot = typeof relayManagerExpectedSlot === "function" ? relayManagerExpectedSlot() : "";
+    const waitingState = GM_getValue(K.expect, null);
+    const pendingState = GM_getValue(K.pending, null);
+    const localBusy = Boolean(waitingState || pendingState);
+    const localWaiting = waitingState
+      ? `expect:${String(waitingState.kind || "ход")}`
+      : pendingState ? "pending" : "";
+    const res = await relayPost({ action: "hello", account: email, expectedSlot, localBusy, localWaiting, path: typeof location !== "undefined" ? location.pathname : "" });
     relayClient.helloAt = nowMs;
     if (res && res.ok && res.slot) {
       relayClient.lastError = "";
@@ -286,6 +321,7 @@
 
   /** Тик клиента: опознание → работа или удар сердца. Никаких решений. */
   async function relayClientTick() {
+    if (typeof relayManagerMayPoll === "function" && !relayManagerMayPoll()) return;
     // Даже без ручной настройки пробуем стандартный IPv4 loopback. После первого
     // ответа службы relayConfigured() становится true; никакой ввод URL не нужен.
     // Объявляем вкладку службе даже при локальной паузе. Иначе пульт видит
@@ -307,10 +343,30 @@
     const pending = GM_getValue(K.pending, null);
     const waiting = GM_getValue(K.expect, null);
     if (pending || waiting) {
-      // Работа идёт — служба не должна решить, что слот мёртв.
+      // Не берём новую работу поверх текущего локального хода. Для admin это
+      // было непрозрачно: пульт видел hello, но не знал, почему pull не случился.
+      // Записываем препятствие и в виджет, и в журнал пульта, с ограничением частоты.
+      const holdKey = waiting ? `expect:${String(waiting.kind || "")}` : pending ? "pending" : "";
+      if (holdKey &&
+          (relayClient.lastLocalHold !== holdKey || Date.now() - Number(relayClient.lastHoldReportAt || 0) >= 60000)) {
+        const reason = waiting
+          ? `локально сохранено ожидание ${String(waiting.kind || "ход")}${waiting.runId ? ` (${String(waiting.runId).slice(0, 40)})` : ""}`
+          : "локально сохранён незавершённый pending-шаг";
+        const text = relayClient.admin
+          ? `Админская вкладка не опросила очередь Relay: ${reason}. Состояние не сброшено автоматически.`
+          : `Клиент ${slotId} удерживает pull: ${reason}.`;
+        relayClient.lastLocalHold = holdKey;
+        relayClient.lastHoldReportAt = Date.now();
+        if (relayClient.admin) log(text, true, { ntfy: "quiet" });
+        await relayPost({
+          action: "event", slotId, kind: "state", level: relayClient.admin ? "warn" : "info", text,
+          data: { relayClientState: true, localBusy: true, localWaiting: holdKey },
+        });
+      }
       if (waiting) await relayBeat(slotId, waiting);
       return;
     }
+    relayClient.lastLocalHold = "";
     const provision = typeof provisionRequestState === "function" ? provisionRequestState() : null;
     const queuedProvision = GM_getValue(K.provisionRelayQueue, []).some((item) => String(item.slotId || "") === slotId);
     const ownProvision = Boolean(provision && ((!provision.relay) || String(provision.targetSlot || "") === slotId));
@@ -319,6 +375,17 @@
       return;
     }
     const res = await relayPost({ action: "pull", slotId });
+    if (res && (res.cycleMode === "auto" || res.cycleMode === "manual") && typeof autoSet === "function") {
+      const wasAuto = typeof autoOn === "function" && autoOn();
+      const shouldAuto = res.cycleMode === "auto";
+      if (wasAuto !== shouldAuto) {
+        autoSet(shouldAuto);
+        log(`Автоцикл ScriptCat ${shouldAuto ? "включён" : "выключен"} режимом Relay.`, false, { ntfy: "quiet" });
+        if (shouldAuto && !paused && res.kind !== "turn" && !res.work && typeof tick === "function") {
+          setTimeout(() => tick(false), 0);
+        }
+      }
+    }
     if (!res || !res.ok) {
       if (res && res.ok === false && relayClient.warned.pull !== String(res.why || "")) {
         relayClient.warned.pull = String(res.why || "");
@@ -368,7 +435,14 @@
     const run = () => {
       Promise.resolve()
         .then(() => relayClientTick())
-        .catch((e) => log(`Служба Relay: тик клиента не прошёл — ${e && e.message}`, false, { ntfy: "quiet" }));
+        .catch(async (error) => {
+          const detail = String((error && error.message) || error || "ошибка тика").slice(0, 220);
+          const text = `Служба Relay: тик клиента не прошёл — ${detail}`;
+          log(text, true, { ntfy: "quiet" });
+          if (relayClient.slotId) {
+            await relayPost({ action: "event", slotId: relayClient.slotId, kind: "net", level: "error", text });
+          }
+        });
     };
     setTimeout(run, 5000);
     setInterval(run, RELAY_CLIENT_TICK_MS);
