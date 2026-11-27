@@ -120,7 +120,11 @@
     const name = String(next || "").trim();
     if (!name) return { kind: "ask", note: "В маркере не указано, кому передаётся ход: назови роль или done." };
     if (norm(name) === norm("done")) return { kind: "done" };
-    const target = list.find((r) => norm(r.name) === norm(name)) || null;
+    // `roles()` is the active-only navigation view. Planning resolves semantic
+    // Function from the full directory; legacy Status/worker URL are not role
+    // selection criteria. Relay separately resolves slot, quota and provisioning.
+    const target = list.find((r) => norm(r.name) === norm(name)) ||
+      (directory || []).find((r) => norm(r.name) === norm(name)) || null;
     const rows = [...list, ...(directory || [])];
     const reviewer = rows.some((r) => r.fn === "Reviewer" &&
       (norm(r.name) === norm(name) || (target?.id && r.id && norm(r.id) === norm(target.id))));
@@ -148,44 +152,9 @@
       return { kind: "ask", note: `${why}${how}` };
     }
     if (!target) {
-      // Карточка этой роли может уже лежать в Ready — тогда дело не в
-      // опечатке, а в статусе роли. Молчать об этом значит гонять
-      // Координатора по кругу «роли нет среди активных».
-      if (readyRoles.some((r) => norm(r) === norm(name))) {
-        const row = (directory || []).find((r) => norm(r.name) === norm(name));
-        const state = row
-          ? [`Статус «${row.status || "пуст"}»`, row.url ? "Agent URL заполнен" : "Agent URL пуст"].join(", ")
-          : directory.length
-            ? "такой роли нет в базе «Роли»"
-            : "роль не активна";
-        const why =
-          `«${name}»: карточка в Ready есть, но выдать её некому — ${state}. ` +
-          `Активные роли: ${list.map((r) => r.name).join(", ") || "нет"}. ` +
-          "Статус роли и Agent URL ставит Мастер: агента в Arena создаёт он.";
-        if (misses >= 1) {
-          return {
-            kind: "pause",
-            reason: `${why} Нажмите «Продолжить» — Координатор получит подсказку и назначит активную роль.`,
-          };
-        }
-        return {
-          kind: "ask",
-          note:
-            `${why} Назначь в «Кому» активную роль (правка черновика — твоё право) и повтори next, ` +
-            "либо оставь карточку в Draft и напиши, кого она ждёт.",
-        };
-      }
-      // Третий подряд промах — уже не «модель не поняла», а поломка: без
-      // человека это превращается в бесконечную переписку с Координатором.
-      if (misses >= 2) {
-        return {
-          kind: "pause",
-          reason:
-            `Координатор третий раз подряд называет роль «${name}», которой нет среди активных. ` +
-            "Проверьте базу «Роли»: имя в next должно совпадать с ролью.",
-        };
-      }
-      return { kind: "ask", note: `Роли «${name}» нет среди активных. Назови роль из базы «Роли» или done.` };
+      const why = `Роль «${name}» не найдена в базе «Роли»; транспорт не может проверить её Function и назначить исполнителя.`;
+      if (misses >= 2) return { kind: "pause", reason: `${why} Исправьте определение роли/адресата; статус и Agent URL здесь ни при чём.` };
+      return { kind: "ask", note: `${why} Проверь, не опечатка ли это и не отсутствует ли строка роли; не создавай замену роли под другим именем.` };
     }
     if (target.fn === "Coordinator") {
       if (misses >= 2) {
@@ -205,7 +174,7 @@
     }
     if (!["Executor", "Auditor"].includes(target.fn)) {
       const why = `«${target.name}»: функция «${target.fn || "не указана"}» не разрешает рабочую карточку. ` +
-        "Назначь активного Executor или Auditor; функцию роли устанавливает Мастер.";
+        "Назначь Executor или Auditor с подходящей зоной; функцию роли устанавливает владелец процесса. Статус и Agent URL не проверяй.";
       if (misses >= 2) return { kind: "pause", reason: `${why} Координатор повторил выбор три раза.` };
       return { kind: "ask", note: why };
     }

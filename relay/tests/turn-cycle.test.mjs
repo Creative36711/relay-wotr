@@ -250,7 +250,7 @@ test("снимок различает hello от фактического pull-�
 });
 
 test("кнопка пульта передаёт планирующий ход Coordinator-вкладке, ack можно повторить", async () => {
-  const { service } = makeService();
+  const { service, advance } = makeService();
   const step = await service.step({ origin: "panel" });
   assert.equal(step.turnRequested, true);
   assert.ok(step.turnRequestId);
@@ -263,6 +263,21 @@ test("кнопка пульта передаёт планирующий ход C
   assert.equal(claimed.turnId, step.turnRequestId);
   const duplicateClaim = await service.pull({ slotId: "admin", tab: "admin-tab", scriptVersion: "1.34.1" });
   assert.notEqual(duplicateClaim.kind, "turn", "claim жив: повторный poll не запускает тот же план дважды");
+
+  advance(35_000);
+  const stolenRenewal = await service.report({ slotId: "admin", tab: "other-admin-tab", payload: {
+    turnClaimRenew: true, turnRequestId: claimed.turnId,
+  } });
+  assert.equal(stolenRenewal.turnClaimRenewed, false, "другая вкладка не может продлить чужой claim");
+  const workerRenewal = await service.report({ slotId: "worker-1", tab: "admin-tab", payload: {
+    turnClaimRenew: true, turnRequestId: claimed.turnId,
+  } });
+  assert.equal(workerRenewal.turnClaimRenewed, false, "не-admin slot не может держать планирующий claim");
+  const renewed = await service.report({ slotId: "admin", tab: "admin-tab", payload: {
+    turnClaimRenew: true, turnRequestId: claimed.turnId,
+  } });
+  assert.equal(renewed.turnClaimRenewed, true, "долгое локальное ожидание может продлить claim только у взявшей его admin-вкладки");
+  assert.equal((await service.snapshot()).turnRequest.claimed, true, "claim не становится false во время длительного plan/Google wait");
 
   await service.report({ slotId: "admin", tab: "admin-tab", payload: { turnAck: true, turnRequestId: claimed.turnId, retry: true } });
   assert.equal(service.memory.coordinatorTurnRequest.claimedBy, "", "неуспешный запуск освобождает claim");

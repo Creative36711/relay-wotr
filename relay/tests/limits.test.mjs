@@ -99,6 +99,38 @@ test("limits: диспетчер разрешает другую роль в с�
   assert.equal(plan.slot.slotId, "worker-2");
 });
 
+test("limits: статус роли и пустой worker URL не являются гейтом dispatch; экземпляр создаётся отдельно", () => {
+  const slots = [slot("worker-1")];
+  const queue = [queueItem({ "Роль": "Integration Auditor", "Статус": "waiting" })];
+  const plan = planOne({
+    slots, queue, runs: [],
+    roles: [{ name: "Integration Auditor", fn: "Auditor", status: "Ждёт" }],
+    state: new Map(),
+  });
+  assert.equal(plan.ok, true, plan.why);
+  assert.equal(plan.item["ID"], queue[0]["ID"]);
+  assert.equal(plan.slot.slotId, "worker-1");
+  assert.equal(queue[0]["Статус"], "waiting", "план не мутирует очередь; service выдаст или запросит pair provisioning");
+});
+
+test("limits: Relay не переписывает роль/очередность из-за статуса Ждёт", () => {
+  const slots = [slot("worker-1"), slot("worker-2")];
+  const queue = [
+    queueItem({ "ID": "q-held", "Создано": "2026-11-23T09:00:00Z", "Роль": "Later", "Статус": "waiting" }),
+    queueItem({ "ID": "q-ready", "Создано": "2026-11-23T10:00:00Z", "Роль": "Godot World", "Функция": "Executor", "Статус": "waiting" }),
+  ];
+  const plan = planOne({
+    slots, queue, runs: [],
+    roles: [
+      { name: "Later", fn: "Auditor", status: "Ждёт" },
+      { name: "Godot World", fn: "Executor", status: "Активна" },
+    ],
+    state: new Map(),
+  });
+  assert.equal(plan.ok, true, plan.why);
+  assert.equal(plan.item["ID"], "q-held", "планировщик сохраняет выбранную роль/очерёдность, а не подменяет её по статусу");
+});
+
 test("limits: примечание для промпта называет занятые и свободные роли", () => {
   const notes = limitNotes({
     roles: [{ name: "Integration Auditor" }, { name: "Godot World" }],

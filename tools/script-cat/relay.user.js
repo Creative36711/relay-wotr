@@ -97,7 +97,7 @@
     // D-073: отпечаток сборки вшивает build.mjs (SHA-256 источника). Номер версии
     // говорит «какой выпуск», отпечаток — «какая именно сборка»: без него проверка
     // «работает новая версия, а не прежняя под новым номером» невозможна.
-    buildFingerprint: "7d11bd436f699590",
+    buildFingerprint: "f861ac09adcea34b",
     repo: "", // для ссылки на PR из номера
     tickMs: 15000,
     mergeGraceMs: 90000, // сколько ждём мерж, прежде чем нажать кнопки за агента
@@ -10300,8 +10300,8 @@
     // Warden. Строка лежала без «Статуса» и с UUID в «Миссии» — транспорт её не
     // узнавал, приёмка не получала ничего. Дело было не в формате маркера, а в
     // том, что зона Координатора описана как «решения в Notion» без границы.
-    def("authority.coordinator", { version: 2, ruleIds: ["R-ROLES", "R-QUEUE", "R-NO-REVIEWER-DISPATCH", "R-MASTER-ONLY", "R-D028"], audience: ["Coordinator"], render: () =>
-      "Координатор: решения в Notion; код/ветки/PR не твоя зона, git не нужен. Очередь твоя: нарезка, Кому, Sequence, Ready, Draft→Ready, Submitted, Accepted/Rework. «Обратную связь» руками не пиши — только вопрос полем маркера, запись делает транспорт. Оракул миссии не менять — нужен ADR и решение приёмки/Мастера. «Роли»: у неадминских строк Зона записи/Гейт/Репозиторий/Функция — твои по решению приёмки; Статус, Agent URL, Agent Admin и удаление — Мастер." });
+    def("authority.coordinator", { version: 3, ruleIds: ["R-ROLES", "R-QUEUE", "R-NO-REVIEWER-DISPATCH", "R-MASTER-ONLY", "R-D028"], audience: ["Coordinator"], render: () =>
+      "Координатор: Notion-планирование; код/git/PR не твоя зона. Веди очередь и назначай точную Executor/Auditor-роль по Scope+Function. Не проверяй Status, worker URL/Agent State, слот или квоту; не закрепляй слот. Relay владеет доставкой: выбирает слоты/аккаунты по квотам и создаёт пару роль×слот; worker URL хранится в «Экземпляры». Не держи валидную роль в Draft из-за отсутствия агента. Admin URL/права/удаление — Мастер." });
 
     // D-087: «ни документы» — причина, по которой ТЗ 1.6/1.7 и очередь 1.8/1.9 не
     // появились. 09.11 Warden объявил две редакции в ответе, но публиковать их не
@@ -10439,7 +10439,7 @@
     def("queue.drafts", { verbatim: true, render: (c) => c.queue?.draft || "" });
 
     def("queue.coordinator", { ruleIds: ["R-QUEUE", "R-NO-REVIEWER-DISPATCH"], audience: ["Coordinator"], render: () =>
-      "Running ставит транспорт и вернёт в Ready сам — не перевыдавай. Running/Submitted — движок; Accepted/Rework/Ready — ты. Черновики правь под оракул, выдавай сам. Дубль номера правь, не создавай. Dependency — UUID этой миссии, Accepted, без Check=fail. Rework — для той же карточки: Rework + та же карточка в Ready (тот же Sequence), новую не создавай. Новая карточка — только если находка шире старой (новый оракул, другой Scope). Check=fail НЕ ставь Rework+Ready одним ответом (жди снимка и разбора Warden). Ready с меньшим Sequence не обходи. Scope покрывает артефакты оракула. Reviewer карточку не выдавай. Ход: Submitted→Accepted/Rework + выдай Ready/Draft; пусто — не ход. Выполнено — «Итог» + next:\"done\". Состав ролей сверяй до выдачи: причина в скобках («нет в «Ролях»», «Ждёт») — не выдадут; Статус/Agent URL — Мастер, агента создаёт Agent State = запрошен. Одна роль — одна карточка (про файлы); параллельно — по нужде. Квота на аккаунт: занятый слот ≠ отказ." });
+      "Running ставит транспорт и вернёт в Ready сам — не перевыдавай. Running/Submitted — движок; Accepted/Rework/Ready — ты. Черновики правь под оракул, выдавай сам. Дубль номера правь, не создавай. Dependency — UUID этой миссии, Accepted, без Check=fail. Rework — для той же карточки: Rework + та же карточка в Ready (тот же Sequence), новую не создавай. Новая карточка — только если находка шире старой (новый оракул, другой Scope). Check=fail НЕ ставь Rework+Ready одним ответом (жди снимка и разбора Warden). Ready с меньшим Sequence не обходи. Scope покрывает артефакты оракула. Reviewer карточку не выдавай. Ход: Submitted→Accepted/Rework + выдай Ready/Draft; пусто — не ход. Выполнено — «Итог» + next:\"done\". Назначай Executor/Auditor по Scope+Function. Relay выбирает слот/аккаунт с учётом квоты, создаёт пару роль×слот при необходимости; URL — в «Экземпляры». Не переназначай роль из-за доставки. Одна роль — одна карточка; параллельно — по нужде." });
 
     def("review.evidence", { verbatim: true, render: (c) => [
       c.queue?.acceptedCount != null ? `Принятых карточек: ${c.queue.acceptedCount}.` : "",
@@ -12376,7 +12376,11 @@
     const name = String(next || "").trim();
     if (!name) return { kind: "ask", note: "В маркере не указано, кому передаётся ход: назови роль или done." };
     if (norm(name) === norm("done")) return { kind: "done" };
-    const target = list.find((r) => norm(r.name) === norm(name)) || null;
+    // `roles()` is the active-only navigation view. Planning resolves semantic
+    // Function from the full directory; legacy Status/worker URL are not role
+    // selection criteria. Relay separately resolves slot, quota and provisioning.
+    const target = list.find((r) => norm(r.name) === norm(name)) ||
+      (directory || []).find((r) => norm(r.name) === norm(name)) || null;
     const rows = [...list, ...(directory || [])];
     const reviewer = rows.some((r) => r.fn === "Reviewer" &&
       (norm(r.name) === norm(name) || (target?.id && r.id && norm(r.id) === norm(target.id))));
@@ -12404,44 +12408,9 @@
       return { kind: "ask", note: `${why}${how}` };
     }
     if (!target) {
-      // Карточка этой роли может уже лежать в Ready — тогда дело не в
-      // опечатке, а в статусе роли. Молчать об этом значит гонять
-      // Координатора по кругу «роли нет среди активных».
-      if (readyRoles.some((r) => norm(r) === norm(name))) {
-        const row = (directory || []).find((r) => norm(r.name) === norm(name));
-        const state = row
-          ? [`Статус «${row.status || "пуст"}»`, row.url ? "Agent URL заполнен" : "Agent URL пуст"].join(", ")
-          : directory.length
-            ? "такой роли нет в базе «Роли»"
-            : "роль не активна";
-        const why =
-          `«${name}»: карточка в Ready есть, но выдать её некому — ${state}. ` +
-          `Активные роли: ${list.map((r) => r.name).join(", ") || "нет"}. ` +
-          "Статус роли и Agent URL ставит Мастер: агента в Arena создаёт он.";
-        if (misses >= 1) {
-          return {
-            kind: "pause",
-            reason: `${why} Нажмите «Продолжить» — Координатор получит подсказку и назначит активную роль.`,
-          };
-        }
-        return {
-          kind: "ask",
-          note:
-            `${why} Назначь в «Кому» активную роль (правка черновика — твоё право) и повтори next, ` +
-            "либо оставь карточку в Draft и напиши, кого она ждёт.",
-        };
-      }
-      // Третий подряд промах — уже не «модель не поняла», а поломка: без
-      // человека это превращается в бесконечную переписку с Координатором.
-      if (misses >= 2) {
-        return {
-          kind: "pause",
-          reason:
-            `Координатор третий раз подряд называет роль «${name}», которой нет среди активных. ` +
-            "Проверьте базу «Роли»: имя в next должно совпадать с ролью.",
-        };
-      }
-      return { kind: "ask", note: `Роли «${name}» нет среди активных. Назови роль из базы «Роли» или done.` };
+      const why = `Роль «${name}» не найдена в базе «Роли»; транспорт не может проверить её Function и назначить исполнителя.`;
+      if (misses >= 2) return { kind: "pause", reason: `${why} Исправьте определение роли/адресата; статус и Agent URL здесь ни при чём.` };
+      return { kind: "ask", note: `${why} Проверь, не опечатка ли это и не отсутствует ли строка роли; не создавай замену роли под другим именем.` };
     }
     if (target.fn === "Coordinator") {
       if (misses >= 2) {
@@ -12461,7 +12430,7 @@
     }
     if (!["Executor", "Auditor"].includes(target.fn)) {
       const why = `«${target.name}»: функция «${target.fn || "не указана"}» не разрешает рабочую карточку. ` +
-        "Назначь активного Executor или Auditor; функцию роли устанавливает Мастер.";
+        "Назначь Executor или Auditor с подходящей зоной; функцию роли устанавливает владелец процесса. Статус и Agent URL не проверяй.";
       if (misses >= 2) return { kind: "pause", reason: `${why} Координатор повторил выбор три раза.` };
       return { kind: "ask", note: why };
     }
@@ -14710,33 +14679,28 @@
    * Координатор видит свой задел и распоряжается им сам.
    */
   /**
-   * Дефект адресата — один для любого состояния карточки (D-075 п. 2).
+   * Структурная ошибка адресата, не готовность экземпляра (D-022).
    *
-   * 08.11 карточка в Ready с неактивным адресатом выглядела в промпте
-   * нормальной: список ролей читал только `draftLine` (`:1081`), а `readyLine`
-   * и `reworkLine` называли одно имя. Координатор узнавал о дефекте на выдаче,
-   * то есть в самом дорогом месте. Теперь один и тот же разбор работает у всех
-   * трёх списков, а слова — те же три случая, что в `blockedReason`.
+   * Coordinator выбирает семантическую роль. Legacy Status/Agent State не
+   * являются гейтом выдачи; Relay выбирает слот/аккаунт, проверяет квоты и
+   * наличие экземпляра. Worker Agent URL в
+   * «Ролях» не хранится: Relay создаёт пару role×slot и пишет адрес в
+   * «Экземпляры». Поэтому этот помощник отмечает только отсутствующую роль или
+   * неправильную Function, а не состояние доставки.
    */
   function roleDefect(role, known = []) {
     const name = String(role || "").trim();
     if (!name) return "роль не задана";
     const seen = new Map();
     for (const item of known || []) {
-      if (typeof item === "string") seen.set(norm(item), { status: "Активна", url: "есть" });
-      else if (item && item.name) seen.set(norm(item.name), { status: item.status || "", url: item.url || "", fn: item.fn || "" });
+      if (typeof item === "string") seen.set(norm(item), { fn: "Executor" });
+      else if (item && item.name) seen.set(norm(item.name), { fn: item.fn || "" });
     }
     if (!seen.size) return name;
     const row = seen.get(norm(name));
     if (!row) return `${name} — нет в «Ролях»`;
-    if ((row.status || "") !== "Активна") return `${name} — Статус «${row.status || "пуст"}»`;
-    // D-004: квота аккаунта — не дефект строки, но причина невыдачи ровно та же,
-    // и молчать о ней значит гонять Координатора по кругу «роль активна, выдавай».
-    if (typeof accountLimitBlocks === "function" && accountLimitBlocks({ account: row.account }))
-      return `${name} — ${accountLimitText(row.account)}`;
-    if (!row.url) return `${name} — нет Agent URL`;
-    if (row.fn && !["Coordinator", "Executor", "Auditor", "Reviewer", "Maintainer"].includes(row.fn))
-      return `${name} — Функция «${row.fn}» не годится`;
+    if (!row.fn) return `${name} — Функция не задана`;
+    if (!["Executor", "Auditor"].includes(row.fn)) return `${name} — Функция «${row.fn}» не является рабочей`;
     return "";
   }
 
@@ -14824,55 +14788,37 @@
    * базе есть, просто «Статус» = «Ждёт» и «Agent URL» пуст. Мастер по такой
    * строке пошёл бы создавать нового агента вместо того, чтобы дозаполнить
    * существующую роль. Поэтому текст паузы собирается по фактам: имя роли,
-   * её настоящий статус, очередь и уже открытый вопрос.
+   * её структурное определение, очередь и уже открытый вопрос.
    */
   function blockedReason({ need = "", directory = [], queue = null, open = [], ask = "", asked = false } = {}) {
     const rows = directory || [];
     const find = (name) => rows.find((r) => norm(r.name) === norm(name));
-    const lacks = (row) => {
-      if (!row) return "";
-      const bits = [];
-      if ((row.status || "") !== "Активна") bits.push(`«Статус» = «${row.status || "пуст"}»`);
-      if (!row.url) bits.push("«Agent URL» пуст");
-      return bits.join(", ");
-    };
+    const isWorkerRole = (row) => Boolean(row && ["Executor", "Auditor"].includes(row.fn));
     const parts = [];
     const name = String(need || "").trim();
     if (name) {
       const row = find(name);
-      const gap = lacks(row);
       parts.push(`Координатор остановил цикл: нужна роль «${name}».`);
       if (!row) {
-        parts.push(
-          `Роли «${name}» в базе «Роли» нет — создайте агента в Arena, заполните «Agent URL» и поставьте «Статус» = «Активна».`,
-        );
-      } else if (!gap) {
-        parts.push(
-          `Роль «${name}» активна и «Agent URL» заполнен — значит, Координатор её не увидел: проверьте «Функцию» и «Зону записи».`,
-        );
+        parts.push(`Роли «${name}» в базе «Роли» нет; это дефект определения роли, не отсутствие Arena-агента.`);
+      } else if (isWorkerRole(row)) {
+        parts.push(`Рабочая роль «${name}» определена (${row.fn}). Legacy Status/Agent State и пустой worker URL не блокируют назначение; Relay выберет слот/аккаунт, учтёт квоту и создаст пару при необходимости. Coordinator должен назначить подходящую карточку в Ready.`);
       } else {
-        parts.push(
-          `Роль «${name}» в «Ролях» есть, но ${gap} — создавать агента не нужно: заполните «Agent URL» и поставьте «Статус» = «Активна».`,
-        );
+        parts.push(`Роль «${name}» есть, но Function «${row.fn || "не задана"}» не является Executor/Auditor; исправьте определение роли, не создавайте URL вручную.`);
       }
     } else {
       // Роль не названа — показываем очередь: по ней видно, чья это работа.
       parts.push("Координатор остановил цикл, но роль не назвал.");
       const waiting = ((queue && queue.draft) || [])
         .map((card) => ({ card, role: taskRole(card) }))
-        .filter(({ role }) => role && !find(role)?.url)
-        .map(
-          ({ card, role }) =>
-            `черновик «${taskTitle(card)}» ждёт роль ${role} — ${lacks(find(role)) || "роли нет в «Ролях»"}`,
-        );
+        .filter(({ role }) => role && !find(role))
+        .map(({ card, role }) => `черновик «${taskTitle(card)}» назначен роли «${role}», которой нет в «Ролях»`);
       if (waiting.length) {
-        parts.push(`По очереди видно: ${waiting.join("; ")}. Новый агент нужен только если роли правда нет.`);
+        parts.push(`По очереди видно: ${waiting.join("; ")}.`);
       } else if (queue) {
-        parts.push(
-          (queue.rework || []).length
-            ? "Черновиков, которым не хватает роли, нет — значит, причина другая: смотрите «Ответ» карточек в Rework."
-            : "Черновиков, которым не хватает роли, нет, и Rework пуст — по очереди причину не видно.",
-        );
+        parts.push((queue.rework || []).length
+          ? "В Draft нет неизвестной роли — смотрите «Ответ» карточек в Rework."
+          : "В Draft нет неизвестной роли, и Rework пуст — причина остановки по очереди не видна.");
       }
     }
     if (queue && queue.summary) parts.push(`Очередь: ${queue.summary}.`);
@@ -14908,7 +14854,7 @@
       );
     }
     parts.push(
-      "Право на остановку у Координатора одно — роль, которая не может взять работу; пустую очередь, Rework и спорный Scope он разбирает сам.",
+      "Остановка оправдана только если не определена рабочая роль; Status/Agent State/worker URL не являются причиной остановки Coordinator. Relay решает фактические слот, квоту и provisioning, а пустую очередь, Rework и спорный Scope разбирает Coordinator.",
     );
     return parts.join(" ");
   }
@@ -15332,10 +15278,9 @@
         // просто «Ждёт». Поэтому текст собирается по фактам (blockedReason), а
         // не по шаблону: Мастер должен видеть, что дозаполнить, а что создать.
         // `need` прочитан выше — им же адресуется прямой вопрос (D-083).
-        // Остановка законна только тогда, когда названной роли действительно
-        // некому отвечать: её нет в «Ролях», у неё не «Активна» или пуст
-        // «Agent URL». Роль, которая активна и имеет адрес, — не повод встать:
-        // работа для неё либо есть, либо решение за Координатором.
+        // Остановка законна только если рабочая роль не определена в «Ролях»
+        // или у неё неверная Function. Legacy Status/Agent State/worker URL —
+        // не основание блокировать выбор; Relay разрешает слот, квоту и provisioning.
         //
         // Всё остальное («непонятно, что дальше», пустая очередь, спорный
         // Scope) — работа Координатора, а не повод будить Мастера (1.4.80).
@@ -15343,10 +15288,10 @@
         // подряд — уже поломка, и тогда пауза честно зовёт человека.
         const directory = need ? await roleRows().catch(() => []) : [];
         const named = need ? directory.find((r) => norm(r.name) === norm(need)) : null;
-        const canTake = Boolean(named && (named.status || "") === "Активна" && named.url);
+        const canTake = Boolean(named && ["Executor", "Auditor"].includes(named.fn));
         if (!need || canTake) {
           const why = need
-            ? `роль «${need}» активна и «Agent URL» заполнен — значит, Координатор её не увидел`
+            ? `рабочая роль «${need}» определена; Status/Agent State и worker URL не блокируют её назначение`
             : "роль не названа";
           const tries = (Number(GM_getValue("cfn-blocked-norole", 0)) || 0) + 1;
           GM_setValue("cfn-blocked-norole", tries);
@@ -15371,10 +15316,10 @@
             mission,
             role,
             fresh0 || { summary: "очередь не прочитана" },
-            'Остановка не принимается: next = "blocked" законен только с need = "<роль>", которой нет ' +
-              "или которая не активна. " +
-              (need ? `Роль «${need}» активна и «Agent URL» заполнен — ход возможен. ` : "") +
-              "Реши сам — или назови роль, которой действительно не хватает.",
+            'Остановка не принимается: next = "blocked" законен только если нужная рабочая роль не определена ' +
+              "в базе «Роли». Status/Agent State/worker URL не блокируют назначение; Relay выберет слот/аккаунт по квоте и создаст пару при необходимости. " +
+              (need ? `Роль «${need}» есть и имеет рабочую Function — назначь ей карточку в Ready. ` : "") +
+              "Реши сам — или назови действительно отсутствующую роль.",
             { force: true },
           );
           return true;
@@ -15484,26 +15429,16 @@
         if (returned) log("Миссия возвращена, «Возврат» в «Итоге» есть — передаю на приёмку повторно.");
         return startReview(mission, fresh);
       }
-      // D-075 п. 4: до первой выдачи карточки миссии транспорт сверяет состав.
-      // Проверка стоит здесь — после разбора Submitted и до решения о выдаче:
-      // принять чужую работу некомплект не мешает, а выдать карточку роли,
-      // которой нет или которая не активна, не даёт. Раньше некомплект
-      // всплывал на самой отправке, то есть в самом дорогом месте.
+      // Структурная проверка не подменяет транспортную готовность: статус,
+      // экземпляр (роль × слот), аккаунт и лимит разрешаются Relay после того,
+      // как Coordinator выбрал карточку и записал Ready. Ни отсутствие worker URL,
+      // ни роль в ожидании provisioning не останавливают планировщика.
       const rosterCards = [...ready, ...(draft || [])];
-      // Вся база, а не только активные строки: по ней видно, чего именно не
-      // хватает — статуса, Agent URL или самой роли (D-075 п. 4).
       const directoryNow = await roleRows().catch(() => []);
       const recipientOptions = await recipientOptionNames().catch(() => []);
-      // D-015: адрес роли — пара (роль, слот) в «Экземплярах». Гейт состава без
-      // этих строк объявил бы некомплект по каждой неадминской роли: в «Ролях»
-      // её «Agent URL» больше нет, и это норма, а не недозаполненность.
-      const instancesNow = await relayInstances(await relaySnapshot().catch(() => null));
-      const roster = missionRoster(rosterCards, { directory: directoryNow, recipientOptions, instances: instancesNow });
+      const roster = missionRoster(rosterCards, { directory: directoryNow, recipientOptions });
       if (!roster.ok) {
-        const provisionPlan = provisionRosterRequest(roster.broken, provisionConfig(), provisionRequestState());
-        const gate = rosterGate(rosterCards, {
-          directory: directoryNow, recipientOptions, instances: instancesNow, provision: provisionPlan,
-        });
+        const gate = rosterGate(rosterCards, { directory: directoryNow, recipientOptions });
         pause(gate.reason, { kind: "mission-roster", ref: mission.id, need: roster.broken.map((r) => r.name).join(", ") });
         return true;
       }
@@ -15645,18 +15580,13 @@
     // ответа, который он принимает, а не только счётчики очереди.
     const answerLine = answerLogLine(queue.submitted);
     log(`План Координатора запрошен (${summary}).`);
-    // Вся база, а не только активные: по ней видно, чего именно не хватает —
-    // статуса, Agent URL или самой роли.
+    // Вся база, а не только navigation view: сверяем имя роли и её Function;
+    // readiness экземпляра и выбор слота здесь не проверяются.
     const directory = await roleRows().catch(() => []);
     const drafts = draftLine(queue.draft || [], directory);
-    // D-004: недоступность по квоте и «работать нечем» идут в тот же план, что и
-    // очередь: иначе Координатор называет в next роль лимитированного аккаунта и
-    // получает отказ за отказом, хотя дело не в постановке.
-    const accountLines = typeof accountPlanNote === "function" ? accountPlanNote() : "";
-    const idleLine = typeof accountIdleNote === "function"
-      ? accountIdleNote(queue.ready || [], { missionId: mission.id })
-      : "";
-    const planNote = [note, accountLines, idleLine].filter(Boolean).join(" ");
+    // Account quotas and slot choice belong to Relay dispatch, not to the plan.
+    // Keep only a concrete retry/handoff note in this Coordinator turn.
+    const planNote = String(note || "").trim();
     // Вопросы к Мастеру и его ответы: ответы доставляются ровно один раз —
     // отметка ставится после того, как промпт действительно ушёл.
     const briefing = await questionBriefing(mission);
@@ -15710,7 +15640,6 @@
         title: "план Координатора",
         fallbackText,
         planContext: summary,
-        accountNote: accountLines || "",
         // Снимок «с замечаниями или без»: по нему снятие устаревшего
         // ожидания не переспрашивает план, ответ на который уже пришёл.
         planBeforeReturn,
@@ -15720,10 +15649,6 @@
       },
     );
     if (sent) await markDelivered(briefing.fresh);
-    // D-004: «работать нечем» считается заданным только теперь — когда план
-    // действительно ушёл. Отмечать при сборке текста значило бы потерять вопрос
-    // вместе с неотправленным планом (капча, пауза, ожидание).
-    if (sent && idleLine && typeof accountIdleAskedMark === "function") accountIdleAskedMark(mission.id);
     return true;
   }
 
@@ -21386,64 +21311,28 @@
     saveHealState({ ...healState(), pending: null, recoveredAt: nowIso(), recoveredFrom: String(fromVersion || "") });
   }
 
-  // ───────────────────────── состав ролей миссии: правила ─────────────────────────
-  // D-075 п. 4–6 на языке кода. До первой выдачи карточки транспорт сверяет не
-  // только адресата выбранной карточки, но и состав всей миссии: если роль, на
-  // которую карточка ссылается, не может взять работу, выдача не начинается —
-  // иначе некомплект всплывает в самом дорогом месте, на первой отправке.
-  //
-  // Здесь только чистые функции: ни DOM, ни GM, ни сети. Их исполняет
-  // tests/mission-roster-smoke.mjs, поэтому «гейт» проверяется как решение, а не
-  // как текст в журнале.
-  //
-  // Разделение, ради которого файл существует отдельно от 40-heal-core.js:
-  //  • состав — это данные (роль, статус, URL, функция, вариант «Кому»);
-  //  • некомплект — это решение Мастера (класс master), а не поломка транспорта;
-  //  • поломка доставки остаётся транспорту, и это разные причины.
+  // ───────────────────────── проверка адресатов миссии ─────────────────────────
+  // D-022: Coordinator отвечает за смысловую роль/очередь, Relay — за слот,
+  // аккаунт, квоту и создание пары (роль × слот). Предварительная проверка
+  // здесь только структурная: строка роли, допустимая Function и наличие имени
+  // в select «Кому». Legacy Status/Agent State и worker URL не являются гейтами;
+  // рабочие URL живут в «Экземплярах» и создаются Relay.
+  // Чистые функции здесь тестируются без DOM, GM и сетевых вызовов.
   const ROSTER_SOURCE = 1;
 
-  /**
-   * Пункт проверки: что именно не так с ролью. Пустой список — роль годна.
-   *
-   * D-015: адрес проверяется как ПАРА (роль, слот), а не как `Agent URL` строки.
-   *
-   * До 1.24.0 у роли был один адрес, и «пуст Agent URL» был точным ответом.
-   * Теперь рабочих агентов у роли столько, сколько контейнеров, и адрес живёт
-   * в «Экземплярах». Требование адреса строки объявляло бы некомплект по
-   * каждой неадминской роли — то есть гейт останавливал бы выдачу там, где всё
-   * в порядке. Поэтому источник адреса — `instances`, а `row.url` остался
-   * запасным путём для админских ролей и старых книг.
-   */
-  function rosterRoleGaps(role, { directory = [], recipientOptions = [], instances = [] } = {}) {
+  /** Структурная пригодность роли; состояние доставки сюда не входит. */
+  function rosterRoleGaps(role, { directory = [], recipientOptions = [] } = {}) {
     const gaps = [];
     const name = String(role?.name || "").trim();
     if (!role) return ["роль не названа"];
     if (!name) gaps.push("имя роли пустое");
-    // Ищем по всей базе, а не только среди активных: иначе «строка есть, но
-    // Статус Ждёт» неотличимо от «строки нет», и Мастер получил бы совет
-    // создавать второго агента там, где нужно дозаполнить одного.
     const row = directory.find((r) => norm(r.name) === norm(name)) ||
-      (role.status || role.url || role.fn ? role : null);
+      (role.fn ? role : null);
     if (!row) return [`роли «${name}» нет в «Ролях»`];
-    if ((row.status || "") !== "Активна") gaps.push(`Статус «${row.status || "пуст"}»`);
-    // Экземпляр пары важнее строки: он и есть рабочий адрес (D-015).
-    const mine = (Array.isArray(instances) ? instances : [])
-      .filter((item) => norm(item && (item["Роль"] || item.role)) === norm(name));
-    const instanceUrl = mine.map((item) => String((item && (item["Agent URL"] || item.url)) || "").trim())
-      .find(Boolean) || "";
-    const declared = String(row.url || "").trim();
-    const admin = row.agentAdmin === true;
-    // У админской роли адрес в строке — адрес по умолчанию и остаётся.
-    // У неадминской пустая строка — норма: смотрим экземпляры.
-    const address = instanceUrl || declared;
-    if (!address) {
-      gaps.push(admin ? "Agent URL пуст" : "нет агента: в «Экземплярах» нет адреса пары (роль, слот)");
-    } else if (!/^https:\/\/[^\s/]+\/agent\/[\w-]+\/?$/i.test(address) &&
-      !/^\/agent\/[\w-]+\/?$/.test(address)) {
-      gaps.push("Agent URL не похож на страницу агента");
-    }
     if (!row.fn) gaps.push("Функция не задана");
-    // «Кому» — только для рабочих ролей: карточку берут Executor и Auditor.
+    else if (!["Executor", "Auditor"].includes(row.fn)) gaps.push(`Функция «${row.fn}» не является рабочей`);
+    // «Кому» — только для рабочих ролей. Статус, Agent URL, Agent State,
+    // instances and account quota are intentionally resolved by Relay later.
     if (["Executor", "Auditor"].includes(row.fn) && recipientOptions.length &&
       !recipientOptions.some((option) => norm(option) === norm(name))) {
       gaps.push("имени нет в вариантах «Кому»");
@@ -21458,7 +21347,7 @@
    * список ролей, по каждой — годна она или что именно не так, и общий вердикт.
    * Пустая миссия — не некомплект: нарезать очередь вправе Координатор.
    */
-  function missionRoster(cards = [], { directory = [], recipientOptions = [], instances = [] } = {}) {
+  function missionRoster(cards = [], { directory = [], recipientOptions = [] } = {}) {
     const names = [];
     const seen = new Set();
     for (const card of cards || []) {
@@ -21469,14 +21358,8 @@
     }
     const roles = names.map((name) => {
       const row = (directory || []).find((r) => norm(r.name) === norm(name)) || null;
-      const gaps = rosterRoleGaps({ name, ...(row || {}) }, { directory, recipientOptions, instances });
-      // `url` в ответе — рабочий адрес пары, если он есть: по нему вызывающий
-      // видит, куда поедет карточка, не повторяя поиск экземпляра.
-      const pairs = (Array.isArray(instances) ? instances : [])
-        .filter((item) => norm(item && (item["Роль"] || item.role)) === norm(name));
-      const url = pairs.map((item) => String(item["Agent URL"] || item.url || "").trim()).find(Boolean) ||
-        String(row?.url || "").trim();
-      return { name, fn: row?.fn || "", status: row?.status || "", url, gaps, ok: gaps.length === 0 };
+      const gaps = rosterRoleGaps({ name, ...(row || {}) }, { directory, recipientOptions });
+      return { name, fn: row?.fn || "", gaps, ok: gaps.length === 0 };
     });
     const broken = roles.filter((role) => !role.ok);
     return {
@@ -21490,59 +21373,29 @@
     };
   }
 
-  /**
-   * Текст паузы — по образцу `blockedReason`: три разных случая тремя разными
-   * словами, чтобы Мастер не создавал агента там, где нужно дозаполнить строку.
-   */
+  /** Только структурные проблемы могут блокировать выбор роли. */
   function rosterReason(roster, { source = "" } = {}) {
     const broken = roster?.broken || [];
     if (!broken.length) return "";
     const lines = broken.map((role) => {
       const where = source ? ` (${source}, «Кому» = «${role.name}»)` : "";
-      if (!role.fn && role.status === "" && !role.url) {
-        return `Роли «${role.name}» в базе «Роли» нет${where} — создайте агента в Arena, заполните «Agent URL» и поставьте «Статус» = «Активна».`;
+      if (role.gaps.some((gap) => /нет в «Ролях»/.test(gap))) {
+        return `Роли «${role.name}» в базе «Роли» нет${where}; сначала нужна запись роли с точной Function.`;
       }
-      if (role.status === "Активна" && role.url) {
-        return `Роль «${role.name}» активна и адрес агента есть${where} — проверьте «Функцию» и «Зону записи»: ${role.gaps.join(", ")}.`;
-      }
-      // D-015: адрес пары не заполняют руками в «Ролях» — его ставит транспорт,
-      // когда контейнер создаёт агента. Совет «дозаполните Agent URL» после
-      // снятия адреса у неадминских ролей отправлял бы Мастера в пустое поле.
-      const addressGap = role.gaps.some((gap) => /Экземплярах|Agent URL/.test(gap));
-      if (addressGap && role.status === "Активна") {
-        return `Роль «${role.name}» активна${where}, но рабочего агента пока нет — ` +
-          "транспорт создаст его в контейнере и запишет адрес в «Экземпляры» сам; " +
-          "Мастеру заполнять нечего. Карточка выдастся, как только адрес появится.";
-      }
-      return `Роль «${role.name}» в «Ролях» есть${where}, но ${role.gaps.join(", ")} — агента создавать не нужно: ` +
-        "дозаполните существующую строку (Статус ставит Мастер).";
+      return `Роль «${role.name}» не подходит для рабочей карточки${where}: ${role.gaps.join(", ")}. Исправьте определение/адресата, не Agent URL.`;
     });
-    return `${lines.join(" ")} Пока состав не укомплектован, ни одна карточка миссии не выдаётся: ` +
-      "это нехватка роли, а не поломка транспорта (D-075).";
+    return `${lines.join(" ")} Здесь проверяются только определение роли и «Кому»; Relay отвечает за слот, квоту и создание пары.`;
   }
 
-  /**
-   * Гейт выдачи и связь с контуром создания агентов (D-075 п. 3, 5).
-   *
-   * `provision` — результат `provisionRosterRequest` (см. 31-provision-core.js):
-   * контур выключен, кандидат уже запрошен или запрос только что поставлен.
-   * Гейт ничего не создаёт: он только не даёт выдать карточку и говорит, чего
-   * именно ждём.
-   */
-  function rosterGate(cards, { directory = [], recipientOptions = [], instances = [], provision = null } = {}) {
-    const roster = missionRoster(cards, { directory, recipientOptions, instances });
+  function rosterGate(cards, { directory = [], recipientOptions = [] } = {}) {
+    const roster = missionRoster(cards, { directory, recipientOptions });
     if (roster.ok) return { ok: true, roster, pause: null };
-    const text = rosterReason(roster);
-    const requested = provision && provision.requested;
     return {
       ok: false,
       roster,
-      provision,
       kind: "mission-roster",
       cls: "master",
-      reason: requested
-        ? `${text} Запрошено создание роли ${provision.requestedNames.join(", ")} — ждём одобрения админ-роли; карточки не выдаются до ответа.`
-        : text,
+      reason: rosterReason(roster),
     };
   }
 
@@ -22590,6 +22443,8 @@ function reviewPullRequest({ files, pr, zone } = {}) {
     tab: "",
     helloAt: 0,
     lastBeatAt: 0,
+    lastTurnClaimRenewAt: 0,
+    turnRequestId: "",
     lastContactAt: 0,
     lastError: "",
     lastPresenceAt: 0,
@@ -22852,10 +22707,10 @@ function reviewPullRequest({ files, pr, zone } = {}) {
     const name = String(roleName || "").trim();
     if (!relayConfigured()) return { ok: false, why: "служба Relay не подключена" };
     if (!cardId || !name) return { ok: false, why: "в карточке не хватает ID или роли" };
-    const directory = await roles().catch(() => []);
+    const directory = await roleRows().catch(() => []);
     const role = directory.find((item) => String(item.name || "").trim() === name);
     if (!role || !["Executor", "Auditor"].includes(role.fn)) {
-      return { ok: false, why: `роль «${name}» не является активным исполнителем` };
+      return { ok: false, why: `роль «${name}» не найдена как Executor/Auditor в «Ролях»` };
     }
     const result = await relayPost({
       action: "enqueue",
@@ -22922,7 +22777,16 @@ function reviewPullRequest({ files, pr, zone } = {}) {
   /** Удар сердца, пока агент работает: служба видит живой слот и выдачу. */
   async function relayBeat(slotId, waiting) {
     const nowMs = Date.now();
-    if (!waiting || !waiting.runId) return;
+    if (!waiting) return;
+    if (waiting.kind === "plan" && relayClient.turnRequestId) {
+      if (nowMs - relayClient.lastTurnClaimRenewAt < 10000) return;
+      relayClient.lastTurnClaimRenewAt = nowMs;
+      await relayPost({ action: "report", slotId, payload: {
+        turnClaimRenew: true, turnRequestId: relayClient.turnRequestId,
+      } });
+      return;
+    }
+    if (!waiting.runId) return;
     if (nowMs - relayClient.lastBeatAt < RELAY_BEAT_MS) return;
     relayClient.lastBeatAt = nowMs;
     const silentMs = relayClient.lastContactAt ? nowMs - relayClient.lastContactAt : 0;
@@ -22976,7 +22840,18 @@ function reviewPullRequest({ files, pr, zone } = {}) {
   }
 
   /** Тик клиента: опознание → работа или удар сердца. Никаких решений. */
+  function coordinatorTurnAck({ expect = null, pending = null, navigating = false, mission = null, missionError = "" } = {}) {
+    const started = Boolean(expect || pending || navigating);
+    return {
+      turnAck: true,
+      retry: !started && Boolean(mission || missionError),
+      noMission: !started && !mission && !missionError,
+      ...(missionError ? { missionError } : {}),
+    };
+  }
+
   async function relayClientTick() {
+    if (!relayClient.turnRequestId) relayClient.turnRequestId = String(GM_getValue("cfn-relay-turn-request-id", "") || "");
     if (typeof relayManagerMayPoll === "function" && !relayManagerMayPoll()) return;
     // Даже без ручной настройки пробуем стандартный IPv4 loopback. После первого
     // ответа службы relayConfigured() становится true; никакой ввод URL не нужен.
@@ -23035,7 +22910,7 @@ function reviewPullRequest({ files, pr, zone } = {}) {
           },
         });
       }
-      if (waiting) await relayBeat(slotId, waiting);
+      if (waiting || pending) await relayBeat(slotId, waiting || pending);
       return;
     }
     relayClient.lastLocalHold = "";
@@ -23082,6 +22957,9 @@ function reviewPullRequest({ files, pr, zone } = {}) {
       return;
     }
     if (res.kind === "turn" && res.turn === "coordinator") {
+      relayClient.turnRequestId = String(res.turnId || "");
+      GM_setValue("cfn-relay-turn-request-id", relayClient.turnRequestId);
+      relayClient.lastTurnClaimRenewAt = Date.now();
       // Пульт «Шаг» не читает Notion и не может сам начать разговор. Он
       // передаёт одноразовый сигнал admin-вкладке; дальше используем тот же
       // coordinatorStep/requestPlan, что и старый ручной цикл. Если открыта
@@ -23092,22 +22970,26 @@ function reviewPullRequest({ files, pr, zone } = {}) {
       const expectAfter = GM_getValue(K.expect, null);
       const pendingAfter = GM_getValue(K.pending, null);
       const navigating = Boolean(GM_getValue(K.step, false));
-      if (!expectAfter && !pendingAfter && !navigating) {
-        let mission = null;
-        let missionError = "";
-        if (typeof activeMission === "function") {
-          try { mission = await activeMission(); }
-          catch (error) { missionError = String((error && error.message) || error || "Notion не ответил").slice(0, 240); }
-        }
-        await relayPost({
-          action: "report", slotId,
-          payload: {
-            turnAck: true, turnRequestId: res.turnId,
-            noMission: !mission && !missionError,
-            retry: Boolean(mission || missionError),
-            ...(missionError ? { missionError } : {}),
-          },
-        });
+      let mission = null;
+      let missionError = "";
+      // Любое локально сохранённое ожидание/отправка означает, что ScriptCat
+      // принял turn и уже владеет ходом. ACK здесь снимает 30-секундный claim;
+      // Arena delivery подтверждается отдельно собственным marker/expect flow.
+      // Проверять миссию надо только если tick вообще не оставил локального состояния.
+      if (!expectAfter && !pendingAfter && !navigating && typeof activeMission === "function") {
+        try { mission = await activeMission(); }
+        catch (error) { missionError = String((error && error.message) || error || "Notion не ответил").slice(0, 240); }
+      }
+      const turnAck = await relayPost({
+        action: "report", slotId,
+        payload: {
+          ...coordinatorTurnAck({ expect: expectAfter, pending: pendingAfter, navigating, mission, missionError }),
+          turnRequestId: res.turnId,
+        },
+      });
+      if (turnAck && turnAck.ok) {
+        relayClient.turnRequestId = "";
+        GM_setValue("cfn-relay-turn-request-id", "");
       }
       return;
     }

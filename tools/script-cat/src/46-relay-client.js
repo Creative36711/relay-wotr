@@ -32,6 +32,8 @@
     tab: "",
     helloAt: 0,
     lastBeatAt: 0,
+    lastTurnClaimRenewAt: 0,
+    turnRequestId: "",
     lastContactAt: 0,
     lastError: "",
     lastPresenceAt: 0,
@@ -294,10 +296,10 @@
     const name = String(roleName || "").trim();
     if (!relayConfigured()) return { ok: false, why: "служба Relay не подключена" };
     if (!cardId || !name) return { ok: false, why: "в карточке не хватает ID или роли" };
-    const directory = await roles().catch(() => []);
+    const directory = await roleRows().catch(() => []);
     const role = directory.find((item) => String(item.name || "").trim() === name);
     if (!role || !["Executor", "Auditor"].includes(role.fn)) {
-      return { ok: false, why: `роль «${name}» не является активным исполнителем` };
+      return { ok: false, why: `роль «${name}» не найдена как Executor/Auditor в «Ролях»` };
     }
     const result = await relayPost({
       action: "enqueue",
@@ -364,7 +366,16 @@
   /** Удар сердца, пока агент работает: служба видит живой слот и выдачу. */
   async function relayBeat(slotId, waiting) {
     const nowMs = Date.now();
-    if (!waiting || !waiting.runId) return;
+    if (!waiting) return;
+    if (waiting.kind === "plan" && relayClient.turnRequestId) {
+      if (nowMs - relayClient.lastTurnClaimRenewAt < 10000) return;
+      relayClient.lastTurnClaimRenewAt = nowMs;
+      await relayPost({ action: "report", slotId, payload: {
+        turnClaimRenew: true, turnRequestId: relayClient.turnRequestId,
+      } });
+      return;
+    }
+    if (!waiting.runId) return;
     if (nowMs - relayClient.lastBeatAt < RELAY_BEAT_MS) return;
     relayClient.lastBeatAt = nowMs;
     const silentMs = relayClient.lastContactAt ? nowMs - relayClient.lastContactAt : 0;
@@ -418,7 +429,18 @@
   }
 
   /** Тик клиента: опознание → работа или удар сердца. Никаких решений. */
+  function coordinatorTurnAck({ expect = null, pending = null, navigating = false, mission = null, missionError = "" } = {}) {
+    const started = Boolean(expect || pending || navigating);
+    return {
+      turnAck: true,
+      retry: !started && Boolean(mission || missionError),
+      noMission: !started && !mission && !missionError,
+      ...(missionError ? { missionError } : {}),
+    };
+  }
+
   async function relayClientTick() {
+    if (!relayClient.turnRequestId) relayClient.turnRequestId = String(GM_getValue("cfn-relay-turn-request-id", "") || "");
     if (typeof relayManagerMayPoll === "function" && !relayManagerMayPoll()) return;
     // Даже без ручной настройки пробуем стандартный IPv4 loopback. После первого
     // ответа службы relayConfigured() становится true; никакой ввод URL не нужен.
@@ -477,7 +499,7 @@
           },
         });
       }
-      if (waiting) await relayBeat(slotId, waiting);
+      if (waiting || pending) await relayBeat(slotId, waiting || pending);
       return;
     }
     relayClient.lastLocalHold = "";
@@ -524,6 +546,9 @@
       return;
     }
     if (res.kind === "turn" && res.turn === "coordinator") {
+      relayClient.turnRequestId = String(res.turnId || "");
+      GM_setValue("cfn-relay-turn-request-id", relayClient.turnRequestId);
+      relayClient.lastTurnClaimRenewAt = Date.now();
       // Пульт «Шаг» не читает Notion и не может сам начать разговор. Он
       // передаёт одноразовый сигнал admin-вкладке; дальше используем тот же
       // coordinatorStep/requestPlan, что и старый ручной цикл. Если открыта
@@ -534,22 +559,26 @@
       const expectAfter = GM_getValue(K.expect, null);
       const pendingAfter = GM_getValue(K.pending, null);
       const navigating = Boolean(GM_getValue(K.step, false));
-      if (!expectAfter && !pendingAfter && !navigating) {
-        let mission = null;
-        let missionError = "";
-        if (typeof activeMission === "function") {
-          try { mission = await activeMission(); }
-          catch (error) { missionError = String((error && error.message) || error || "Notion не ответил").slice(0, 240); }
-        }
-        await relayPost({
-          action: "report", slotId,
-          payload: {
-            turnAck: true, turnRequestId: res.turnId,
-            noMission: !mission && !missionError,
-            retry: Boolean(mission || missionError),
-            ...(missionError ? { missionError } : {}),
-          },
-        });
+      let mission = null;
+      let missionError = "";
+      // Любое локально сохранённое ожидание/отправка означает, что ScriptCat
+      // принял turn и уже владеет ходом. ACK здесь снимает 30-секундный claim;
+      // Arena delivery подтверждается отдельно собственным marker/expect flow.
+      // Проверять миссию надо только если tick вообще не оставил локального состояния.
+      if (!expectAfter && !pendingAfter && !navigating && typeof activeMission === "function") {
+        try { mission = await activeMission(); }
+        catch (error) { missionError = String((error && error.message) || error || "Notion не ответил").slice(0, 240); }
+      }
+      const turnAck = await relayPost({
+        action: "report", slotId,
+        payload: {
+          ...coordinatorTurnAck({ expect: expectAfter, pending: pendingAfter, navigating, mission, missionError }),
+          turnRequestId: res.turnId,
+        },
+      });
+      if (turnAck && turnAck.ok) {
+        relayClient.turnRequestId = "";
+        GM_setValue("cfn-relay-turn-request-id", "");
       }
       return;
     }

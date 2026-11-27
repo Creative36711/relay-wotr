@@ -570,33 +570,28 @@
    * Координатор видит свой задел и распоряжается им сам.
    */
   /**
-   * Дефект адресата — один для любого состояния карточки (D-075 п. 2).
+   * Структурная ошибка адресата, не готовность экземпляра (D-022).
    *
-   * 08.11 карточка в Ready с неактивным адресатом выглядела в промпте
-   * нормальной: список ролей читал только `draftLine` (`:1081`), а `readyLine`
-   * и `reworkLine` называли одно имя. Координатор узнавал о дефекте на выдаче,
-   * то есть в самом дорогом месте. Теперь один и тот же разбор работает у всех
-   * трёх списков, а слова — те же три случая, что в `blockedReason`.
+   * Coordinator выбирает семантическую роль. Legacy Status/Agent State не
+   * являются гейтом выдачи; Relay выбирает слот/аккаунт, проверяет квоты и
+   * наличие экземпляра. Worker Agent URL в
+   * «Ролях» не хранится: Relay создаёт пару role×slot и пишет адрес в
+   * «Экземпляры». Поэтому этот помощник отмечает только отсутствующую роль или
+   * неправильную Function, а не состояние доставки.
    */
   function roleDefect(role, known = []) {
     const name = String(role || "").trim();
     if (!name) return "роль не задана";
     const seen = new Map();
     for (const item of known || []) {
-      if (typeof item === "string") seen.set(norm(item), { status: "Активна", url: "есть" });
-      else if (item && item.name) seen.set(norm(item.name), { status: item.status || "", url: item.url || "", fn: item.fn || "" });
+      if (typeof item === "string") seen.set(norm(item), { fn: "Executor" });
+      else if (item && item.name) seen.set(norm(item.name), { fn: item.fn || "" });
     }
     if (!seen.size) return name;
     const row = seen.get(norm(name));
     if (!row) return `${name} — нет в «Ролях»`;
-    if ((row.status || "") !== "Активна") return `${name} — Статус «${row.status || "пуст"}»`;
-    // D-004: квота аккаунта — не дефект строки, но причина невыдачи ровно та же,
-    // и молчать о ней значит гонять Координатора по кругу «роль активна, выдавай».
-    if (typeof accountLimitBlocks === "function" && accountLimitBlocks({ account: row.account }))
-      return `${name} — ${accountLimitText(row.account)}`;
-    if (!row.url) return `${name} — нет Agent URL`;
-    if (row.fn && !["Coordinator", "Executor", "Auditor", "Reviewer", "Maintainer"].includes(row.fn))
-      return `${name} — Функция «${row.fn}» не годится`;
+    if (!row.fn) return `${name} — Функция не задана`;
+    if (!["Executor", "Auditor"].includes(row.fn)) return `${name} — Функция «${row.fn}» не является рабочей`;
     return "";
   }
 
@@ -684,55 +679,37 @@
    * базе есть, просто «Статус» = «Ждёт» и «Agent URL» пуст. Мастер по такой
    * строке пошёл бы создавать нового агента вместо того, чтобы дозаполнить
    * существующую роль. Поэтому текст паузы собирается по фактам: имя роли,
-   * её настоящий статус, очередь и уже открытый вопрос.
+   * её структурное определение, очередь и уже открытый вопрос.
    */
   function blockedReason({ need = "", directory = [], queue = null, open = [], ask = "", asked = false } = {}) {
     const rows = directory || [];
     const find = (name) => rows.find((r) => norm(r.name) === norm(name));
-    const lacks = (row) => {
-      if (!row) return "";
-      const bits = [];
-      if ((row.status || "") !== "Активна") bits.push(`«Статус» = «${row.status || "пуст"}»`);
-      if (!row.url) bits.push("«Agent URL» пуст");
-      return bits.join(", ");
-    };
+    const isWorkerRole = (row) => Boolean(row && ["Executor", "Auditor"].includes(row.fn));
     const parts = [];
     const name = String(need || "").trim();
     if (name) {
       const row = find(name);
-      const gap = lacks(row);
       parts.push(`Координатор остановил цикл: нужна роль «${name}».`);
       if (!row) {
-        parts.push(
-          `Роли «${name}» в базе «Роли» нет — создайте агента в Arena, заполните «Agent URL» и поставьте «Статус» = «Активна».`,
-        );
-      } else if (!gap) {
-        parts.push(
-          `Роль «${name}» активна и «Agent URL» заполнен — значит, Координатор её не увидел: проверьте «Функцию» и «Зону записи».`,
-        );
+        parts.push(`Роли «${name}» в базе «Роли» нет; это дефект определения роли, не отсутствие Arena-агента.`);
+      } else if (isWorkerRole(row)) {
+        parts.push(`Рабочая роль «${name}» определена (${row.fn}). Legacy Status/Agent State и пустой worker URL не блокируют назначение; Relay выберет слот/аккаунт, учтёт квоту и создаст пару при необходимости. Coordinator должен назначить подходящую карточку в Ready.`);
       } else {
-        parts.push(
-          `Роль «${name}» в «Ролях» есть, но ${gap} — создавать агента не нужно: заполните «Agent URL» и поставьте «Статус» = «Активна».`,
-        );
+        parts.push(`Роль «${name}» есть, но Function «${row.fn || "не задана"}» не является Executor/Auditor; исправьте определение роли, не создавайте URL вручную.`);
       }
     } else {
       // Роль не названа — показываем очередь: по ней видно, чья это работа.
       parts.push("Координатор остановил цикл, но роль не назвал.");
       const waiting = ((queue && queue.draft) || [])
         .map((card) => ({ card, role: taskRole(card) }))
-        .filter(({ role }) => role && !find(role)?.url)
-        .map(
-          ({ card, role }) =>
-            `черновик «${taskTitle(card)}» ждёт роль ${role} — ${lacks(find(role)) || "роли нет в «Ролях»"}`,
-        );
+        .filter(({ role }) => role && !find(role))
+        .map(({ card, role }) => `черновик «${taskTitle(card)}» назначен роли «${role}», которой нет в «Ролях»`);
       if (waiting.length) {
-        parts.push(`По очереди видно: ${waiting.join("; ")}. Новый агент нужен только если роли правда нет.`);
+        parts.push(`По очереди видно: ${waiting.join("; ")}.`);
       } else if (queue) {
-        parts.push(
-          (queue.rework || []).length
-            ? "Черновиков, которым не хватает роли, нет — значит, причина другая: смотрите «Ответ» карточек в Rework."
-            : "Черновиков, которым не хватает роли, нет, и Rework пуст — по очереди причину не видно.",
-        );
+        parts.push((queue.rework || []).length
+          ? "В Draft нет неизвестной роли — смотрите «Ответ» карточек в Rework."
+          : "В Draft нет неизвестной роли, и Rework пуст — причина остановки по очереди не видна.");
       }
     }
     if (queue && queue.summary) parts.push(`Очередь: ${queue.summary}.`);
@@ -768,7 +745,7 @@
       );
     }
     parts.push(
-      "Право на остановку у Координатора одно — роль, которая не может взять работу; пустую очередь, Rework и спорный Scope он разбирает сам.",
+      "Остановка оправдана только если не определена рабочая роль; Status/Agent State/worker URL не являются причиной остановки Coordinator. Relay решает фактические слот, квоту и provisioning, а пустую очередь, Rework и спорный Scope разбирает Coordinator.",
     );
     return parts.join(" ");
   }
@@ -1192,10 +1169,9 @@
         // просто «Ждёт». Поэтому текст собирается по фактам (blockedReason), а
         // не по шаблону: Мастер должен видеть, что дозаполнить, а что создать.
         // `need` прочитан выше — им же адресуется прямой вопрос (D-083).
-        // Остановка законна только тогда, когда названной роли действительно
-        // некому отвечать: её нет в «Ролях», у неё не «Активна» или пуст
-        // «Agent URL». Роль, которая активна и имеет адрес, — не повод встать:
-        // работа для неё либо есть, либо решение за Координатором.
+        // Остановка законна только если рабочая роль не определена в «Ролях»
+        // или у неё неверная Function. Legacy Status/Agent State/worker URL —
+        // не основание блокировать выбор; Relay разрешает слот, квоту и provisioning.
         //
         // Всё остальное («непонятно, что дальше», пустая очередь, спорный
         // Scope) — работа Координатора, а не повод будить Мастера (1.4.80).
@@ -1203,10 +1179,10 @@
         // подряд — уже поломка, и тогда пауза честно зовёт человека.
         const directory = need ? await roleRows().catch(() => []) : [];
         const named = need ? directory.find((r) => norm(r.name) === norm(need)) : null;
-        const canTake = Boolean(named && (named.status || "") === "Активна" && named.url);
+        const canTake = Boolean(named && ["Executor", "Auditor"].includes(named.fn));
         if (!need || canTake) {
           const why = need
-            ? `роль «${need}» активна и «Agent URL» заполнен — значит, Координатор её не увидел`
+            ? `рабочая роль «${need}» определена; Status/Agent State и worker URL не блокируют её назначение`
             : "роль не названа";
           const tries = (Number(GM_getValue("cfn-blocked-norole", 0)) || 0) + 1;
           GM_setValue("cfn-blocked-norole", tries);
@@ -1231,10 +1207,10 @@
             mission,
             role,
             fresh0 || { summary: "очередь не прочитана" },
-            'Остановка не принимается: next = "blocked" законен только с need = "<роль>", которой нет ' +
-              "или которая не активна. " +
-              (need ? `Роль «${need}» активна и «Agent URL» заполнен — ход возможен. ` : "") +
-              "Реши сам — или назови роль, которой действительно не хватает.",
+            'Остановка не принимается: next = "blocked" законен только если нужная рабочая роль не определена ' +
+              "в базе «Роли». Status/Agent State/worker URL не блокируют назначение; Relay выберет слот/аккаунт по квоте и создаст пару при необходимости. " +
+              (need ? `Роль «${need}» есть и имеет рабочую Function — назначь ей карточку в Ready. ` : "") +
+              "Реши сам — или назови действительно отсутствующую роль.",
             { force: true },
           );
           return true;
@@ -1344,26 +1320,16 @@
         if (returned) log("Миссия возвращена, «Возврат» в «Итоге» есть — передаю на приёмку повторно.");
         return startReview(mission, fresh);
       }
-      // D-075 п. 4: до первой выдачи карточки миссии транспорт сверяет состав.
-      // Проверка стоит здесь — после разбора Submitted и до решения о выдаче:
-      // принять чужую работу некомплект не мешает, а выдать карточку роли,
-      // которой нет или которая не активна, не даёт. Раньше некомплект
-      // всплывал на самой отправке, то есть в самом дорогом месте.
+      // Структурная проверка не подменяет транспортную готовность: статус,
+      // экземпляр (роль × слот), аккаунт и лимит разрешаются Relay после того,
+      // как Coordinator выбрал карточку и записал Ready. Ни отсутствие worker URL,
+      // ни роль в ожидании provisioning не останавливают планировщика.
       const rosterCards = [...ready, ...(draft || [])];
-      // Вся база, а не только активные строки: по ней видно, чего именно не
-      // хватает — статуса, Agent URL или самой роли (D-075 п. 4).
       const directoryNow = await roleRows().catch(() => []);
       const recipientOptions = await recipientOptionNames().catch(() => []);
-      // D-015: адрес роли — пара (роль, слот) в «Экземплярах». Гейт состава без
-      // этих строк объявил бы некомплект по каждой неадминской роли: в «Ролях»
-      // её «Agent URL» больше нет, и это норма, а не недозаполненность.
-      const instancesNow = await relayInstances(await relaySnapshot().catch(() => null));
-      const roster = missionRoster(rosterCards, { directory: directoryNow, recipientOptions, instances: instancesNow });
+      const roster = missionRoster(rosterCards, { directory: directoryNow, recipientOptions });
       if (!roster.ok) {
-        const provisionPlan = provisionRosterRequest(roster.broken, provisionConfig(), provisionRequestState());
-        const gate = rosterGate(rosterCards, {
-          directory: directoryNow, recipientOptions, instances: instancesNow, provision: provisionPlan,
-        });
+        const gate = rosterGate(rosterCards, { directory: directoryNow, recipientOptions });
         pause(gate.reason, { kind: "mission-roster", ref: mission.id, need: roster.broken.map((r) => r.name).join(", ") });
         return true;
       }
@@ -1505,18 +1471,13 @@
     // ответа, который он принимает, а не только счётчики очереди.
     const answerLine = answerLogLine(queue.submitted);
     log(`План Координатора запрошен (${summary}).`);
-    // Вся база, а не только активные: по ней видно, чего именно не хватает —
-    // статуса, Agent URL или самой роли.
+    // Вся база, а не только navigation view: сверяем имя роли и её Function;
+    // readiness экземпляра и выбор слота здесь не проверяются.
     const directory = await roleRows().catch(() => []);
     const drafts = draftLine(queue.draft || [], directory);
-    // D-004: недоступность по квоте и «работать нечем» идут в тот же план, что и
-    // очередь: иначе Координатор называет в next роль лимитированного аккаунта и
-    // получает отказ за отказом, хотя дело не в постановке.
-    const accountLines = typeof accountPlanNote === "function" ? accountPlanNote() : "";
-    const idleLine = typeof accountIdleNote === "function"
-      ? accountIdleNote(queue.ready || [], { missionId: mission.id })
-      : "";
-    const planNote = [note, accountLines, idleLine].filter(Boolean).join(" ");
+    // Account quotas and slot choice belong to Relay dispatch, not to the plan.
+    // Keep only a concrete retry/handoff note in this Coordinator turn.
+    const planNote = String(note || "").trim();
     // Вопросы к Мастеру и его ответы: ответы доставляются ровно один раз —
     // отметка ставится после того, как промпт действительно ушёл.
     const briefing = await questionBriefing(mission);
@@ -1570,7 +1531,6 @@
         title: "план Координатора",
         fallbackText,
         planContext: summary,
-        accountNote: accountLines || "",
         // Снимок «с замечаниями или без»: по нему снятие устаревшего
         // ожидания не переспрашивает план, ответ на который уже пришёл.
         planBeforeReturn,
@@ -1580,9 +1540,5 @@
       },
     );
     if (sent) await markDelivered(briefing.fresh);
-    // D-004: «работать нечем» считается заданным только теперь — когда план
-    // действительно ушёл. Отмечать при сборке текста значило бы потерять вопрос
-    // вместе с неотправленным планом (капча, пауза, ожидание).
-    if (sent && idleLine && typeof accountIdleAskedMark === "function") accountIdleAskedMark(mission.id);
     return true;
   }

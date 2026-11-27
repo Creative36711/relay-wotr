@@ -31,17 +31,16 @@ const prompt = PromptCompiler.compile(planRequest({
 
 assert.match(prompt, /1 Submitted, 0 Running, 1 Ready, 0 Rework, 2 Draft/, 'черновики есть в счётчике очереди');
 assert.match(prompt, /CASEA-1\.10 · Регрессия и отчёт/, 'черновики перечислены списком');
-assert.match(prompt, /Draft→Ready/, 'выдача черновика — право Координатора');
+assert.match(prompt, /Черновики правь под оракул, выдавай сам/, 'выдача подходящего черновика — право Coordinator');
 assert.match(prompt, /Running\/Submitted — движок/, 'граница движка названа точно');
 assert.match(prompt, /Accepted\/Rework\/Ready — ты/, 'Ready — не движок, а Координатор');
 assert.match(prompt, /Готовы к выдаче: CASEA-1\.10 · Регрессия и отчёт \(Build\/Release, Sequence 100\)/, 'Ready перечислен с ролью');
 assert.match(prompt, /next — имя роли выдаваемой карточки или done/, 'адресат берётся из карточки');
-// D-092: процессные поля неадминской строки Координатор правит решением
-// приёмки, а права (Статус, Agent URL, Agent Admin, удаление) остаются Мастеру.
-assert.match(prompt, /Статус, Agent URL, Agent Admin и удаление — Мастер/,
-  'права роли — не зона Координатора');
-assert.match(prompt, /Зона записи\/Гейт\/Репозиторий\/Функция — твои по решению приёмки/,
-  'процессные поля — зона Координатора по решению приёмки');
+// D-022: worker readiness and account/container policy stay with Relay.
+assert.match(prompt, /Relay выбирает слот\/аккаунт с учётом квоты/);
+assert.match(prompt, /Не проверяй Status, worker URL\/Agent State, слот или квоту/);
+assert.match(prompt, /Admin URL\/права\/удаление — Мастер/,
+  'administrative role state remains human-managed');
 assert.match(prompt, /Reviewer карточку не выдавай/, 'Reviewer не получает рабочую карточку');
 assert.doesNotMatch(prompt, /не вправе|нельзя переводить Draft/i, 'запрета на выдачу черновика нет');
 
@@ -93,44 +92,28 @@ assert.ok(!/C · три/.test(three), 'свёрнутые не перечисл�
 // Роль не задана — так и пишем, а не пустые скобки.
 assert.match(draftLine([card('D · четыре', '', 40)]), /роль не задана/, 'пустая роль названа');
 
-// Строки базы «Роли» целиком: видно, чего именно не хватает.
-const row = (name, status, url) => ({ name, status, url });
+// Directory rows expose only semantic role/Function to Coordinator planning.
+const row = (name, fn, status = '', url = '') => ({ name, fn, status, url });
 const DIRECTORY = [
-  row('FixtureExecutor', 'Активна', 'https://arena.ai/agent/fixtureExecutor'),
-  row('Build/Release', 'Ждёт', 'https://arena.ai/agent/01a16d5c-2b46-7efe-a7e7-06229a0e6ad1'),
-  row('Studio', 'Активна', ''),
+  row('FixtureExecutor', 'Executor', 'Активна', 'https://arena.ai/agent/fixtureExecutor'),
+  row('Build/Release', 'Executor', 'Ждёт', ''),
+  row('Studio', 'Auditor', 'Активна', ''),
+  row('Reviewer', 'Reviewer', 'Активна', 'https://arena.ai/agent/reviewer'),
 ];
 
-// Агент создан, Agent URL заполнен — не хватает только статуса.
-const waiting = draftLine([card('E · пять', 'Build/Release', 50)], DIRECTORY);
-assert.match(waiting, /Build\/Release — Статус «Ждёт»/, 'ждать — это статус, а не пустая ссылка');
-assert.doesNotMatch(waiting, /Agent URL/, 'заполненный Agent URL не при чём');
-
-// Статус «Активна», но ссылки нет.
-assert.match(
-  draftLine([card('F · шесть', 'Studio', 60)], DIRECTORY),
-  /Studio — нет Agent URL/,
-  'пустая ссылка названа своим словом',
-);
-
-// Роли нет в базе вовсе — это не «не активна», а опечатка или новая роль.
-assert.match(
-  draftLine([card('G · семь', 'UI/UX', 70)], DIRECTORY),
-  /UI\/UX — нет в «Ролях»/,
-  'отсутствующая роль названа своим словом',
-);
-
-// Регистр не мешает сверке.
-assert.ok(
-  !/Статус|нет Agent URL|нет в «Ролях»/.test(draftLine([card('H · восемь', 'fixtureExecutor', 80)], DIRECTORY)),
-  'регистр роли не мешает сверке',
-);
-
-// Без базы ролей не пугаем ложной пометкой.
-assert.ok(
-  !/Статус|нет Agent URL|нет в «Ролях»/.test(draftLine([card('I · девять', 'Build/Release', 90)], [])),
-  'без списка ролей пометки нет',
-);
+for (const name of ['Build/Release', 'Studio']) {
+  const line = draftLine([card(`role ${name}`, name, 50)], DIRECTORY);
+  assert.doesNotMatch(line, /Статус|Agent URL/, 'worker readiness is not a planning defect');
+}
+assert.match(draftLine([card('G · семь', 'UI/UX', 70)], DIRECTORY), /UI\/UX — нет в «Ролях»/,
+  'unknown role definition remains a structural issue');
+assert.match(draftLine([card('R · reviewer', 'Reviewer', 80)], DIRECTORY),
+  /Reviewer — Функция «Reviewer» не является рабочей/,
+  'non-worker Function cannot receive a work card');
+assert.doesNotMatch(draftLine([card('H · восемь', 'fixtureExecutor', 90)], DIRECTORY), /нет в «Ролях»/,
+  'role matching remains case-insensitive');
+assert.doesNotMatch(draftLine([card('I · девять', 'Build/Release', 100)], []), /нет в «Ролях»/,
+  'without directory facts the helper does not invent a missing-role defect');
 
 // ── 2a. readyLine: что лежит в Ready — с ролью ─────────────────────────────
 const rFrom = src.indexOf('  function readyLine(cards, known = []) {');
@@ -226,26 +209,18 @@ queueOf({ id: 'm1' }).then((queue) => {
   assert.match(again.reason, /создать карточку или выдать черновик/, 'сказано, что он умеет');
 
   const directory = [
-    { name: 'Coordinator', status: 'Активна', url: 'https://arena.ai/agent/c' },
-    { name: 'FixtureExecutor', status: 'Активна', url: 'https://arena.ai/agent/k' },
-    { name: 'Build/Release', status: 'Ждёт', url: 'https://arena.ai/agent/b' },
+    { name: 'Coordinator', fn: 'Coordinator', status: 'Активна', url: 'https://arena.ai/agent/c' },
+    { name: 'FixtureExecutor', fn: 'Executor', status: 'Активна', url: 'https://arena.ai/agent/k' },
+    { name: 'Build/Release', fn: 'Auditor', status: 'Ждёт', url: '' },
   ];
-  const idle = decisionRoute('Build/Release', { roles, readyRoles: ['Build/Release'], directory });
-  assert.equal(idle.kind, 'ask', 'карточка есть, роль не активна — объясняем, а не молчим');
-  assert.match(idle.note, /карточка в Ready есть, но выдать её некому — Статус «Ждёт», Agent URL заполнен/, 'причина названа точно');
-  assert.match(idle.note, /Статус роли и Agent URL ставит Мастер/, 'сказано, чья это зона');
-  assert.match(idle.note, /Активные роли: Coordinator, FixtureExecutor/, 'перечислены те, кому выдать можно');
-  assert.match(idle.note, /правка черновика — твоё право/, 'Координатор может назначить другую роль');
-
-  const idle2 = decisionRoute('Build/Release', { roles, readyRoles: ['Build/Release'], directory, misses: 1 });
-  assert.equal(idle2.kind, 'pause', 'повтор — пауза, а не бесконечный круг');
+  const assigned = decisionRoute('Build/Release', { roles, readyRoles: ['Build/Release'], directory });
+  assert.deepEqual(assigned, { kind: 'dispatch', roleName: 'Build/Release' },
+    'non-active status and empty worker URL do not veto Coordinator role assignment');
 
   const self = decisionRoute('Coordinator', { roles, readyRoles: [] });
   assert.match(self.note, /выдай работу сам/, 'ход вернулся — выдай сам');
 
   console.log(
-    `OK: relay ${V} — Координатор сам создаёт и выдаёт карточки: Draft → Ready, ` +
-      'черновики видны списком, считаются в очереди, а причина «выдать некому» названа точно ' +
-      '(Статус / нет Agent URL / нет в «Ролях»)',
+    `OK: relay ${V} — Coordinator plans by role/function; Relay owns status, URL, slot and account quota; Draft/Ready authority remains intact`,
   );
 });
