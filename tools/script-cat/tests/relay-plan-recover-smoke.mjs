@@ -149,7 +149,7 @@ const cut = (from, to) => {
   const step = src.slice(src.indexOf('  async function coordinatorStep('), src.indexOf('  async function requestPlan('));
   // Отсчёт — момент, когда ответ Координатора найден в чате: до него снимок
   // не нужен (ответа нет), после него ожидание уже снимается.
-  const marker = step.indexOf('const decision = messagesAfter(expect.watermark)');
+  const marker = step.indexOf('const decisionHit = messagesAfter(expect.watermark)');
   const snap = step.indexOf('GM_setValue(K.planRecover,');
   const clear = step.indexOf('GM_setValue(K.expect, null);', snap);
   assert.ok(marker > 0 && snap > marker, 'снимок кладётся после того, как маркер найден');

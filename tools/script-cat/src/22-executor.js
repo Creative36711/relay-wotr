@@ -653,6 +653,11 @@
     // поэтому запоминаем именно ответ сервера.
     rememberAnswerStamp(result.dispatch_id, await patch(result.dispatch_id, props));
     GM_setValue(`cfn-done:${result.dispatch_id}:${result.run_id}`, true);
+    // D-026: карточка Submitted — ответ действительно принят. Служба
+    // закрывает свою выдачу и по маркеру двигает ход цикла.
+    if (typeof relayReportDispatch === "function") {
+      relayReportDispatch(expect, hit, result, answer).catch(() => {});
+    }
     log(
       noPr
         ? `Ответ ${role.name} записан${review?.verdict ? ` (вердикт: ${review.verdict})` : ""}, PR не нужен, задача → Submitted.`

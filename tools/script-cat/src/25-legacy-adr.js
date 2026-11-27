@@ -944,10 +944,11 @@
     const draft = await tasks("Draft", mission).catch(() => []);
 
     if (expect && (expect.kind === "plan" || expect.kind === "reminder")) {
-      const decision = messagesAfter(expect.watermark)
-        .map((m) => parseMarker(m.raw, "CF_COORDINATOR_RESULT"))
-        .filter(Boolean)
+      const decisionHit = messagesAfter(expect.watermark)
+        .map((m) => ({ raw: m.raw, obj: parseMarker(m.raw, "CF_COORDINATOR_RESULT") }))
+        .filter((x) => x.obj)
         .at(-1);
+      const decision = decisionHit ? decisionHit.obj : null;
       if (!decision) return markerMissing(role, expect, "CF_COORDINATOR_RESULT", manual);
 
       // Решение по устаревшей очереди не применяется.
@@ -1372,6 +1373,10 @@
         readyRoles: ready.map(taskRole),
         misses: Number(GM_getValue("cfn-plan-miss", 0)) || 0,
       });
+      // D-026: решение применено — служба узнаёт о ходе (next/done).
+      if (decisionHit && typeof relayTurnMarker === "function") {
+        relayTurnMarker(decisionHit.raw || JSON.stringify(decision)).catch(() => {});
+      }
 
       if (route.kind === "pause") {
         GM_setValue("cfn-plan-miss", 0);

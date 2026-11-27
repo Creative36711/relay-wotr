@@ -143,7 +143,7 @@ assert.match(
 // ── 4. Сам блок ответа ─────────────────────────────────────────────────────
 const block = sliceBetween(
   '  const answerQueue = () => {',
-  '  async function dispatchTask(card, roleName, mission = null) {',
+  '  async function dispatchTask(card, roleName, mission = null, opts = {}) {',
 );
 
 const store = new Map();

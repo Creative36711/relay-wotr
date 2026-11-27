@@ -1319,7 +1319,7 @@
     return "";
   }
 
-  async function dispatchTask(card, roleName, mission = null) {
+  async function dispatchTask(card, roleName, mission = null, opts = {}) {
     const role = (await roles()).find((r) => r.name === roleName);
     if (!role) throw new Error(`Роль «${roleName}» не найдена среди активных.`);
     // Защита перед любыми чтениями/записями карточки и журнала: повторная
@@ -1476,7 +1476,9 @@
       log("Карточку выдали заново — прошлая неотправленная очередь снята.");
     }
 
-    const runId = uid();
+    // D-026: когда выдачу завела служба, Run ID её — книга, а не локальная
+    // генерация: ответ агента должен указывать на ту выдачу, что в «Выдачах».
+    const runId = (opts && opts.runId) || uid();
     // 08.11, 18:34: поле «Payload Drive File ID» у B1 перечисляло два файла
     // через запятую — и скрипт отправил шлюзу всю строку как один id, получив
     // «Некорректный Drive file ID». Сеть и карточка были в порядке: отказ

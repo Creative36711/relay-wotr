@@ -744,14 +744,104 @@ export function createService({
    * несуществующий run id, это не «ход потерян», а факт с объяснением —
    * какой run искали, какой нашли, чей он.
    */
+  /**
+   * Переходы хода по решению из маркера (D-025/D-026).
+   *
+   * FSM, а не «кто первый попался»: решение применяется только из того
+   * состояния, в котором оно легитимно — иначе повторный отчёт того же
+   * маркера задвигал бы ход назад и дублировал круг доработок.
+   */
+  async function applyTurnDecision(decision, { slotId = "", tab = "", runId = "", card = "" } = {}) {
+    if (!decision) return { applied: false, why: "в маркере нет решения хода" };
+    const turnNow = String((await loadSettings())["cycle.turn"] || "coordinator");
+    if (decision.kind === "coordinator") {
+      if (decision.next === "done") {
+        if (turnNow !== "coordinator") return { applied: false, why: `ход уже «${turnNow}»: done не применяю` };
+        await writeSetting("cycle.turn", "warden");
+        await record({ slot: slotId, tab, kind: "state", text: "ход: миссия готова — передана приёмке (Warden)", runId, card });
+        return { applied: true, turn: "warden" };
+      }
+      if (turnNow === "coordinator") return { applied: false, why: "ход уже у Координатора" };
+      await writeSetting("cycle.turn", "coordinator");
+      await record({ slot: slotId, tab, kind: "state", text: `ход: план Координатора (next: ${clip(decision.next, 40)}) — цикл открыт`, runId, card });
+      return { applied: true, turn: "coordinator" };
+    }
+    if (decision.kind === "review") {
+      if (turnNow !== "warden") return { applied: false, why: `вердикт приёмки при ходе «${turnNow}» не применяю` };
+      const settingsNow = await loadSettings();
+      if (decision.verdict === "accept") {
+        await writeSetting("cycle.turn", "done");
+        await record({ slot: slotId, tab, kind: "state", text: "приёмка: миссия принята — цикл завершён", runId, card });
+        return { applied: true, turn: "done" };
+      }
+      if (decision.verdict === "rework") {
+        const round = (Number(settingsNow["cycle.round"]) || 0) + 1;
+        await writeSetting("cycle.round", round);
+        await writeSetting("cycle.turn", "coordinator");
+        if (round > 3) {
+          await pause({ reason: `приёмка: возврат №${round} — лимит доработок (3), нужен Мастер` });
+        } else {
+          await record({ slot: slotId, tab, kind: "state", level: "warn", text: `приёмка: возврат (круг ${round}) — ход Координатору`, runId, card });
+        }
+        return { applied: true, turn: "coordinator", round };
+      }
+      await pause({ reason: "приёмка: master — без владельца не продолжить" });
+      return { applied: true, turn: turnNow };
+    }
+    return { applied: false, why: "нет решения хода" };
+  }
+
   async function report({ slotId = "", tab = "", payload = {} } = {}) {
     const at = isoNow(now());
+
+    // Маркер хода без выдачи (D-026): план Координатора и вердикт приёмки —
+    // служебные ходы, у них нет Run ID в книге. Вкладка присылает текст
+    // маркера, служба применяет FSM хода; строгость ниже («выдачи нет») к
+    // таким отчётам не относится — нечего путать с потерянной выдачей.
+    if (payload.markerOnly) {
+      const decision = parseTurnMarker(payload.markerRaw || "");
+      const applied = await applyTurnDecision(decision, { slotId, tab, card: String(payload.markerCard || "") });
+      return { ok: true, markerOnly: true, ...applied };
+    }
+
     const data = await loadAll();
     const runId = norm(payload.runId);
     const run = data.runs.find((item) => norm(item["Run ID"]) === runId) || null;
     const markerRunId = String(payload.markerRunId || "").trim();
     const markerCard = String(payload.markerCard || "").trim();
     const verdict = [];
+
+    // Вкладка не смогла выдать карточку (D-026): выдача закрывается как
+    // failed, строка очереди — в blocked с причиной, слот свободен. Без этого
+    // строка висела бы в leased вечно, а слот — занятым phantom'ом.
+    if (payload.failed && run) {
+      const index = data.runs.indexOf(run);
+      await store.updateRange("runs", index + 2, [[
+        run["Run ID"], run["Карточка"], run["Заголовок"], run["Слот"], run["Аккаунт"],
+        run["Роль"], run["Agent URL"], RUN.FAILED, run["Выдан"], at,
+        run["Ожидание"], run["Попытка"], clip(payload.markerRaw || "", 500), clip(payload.why || "", 4000),
+      ]]);
+      const rowIndex = data.queue.findIndex((item) =>
+        norm(item["Карточка"]) === norm(run["Карточка"]) && norm(item["Статус"]) === QUEUE.LEASED);
+      if (rowIndex >= 0) {
+        const row = data.queue[rowIndex];
+        await store.updateRange("queue", rowIndex + 2, [queueToRow({
+          ...row,
+          "Статус": QUEUE.BLOCKED,
+          "Комментарий": clip(String(payload.why || "вкладка не смогла выдать"), 400),
+        })]);
+      }
+      const released = releaseAndRequeue({
+        runs: data.runs.map((item) => (norm(item["Run ID"]) === runId ? { ...item, "Статус": RUN.FAILED } : item)),
+        slotId, runId, status: RUN.FAILED, at,
+      });
+      await record({
+        slot: slotId, tab, kind: "dispatch", level: "warn",
+        text: `выдача ${runId} не состоялась: ${clip(String(payload.why || "причина не названа"), 200)}`,
+        card: run["Карточка"], runId,
+      });
+      return { ok: false, failed: true, why: `выдача не состоялась: ${payload.why || "причина не названа"}`, freedSlot: released.freedSlot };
+    }
 
     if (!run) verdict.push(`выдачи ${runId || "(пусто)"} нет`);
     if (markerRunId && norm(markerRunId) !== runId) {
@@ -821,41 +911,10 @@ export function createService({
       runId,
     });
 
-    // Ход цикла (D-025): принятый ответ может нести решение хода.
-    // Служба исполняет протокол вкладки, а не переписывает его:
-    //   next: "done"  → миссия готова, ход приёмке (Warden);
-    //   verdict accept → миссия принята, цикл завершён;
-    //   verdict rework → возврат Координатору, круг +1; четвёртый — пауза:
-    //                    лимит доработок три, как во вкладке;
-    //   verdict master → пауза: без владельца не продолжить.
+    // Ход цикла (D-025/D-026): принятый ответ может нести решение хода —
+    // общая машина переходов (applyTurnDecision) выше.
     const decision = parseTurnMarker(payload.markerRaw || "");
-    if (decision?.kind === "coordinator") {
-      if (decision.next === "done") {
-        await writeSetting("cycle.turn", "warden");
-        await record({ slot: slotId, tab, kind: "state", text: "ход: миссия готова — передана приёмке (Warden)", runId, card: run?.["Карточка"] || "" });
-      } else if (String((await loadSettings())["cycle.turn"] || "coordinator") !== "coordinator") {
-        // Новый план после завершения/приёмки: ход снова у Координатора.
-        await writeSetting("cycle.turn", "coordinator");
-        await record({ slot: slotId, tab, kind: "state", text: `ход: план Координатора (next: ${clip(decision.next, 40)}) — цикл открыт`, runId, card: run?.["Карточка"] || "" });
-      }
-    } else if (decision?.kind === "review") {
-      const settingsNow = await loadSettings();
-      if (decision.verdict === "accept") {
-        await writeSetting("cycle.turn", "done");
-        await record({ slot: slotId, tab, kind: "state", text: "приёмка: миссия принята — цикл завершён", runId, card: run?.["Карточка"] || "" });
-      } else if (decision.verdict === "rework") {
-        const round = (Number(settingsNow["cycle.round"]) || 0) + 1;
-        await writeSetting("cycle.round", round);
-        await writeSetting("cycle.turn", "coordinator");
-        if (round > 3) {
-          await pause({ reason: `приёмка: возврат №${round} — лимит доработок (3), нужен Мастер` });
-        } else {
-          await record({ slot: slotId, tab, kind: "state", level: "warn", text: `приёмка: возврат (круг ${round}) — ход Координатору`, runId, card: run?.["Карточка"] || "" });
-        }
-      } else if (decision.verdict === "master") {
-        await pause({ reason: "приёмка: master — без владельца не продолжить" });
-      }
-    }
+    if (decision) await applyTurnDecision(decision, { slotId, tab, runId, card: run?.["Карточка"] || "" });
 
     return { ok: true, runId, freedSlot: released.freedSlot, busySlots: released.busySlots };
   }
