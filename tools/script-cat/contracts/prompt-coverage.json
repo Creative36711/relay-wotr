@@ -41,14 +41,12 @@
       "marker.answer",
       "marker.arbiter",
       "marker.coordinator",
-      "marker.provision",
       "marker.review",
       "reminder.marker"
     ],
     "R-MASTER-ONLY": [
       "arbiter.protocol",
       "authority.coordinator",
-      "authority.provision",
       "authority.reviewer"
     ],
     "R-NO-REVIEWER-DISPATCH": [
@@ -98,10 +96,6 @@
     ]
   },
   "profileRules": {
-    "admin.provision": [
-      "R-MARKER",
-      "R-MASTER-ONLY"
-    ],
     "auditor.card": [
       "R-CARD-FIELDS",
       "R-EVIDENCE",
@@ -231,10 +225,6 @@
     ]
   },
   "profileAudience": {
-    "admin.provision": [
-      "Coordinator",
-      "Reviewer"
-    ],
     "auditor.card": [
       "Auditor"
     ],
@@ -300,7 +290,6 @@
     "role.answer": []
   },
   "profileGitWrite": {
-    "admin.provision": [],
     "auditor.card": [],
     "continuation.answer": [],
     "continuation.arbiter": [],

@@ -1,7 +1,7 @@
   // ───────────────────────── provisioning: ядро состояния и правил ─────────────────────────
-  // Два входа используют общее состояние/job: запрос админ-роли (одобрение по
-  // Agent Admin) и конкретная задача Relay (разрешение уже дано pull). Оба
-  // обходятся без K.pending/K.expect и не создают рабочие карточки. Имена
+  // Контур создаёт экземпляр агента для пары (роль, слот) по заданию службы
+  // Relay: разрешение уже дано `pull`, отдельного согласования нет (D-024).
+  // Обходится без K.pending/K.expect и не создаёт рабочие карточки. Имена
   // проектов и ролей транспорта здесь не зашиты.
 
   const PROVISION_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -10,18 +10,30 @@
   const PROVISION_FUNCTIONS = ["Coordinator", "Executor", "Auditor", "Auditory", "Reviewer"];
   const PROVISION_STATES = ["validated", "creating", "repo_selected", "bootstrap_sent", "url_captured",
     "renaming", "renamed", "notion_updated", "activating", "activated", "archiving_old", "done", "paused", "error"];
-  const PROVISION_EVENTS = ["provision_request_sent", "provision_approved", "provision_rejected",
-    "provision_job_started", "provision_repo_selected", "provision_bootstrap_sent", "provision_url_captured",
-    "provision_renamed", "provision_notion_updated", "provision_activated", "provision_activation_blocked",
-    "provision_old_archived", "provision_old_archive_unverified", "provision_job_done", "provision_paused",
-    "provision_conflict", "provision_noop", "provision_schema_unread"];
+  const PROVISION_EVENTS = ["provision_job_started", "provision_repo_selected", "provision_bootstrap_sent",
+    "provision_url_captured", "provision_renamed", "provision_notion_updated", "provision_activated",
+    "provision_activation_blocked", "provision_old_archived", "provision_old_archive_unverified",
+    "provision_job_done", "provision_paused", "provision_conflict", "provision_noop",
+    "provision_schema_unread"];
   const PROVISION_BOOTSTRAP_FORBIDDEN = [
     /CF_[A-Z_]+/i, /notion/i, /aux-workspace/i, /REGULATION/, /WARDEN/i, /DECISIONS/,
     /ntn_[A-Za-z0-9]/, /secret_[A-Za-z0-9]/, /ghp_[A-Za-z0-9]/, /github_pat_[A-Za-z0-9]/,
     /Bearer\s+[A-Za-z0-9]/i, /sk-[A-Za-z0-9]{12}/, /app\.notion|notion\.so|notion\.site/i,
   ];
 
+  /**
+   * D-024: первый промпт агента — фиксированный и один на всех.
+   *
+   * Смысл не в ответе, а в том, чтобы новый чат получил ход и появился адрес
+   * `…/agent/<uuid>`; сам ответ не проверяется, модель с распознаванием
+   * изображений роутер Arena подбирает сам. Поэтому промпт не настройка
+   * профиля: `agentBootstrapPrompt` удалён, старое значение игнорируется.
+   */
+  const PROVISION_PROBE_PROMPT = "Что изображено на картинке test.jpg в репозитории https://github.com/Creative36711/test? " +
+    "Если у тебя нет функции визуального распознавания, скажи прямо.";
+
   const provisionConfig = () => normalizeProvisionConfig(C);
+  const provisionBootstrapPrompt = () => PROVISION_PROBE_PROMPT;
   const provisionBootstrapClean = (text) => {
     const s = String(text || "").trim();
     return s.length > 0 && !PROVISION_BOOTSTRAP_FORBIDDEN.some((re) => re.test(s));
@@ -99,31 +111,37 @@
     saveProvisionState(state);
   }
 
-  /** Кандидат из свежей строки. Возвращает причину отказа, а не молча пропускает. */
+  /**
+   * Кандидат из свежей строки роли.
+   *
+   * D-024: сигнала «Agent State = запрошен», админ-флага и allowlist больше нет.
+   * Кандидатом роль делает само задание службы: транспорт идёт в названный
+   * контейнер, и если роли там нет — создаёт её. Отказов осталось ровно
+   * четыре, и все они — «агента физически нельзя завести или сейчас некуда»:
+   * нет строки, недопустимая функция (Maintainer закулисный), пустое имя и
+   * живая работа по этой же роли.
+   */
   function provisionCandidateFromRow(row, cfg, busy = {}) {
     if (!row || !row.pageId) return { ok: false, reason: "нет строки роли" };
-    if (row.agentAdmin === true) return { ok: false, reason: "админ-роль не provisioning-кандидат" };
-    if ((row.agentState || "не требуется") !== "запрошен") return { ok: false, reason: "Agent State не запрошен" };
     const name = String(row.name || "").trim();
     if (!name || name.length > 100) return { ok: false, reason: "имя роли пустое или длиннее 100" };
     if (!PROVISION_FUNCTIONS.includes(row.fn)) return { ok: false, reason: "недопустимая функция" };
-    const repo = normalizeProvisionRepo(row.repo);
-    if (!repo) return { ok: false, reason: "репозиторий не нормализуется в owner/repo" };
-    const allow = (cfg.agentProvisionRepoAllowlist || []).map(normalizeProvisionRepo);
-    if (!allow.includes(repo)) return { ok: false, reason: "репозиторий вне allowlist" };
     const busyNames = busy.names || new Set();
     const busyIds = busy.ids || new Set();
     if (busyNames.has(norm(name)) || busyIds.has(norm(row.id)) || busyIds.has(norm(row.pageId))) {
       return { ok: false, reason: "по роли есть активная работа" };
     }
+    // Репозиторий нужен только для выбора repo в composer. Роль без него
+    // (или с неразборчивым значением) всё равно получает агента: адрес пары
+    // важнее, а repo досоздастся правкой строки, не новой сессией (D-024).
+    const repo = normalizeProvisionRepo(row.repo);
     const url = String(row.url || "").trim();
     const action = url ? "replace" : "create";
     return {
       ok: true,
       candidate: {
         rolePageId: row.pageId, roleName: name, fn: row.fn, repo, action,
-        oldAgentUrl: action === "replace" ? url : "",
-        roleAgentId: row.id || "",
+        oldAgentUrl: action === "replace" ? url : "", roleAgentId: row.id || "",
       },
     };
   }
@@ -134,114 +152,11 @@
     for (const row of rows || []) {
       const result = provisionCandidateFromRow(row, cfg, busy);
       if (result.ok) candidates.push(result.candidate);
-      else if ((row?.agentState || "не требуется") === "запрошен" || row?.agentAdmin === true) {
+      else if (result.reason !== "по роли есть активная работа") {
         rejected.push({ rolePageId: row?.pageId || "", reason: result.reason });
       }
     }
     return { candidates: candidates.slice(0, cfg.agentProvisionMaxJobs), rejected };
-  }
-
-  /**
-   * Чего не хватает составу миссии и кто это делает.
-   *
-   * D-075 п. 3: сигнал на создание агента — `Agent State = запрошен`, и ставит
-   * его Coordinator: у него постоянное право на оболочку неадминской строки.
-   * `Статус = Ждёт` сигналом не является: по D-008 и D-052 роли нарочно ждут
-   * своей фазы, и автосоздание по статусу наплодило бы агентов отложенным ролям.
-   *
-   * Функция ничего не пишет и никого не создаёт: она отвечает, что именно
-   * предстоит и в каком режиме. Право записи строки — у Coordinator, доступы
-   * (`Статус`, `Agent URL`, `Agent Admin`) — у Мастера, создание агента —
-   * у контура после одобрения админ-роли.
-   */
-  function provisionRosterRequest(roles = [], cfg = provisionConfig(), state = null) {
-    const enabled = Boolean(cfg && cfg.agentProvisionEnabled);
-    const create = [];
-    const fill = [];
-    const blocked = [];
-    for (const role of roles || []) {
-      const name = String(role?.name || "").trim();
-      if (!name) continue;
-      const gaps = Array.isArray(role.gaps) ? role.gaps : [];
-      if (gaps.some((gap) => /нет в «Ролях»/.test(gap))) {
-        // Строки нет вовсе: сначала Coordinator создаёт оболочку и ставит
-        // сигнал, только потом контур (если включён) создаёт агента.
-        create.push({ name, why: "роли нет в «Ролях»", signal: enabled ? "Agent State = запрошен" : "" });
-        if (!enabled) blocked.push({ name, why: "контур создания выключен: строку и сигнал ставит Coordinator, агента создаёт Мастер" });
-        continue;
-      }
-      // Строка есть, но не готова: агента создавать не нужно — дозаполнить.
-      fill.push({ name, gaps });
-    }
-    const requested = (state && Array.isArray(state.candidates) ? state.candidates : [])
-      .map((c) => String(c.roleName || "")).filter(Boolean);
-    return {
-      enabled,
-      signal: "Agent State = запрошен",
-      signalOwner: "Coordinator",
-      create,
-      fill,
-      blocked,
-      requested: requested.length > 0,
-      requestedNames: requested,
-      // Ни одна строка не создаётся молча: без включённого контура создание
-      // агента и доступы остаются Мастеру, с включённым — спросит одобрение.
-      reason: !create.length ? "некомплект только в существующих строках: агента создавать не нужно"
-        : enabled ? "Coordinator создаёт строку и ставит «Agent State = запрошен» — дальше контур спросит одобрение админ-роли"
-          : "контур выключен: строку создаёт Coordinator, агента — Мастер",
-    };
-  }
-
-  /** Активная админ-роль: предпочтительно Coordinator, иначе Reviewer. */
-  function provisionAdminRole(rows) {
-    const admins = (rows || []).filter((r) => r.agentAdmin === true && r.status === "Активна" &&
-      r.url && r.pageId && PROVISION_UUID.test(String(r.pageId)) &&
-      (r.fn === "Coordinator" || r.fn === "Reviewer"));
-    admins.sort((a, b) => (a.fn === b.fn ? String(a.name).localeCompare(String(b.name)) : a.fn === "Coordinator" ? -1 : 1));
-    return admins[0] || null;
-  }
-
-  /** Проверка маркера одобрения по свежему Notion и выданным кандидатам. */
-  function validateProvisionMarker(obj, request, freshRows, cfg = provisionConfig()) {
-    if (!obj || typeof obj !== "object") return { ok: false, reason: "маркер не разобран" };
-    for (const banned of ["archive", "delete", "activate", "admin", "command"]) {
-      if (banned in obj) return { ok: false, reason: `запрещённая команда маркера: ${banned}` };
-    }
-    const requestId = String(obj.request_id || "");
-    if (!PROVISION_UUID.test(requestId)) return { ok: false, reason: "request_id не UUID" };
-    if (norm(requestId) !== norm(request?.requestId || "")) return { ok: false, reason: "чужой request_id" };
-    if (!Array.isArray(obj.jobs)) return { ok: false, reason: "jobs не массив" };
-    if (obj.jobs.length > cfg.agentProvisionMaxJobs) return { ok: false, reason: "jobs больше agentProvisionMaxJobs" };
-    const sent = new Map((request?.candidates || []).map((c) => [norm(c.rolePageId), c]));
-    const fresh = new Map((freshRows || []).map((r) => [norm(r.pageId), r]));
-    const jobs = [];
-    for (const job of obj.jobs) {
-      if (!job || typeof job !== "object") return { ok: false, reason: "job не объект" };
-      for (const banned of ["archive", "delete", "activate", "admin", "command"]) {
-        if (banned in job) return { ok: false, reason: `запрещённая команда в job: ${banned}` };
-      }
-      const pageId = String(job.role_page_id || "");
-      if (!PROVISION_UUID.test(pageId)) return { ok: false, reason: "role_page_id не UUID" };
-      const candidate = sent.get(norm(pageId));
-      if (!candidate) return { ok: false, reason: "job вне кандидатов, отправленных в prompt" };
-      if (!["create", "replace"].includes(job.action)) return { ok: false, reason: "action только create или replace" };
-      const row = fresh.get(norm(pageId));
-      if (!row) return { ok: false, reason: "строка роли исчезла" };
-      if (row.agentAdmin === true) return { ok: false, reason: "попытка одобрить админ-роль" };
-      if (String(row.name || "").trim() !== String(job.role_name || "").trim()) return { ok: false, reason: "role_name не совпадает со свежей строкой" };
-      const repo = normalizeProvisionRepo(row.repo);
-      if (!repo || repo !== normalizeProvisionRepo(job.repo)) return { ok: false, reason: "repo не совпадает со свежей строкой" };
-      const allow = (cfg.agentProvisionRepoAllowlist || []).map(normalizeProvisionRepo);
-      if (!allow.includes(repo)) return { ok: false, reason: "repo вне allowlist" };
-      const freshAction = String(row.url || "").trim() ? "replace" : "create";
-      if (job.action !== freshAction || job.action !== candidate.action) return { ok: false, reason: "action не совпадает с текущим Agent URL" };
-      jobs.push({
-        rolePageId: row.pageId, roleName: String(row.name).trim(), fn: row.fn, repo,
-        action: job.action, oldAgentUrl: freshAction === "replace" ? String(row.url).trim() : "",
-        roleAgentId: row.id || "",
-      });
-    }
-    return { ok: true, jobs, reason: String(obj.reason || "").slice(0, 300) };
   }
 
   function provisionNewJob(candidate, requestId) {

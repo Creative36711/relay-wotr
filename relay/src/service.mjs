@@ -304,7 +304,6 @@ export function createService({
         status: String(row["Статус"] || "").trim(),
         url: String(row["Agent URL"] || "").trim(),
         repo: String(row["Репозиторий"] || "").trim(),
-        agentAdmin: false,
         agentState: "не требуется",
         source: "book",
       });
@@ -434,8 +433,8 @@ export function createService({
     }
     // Отказ создания не должен превращаться в новое задание на каждом `pull`.
     //
-    // 28.11 так и вышло: вкладка честно отказывалась («bootstrap-пробник пуст
-    // или запрещён», «задание для worker-2, вкладка опознана как worker-1»),
+    // 28.11 так и вышло: вкладка честно отказывалась («задание для worker-2,
+    // вкладка опознана как worker-1»),
     // строка задания закрывалась как `blocked`, `agentDecision` снова видел
     // «агента нет» — и служба заводила следующую. Пульт при этом показывал
     // «проект ждёт ручного запуска», а в журнале каждые полторы минуты
@@ -619,8 +618,8 @@ export function createService({
     }
 
     // Отказ запоминается, успех снимает память: иначе одна и та же причина
-    // («bootstrap-пробник пуст», «задание для worker-2, вкладка worker-1»)
-    // заводила новое задание на каждом `pull`, и цикл крутился вхолостую.
+    // («задание для worker-2, вкладка worker-1») заводила новое задание на
+    // каждом `pull`, и цикл крутился вхолостую.
     if (failed) noteAgentFailure(name, target, note || "причина не названа");
     else if (memory.agentCreateFailures instanceof Map) memory.agentCreateFailures.delete(agentRetryKey(name, target));
 

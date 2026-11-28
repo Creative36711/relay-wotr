@@ -67,7 +67,6 @@
     // Доступы и состав: строку «Роли», Agent URL и флаг правит Мастер.
     "mission-roster": "agent",
     provision: "agent",
-    "provision-no-admin": "agent",
     "project-role-origin": "agent",
     "no-reviewer": "agent",
     "heal-no-maintainer": "agent",
@@ -302,7 +301,6 @@
     "pilot-tool-limit": "master",
     "pilot-timeout": "master",
     provision: "master",
-    "provision-no-admin": "master",
     // D-092: класс оставлен `master`, но пауза теперь поднимается только там,
     // где нет очереди отправки (см. 18-state-recovery.js). Тот случай — сверка,
     // а не решение; Мастеру он не показывается как вопрос (тихий).

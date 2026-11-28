@@ -29,7 +29,7 @@ const mentions = (text, field) => text.includes(`"${field}"`) || text.includes(`
 /** Живые поля «Ролей»: те, которые читает вкладка или служба. */
 const LIVE_ROLE_FIELDS = [
   "Роль", "Функция", "Статус", "Agent URL", "Зона записи", "Гейт", "Репозиторий",
-  "Agent Admin", "Agent State", "Previous Agent URL", "Аккаунт", "Доступность",
+  "Agent State", "Previous Agent URL", "Аккаунт", "Доступность",
 ];
 
 /** Поля не для кода, а для людей: код их не читает, и это нормально. */

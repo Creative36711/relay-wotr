@@ -17,14 +17,17 @@
   const REPO_ENTRY = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
   const BRANCH_ENTRY = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,99}$/;
 
-  // Provisioning Arena-агентов: выключен по умолчанию и не содержит проектных
-  // имён. Bootstrap-пробник задаётся владельцем профиля; пустой пробник не
-  // отправляется. Значения ниже — аддитивные настройки старых профилей.
+  // Provisioning Arena-агентов (D-024): админ-роли, согласования, allowlist и
+  // текста пробника больше нет. Контур работает по заданию службы Relay: есть
+  // роль — выдаётся задание, нет — создаётся агент. Остались только пределы,
+  // которые защищают квоту и время ожидания, и они аддитивны старым профилям.
+  //
+  // Удалённые ключи (`agentProvisionEnabled`, `agentProvisionMode`,
+  // `agentProvisionRepoAllowlist`, `agentBootstrapPrompt`) не читаются вовсе:
+  // профиль с ними нормализуется как есть, а старый текст пробника не
+  // подставляется вместо фиксированного — иначе «блокер» вернулся бы через
+  // сохранённое значение.
   const PROVISION_DEFAULTS = Object.freeze({
-    agentProvisionEnabled: false,
-    agentProvisionMode: "manual",
-    agentProvisionRepoAllowlist: [],
-    agentBootstrapPrompt: "",
     agentProvisionMaxJobs: 3,
     agentProvisionDailyMax: 5,
     agentBootstrapWaitMs: 600000,
@@ -38,14 +41,7 @@
     return Number.isFinite(n) ? Math.min(max, Math.max(min, Math.floor(n))) : fallback;
   };
   function normalizeProvisionConfig(profile = {}) {
-    const allow = Array.isArray(profile.agentProvisionRepoAllowlist)
-      ? [...new Set(profile.agentProvisionRepoAllowlist.map((x) => String(x || "").trim()).filter(Boolean))]
-      : [];
     return {
-      agentProvisionEnabled: profile.agentProvisionEnabled === true,
-      agentProvisionMode: profile.agentProvisionMode === "auto" ? "auto" : "manual",
-      agentProvisionRepoAllowlist: allow,
-      agentBootstrapPrompt: String(profile.agentBootstrapPrompt || ""),
       agentProvisionMaxJobs: provisionInt(profile.agentProvisionMaxJobs, PROVISION_DEFAULTS.agentProvisionMaxJobs, 1, 20),
       agentProvisionDailyMax: provisionInt(profile.agentProvisionDailyMax, PROVISION_DEFAULTS.agentProvisionDailyMax, 1, 100),
       agentBootstrapWaitMs: provisionInt(profile.agentBootstrapWaitMs, PROVISION_DEFAULTS.agentBootstrapWaitMs, 1000, 3600000),
@@ -145,8 +141,7 @@
     const folder = String(p.driveFolder || "");
     if (!/^[a-z0-9][a-z0-9._-]{0,50}$/.test(folder) || folder.includes("..") ||
       ["logs", "payloads", "artifacts"].includes(folder)) return false;
-    const prov = normalizeProvisionConfig(p);
-    return prov.agentProvisionRepoAllowlist.every((r) => REPO_ENTRY.test(r) && !r.includes(".."));
+    return true;
   }
   function selectedProfileId() {
     try { return sessionStorage.getItem(PROFILE_SESSION_KEY) || LEGACY_PROFILE_ID; }
@@ -276,7 +271,7 @@
   const projectProfileSnapshot = () => {
     if (ACTIVE_PROFILE.invalid || ACTIVE_PROFILE.legacy) return null;
     const keys = ["id", "name", "roles", "missions", "requests", "questions", "pageUrl", "questionsUrl", "repo", "branch", "driveFolder", "repos", "roleRepos",
-      "agentProvisionEnabled", "agentProvisionMode", "agentProvisionRepoAllowlist", "agentBootstrapPrompt", "agentProvisionMaxJobs", "agentProvisionDailyMax",
+      "agentProvisionMaxJobs", "agentProvisionDailyMax",
       "agentBootstrapWaitMs", "agentUrlWaitMs", "agentRenameAttempts", "agentProvisionAutoActivate", "agentProvisionArchiveOld"];
     const snapshot = Object.fromEntries(keys.filter((key) => ACTIVE_PROFILE[key] !== undefined).map((key) => [key, ACTIVE_PROFILE[key]]));
     snapshot.ntfyTopic = String(GM_getValue(K.ntfyTopic, "") || "");

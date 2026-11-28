@@ -78,7 +78,7 @@
       forbidden: ["git.executor", "git.auditor", "marker.agent", "marker.review", "marker.answer",
         "task.assignment", "task.acceptance", "task.scope", "task.intent", "task.invariants", "task.freedom",
         "queue.coordinator", "review.evidence", "review.protocol", "answer.question", "answer.protocol",
-        "questions.protocol", "adr.protocol", "marker.coordinator", "marker.provision"],
+        "questions.protocol", "adr.protocol", "marker.coordinator"],
       budget: { overhead: 2400 },
     });
     def("reviewer.card", {
@@ -180,27 +180,16 @@
         "mission.returned", "plan.note", "coordinator.prime", "delivery.retry", "delivery.recovery",
         "delivery.tool_limit", "reminder.marker", "arbiter.case", "arbiter.protocol", "pilot.brief", "pilot.stop",
         "pilot.repo", "pilot.continue", "marker.agent", "marker.coordinator", "marker.review", "marker.answer",
-        "marker.arbiter", "marker.provision"],
+        "marker.arbiter"],
       budget: { overhead: 900 },
-    });
-
-    // Provisioning: отдельный административный запрос, не миссия и не карточка.
-    def("admin.provision", {
-      audience: ["Coordinator", "Reviewer"], marker: "CF_AGENT_PROVISION_RESULT",
-      blocks: ["identity.provision", "authority.provision", "provision.candidates", "provision.policy", "marker.provision"],
-      requiredFacts: ["provision.requestId", "provision.candidates"],
-      forbidden: ["identity.task", "identity.mission", "mission.returned", "queue.snapshot", "queue.coordinator",
-        "answers.delta", "git.executor", "git.auditor", "task.intent", "task.invariants", "task.acceptance",
-        "task.scope", "task.freedom", "task.assignment", "review.evidence", "review.protocol", "answer.question",
-        "answer.protocol", "answer.resume", "drive.layout", "delivery.retry", "delivery.recovery", "delivery.tool_limit",
-        "reminder.marker", "pilot.brief", "pilot.stop", "pilot.repo", "pilot.continue",
-        "marker.agent", "marker.coordinator", "marker.review", "marker.answer"],
-      budget: { overhead: 1800 },
     });
 
     // Выбор профиля по kind + role.fn + tier.
     const select = (kind, fn, tier) => {
-      if (kind === "provision") return "admin.provision";
+      // D-024: отдельного provisioning-профиля нет. Согласование админ-роли
+      // выброшено вместе с маркером, и вид `provision` больше не собирается:
+      // создание агента — работа контура, а не ход роли.
+      if (kind === "provision") return null;
       // D-073: разбор транспорта — свой профиль без маркера, не dispatch и не review.
       if (kind === "heal") return "heal.report";
       // D-093: человек — не единственный адресат повторной отправки. Строка
