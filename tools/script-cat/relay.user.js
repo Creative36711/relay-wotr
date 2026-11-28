@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Relay — передача хода между агентами
 // @namespace    https://arena.ai/
-// @version      1.35.7
+// @version      1.35.8
 // @updateURL    https://raw.githubusercontent.com/Creative36711/relay-wotr/main/tools/script-cat/relay.user.js
 // @downloadURL  https://raw.githubusercontent.com/Creative36711/relay-wotr/main/tools/script-cat/relay.user.js
 // @description  Цикл Координатор → исполнитель → Координатор: агент сам коммитит, пушит и мержит PR; ScriptCat ждёт мерж и нажимает Continue.
@@ -97,7 +97,7 @@
     // D-073: отпечаток сборки вшивает build.mjs (SHA-256 источника). Номер версии
     // говорит «какой выпуск», отпечаток — «какая именно сборка»: без него проверка
     // «работает новая версия, а не прежняя под новым номером» невозможна.
-    buildFingerprint: "f3a69c50f276a407",
+    buildFingerprint: "c02f9a45ed1a9013",
     repo: "", // для ссылки на PR из номера
     tickMs: 15000,
     mergeGraceMs: 90000, // сколько ждём мерж, прежде чем нажать кнопки за агента
@@ -900,7 +900,7 @@
 
   const NTFY_BASE = "https://ntfy.sh";
   const SCRIPT_VERSION =
-    (typeof GM_info !== "undefined" && GM_info?.script?.version) || "1.35.7";
+    (typeof GM_info !== "undefined" && GM_info?.script?.version) || "1.35.8";
 
   /** «https://ntfy.sh/topic?x=1» и «topic» одинаково дают topic. */
   function normalizeNtfyTopic(raw) {
@@ -23043,14 +23043,18 @@ function reviewPullRequest({ files, pr, zone } = {}) {
     }
     const pending = GM_getValue(K.pending, null);
     const waiting = GM_getValue(K.expect, null);
-    // Просьба пульта «дожать ход» проверяется раньше удержания — но только
-    // когда вкладка свободна.
+    // Просьба пульта «дожать ход» проверяется раньше удержания и раньше
+    // любой локальной работы — кроме одного случая: агент ещё печатает.
     //
     // Удержание `expect:plan` означает «ход мой, жду маркер». Именно такой
     // вкладке шаг и нужен, и раньше она выходила из тика, не увидев просьбу.
-    // Но лезть с шагом поверх незавершённой отправки (`pending`) или пока
-    // агент печатает нельзя: шаг обгонит доставку и прочитает пустой чат.
-    const canTakeNudge = !pending && !(typeof stillWorking === "function" && stillWorking());
+    // Но здесь стояло ещё `!pending`, и это запирало ровно нужный случай:
+    // после шага транспорт оставляет и `expect`, и `pending` того же хода
+    // (28.11, 11:35 — «Пульт просит дочитать ответ» и сразу «Проект ждёт
+    // ручного запуска»). Просьба пульта при этом забиралась и пропадала
+    // впустую. Повторной отправки бояться не надо: шаг не отправляет задание,
+    // а `tick` сам видит `pending` и сначала доводит отправку.
+    const canTakeNudge = !(typeof stillWorking === "function" && stillWorking());
     if (canTakeNudge) {
       const nudgeRes = await relayPost({ action: "pull", slotId, nudgeOnly: true,
         projectId: ACTIVE_PROFILE?.id || "", projectName: ACTIVE_PROFILE?.name || "" }).catch(() => null);
@@ -23515,18 +23519,35 @@ function reviewPullRequest({ files, pr, zone } = {}) {
   }
 
   /**
-   * Шаг только читает уже отправленный ход: маркер в чате, ожидание плана,
-   * карточку приёмки. Ему не нужен сетевой вход в Notion/Drive — он ничего не
-   * пишет и не читает в базах. Поэтому гейт credentials его не касается.
+   * Ход, который лежит у этой вкладки.
    *
-   * Что случилось. 28.11 в 01:31 владелец нажал «Дожать ход», пульт передал
-   * просьбу, вкладка сделала шаг — и упёрлась в «Relay ещё не синхронизировал
-   * сохранённые Notion/Drive credentials». Ход при этом лежал в чате целиком,
-   * его надо было только прочитать. Кнопка обещала действие и не сделала его
-   * из-за входа, который этому действию не нужен.
+   * `K.expect` общий на профиль (так устроен обмен между контейнерами), поэтому
+   * «чужой» и «свой» ход здесь различаются не наличием записи, а ролью: если
+   * сохранено ожидание роли этой страницы — ход мой. Запись без роли — след
+   * старой версии, и она тоже моя.
+   */
+  const stepOwnsTurn = () => {
+    const waiting = GM_getValue(K.expect, null);
+    if (!waiting || !waiting.kind) return false;
+    if (!String(waiting.roleId || "")) return true;
+    const here = typeof roleFromPath === "function" ? roleFromPath() : "";
+    return Boolean(here) && norm(waiting.roleId) === norm(here);
+  };
+
+  /**
+   * Шаг, который доводит уже полученный ход: читает маркер из чата, применяет
+   * ответ Координатора, передаёт карточку дальше. Такой шаг ничего не пишет и
+   * не читает в базах Notion/Drive, поэтому гейт подключений его не касается.
+   *
+   * Почему это не мелочь. 28.11 в 01:31 владелец нажал «Дожать ход», вкладка
+   * сделала шаг — и упёрлась в «Relay ещё не синхронизировал сохранённые
+   * Notion/Drive credentials». Ход лежал в чате целиком, его надо было только
+   * прочитать. Кнопка обещала действие и не сделала его из-за входа, который
+   * этому действию не нужен. То же и с удержанием после переключения проекта:
+   * оно защищает от ЧУЖОЙ работы, а не от продолжения своего же хода.
    */
   const readOnlyStep = (fromToggle, mode = "") =>
-    Boolean(fromToggle) && (mode === "read" || mode === "nudge");
+    Boolean(fromToggle) && (mode === "read" || mode === "nudge" || stepOwnsTurn());
 
   /**
    * Режим следующего шага. Сигнатура `tick` остаётся прежней: её проверяют
@@ -23545,6 +23566,10 @@ function reviewPullRequest({ files, pr, zone } = {}) {
     // Пробы транспорта собирают `tick` из фрагментов, без соседних замыканий:
     // отсутствие заявки — это «обычный шаг», а не поломка.
     const mode = typeof takeStepMode === "function" ? takeStepMode() : "";
+    // `readOnlyStep` может отсутствовать только в пробе, которая собирает
+    // `tick` из фрагментов: тогда это обычный шаг, а не поломка. Считаем один
+    // раз на шаг: оба гейта — подключения и удержание — спрашивают одно и то же.
+    const readOnly = typeof readOnlyStep === "function" && readOnlyStep(fromToggle, mode);
     if (typeof projectApproved === "function" && !projectApproved()) {
       if (fromToggle) {
         log(typeof projectBlockedText === "function" ? projectBlockedText()
@@ -23553,14 +23578,14 @@ function reviewPullRequest({ files, pr, zone } = {}) {
       }
       return;
     }
-    if (typeof projectCredentialsReady === "function" && !projectCredentialsReady() && !readOnlyStep(fromToggle, mode)) {
+    if (typeof projectCredentialsReady === "function" && !projectCredentialsReady() && !readOnly) {
       if (fromToggle) log("Шаг не начат: Relay ещё не синхронизировал сохранённые Notion/Drive credentials. Повторю после подключения; вводить уже сохранённые значения не нужно.", true);
       return;
     }
     // Допуск есть — очередь обратной связи обязана жить, даже если панель
     // монтировалась раньше, чем работа была разрешена (внешний D-023).
     if (typeof armFeedbackWatch === "function") armFeedbackWatch();
-    if (typeof projectHeld === "function" && projectHeld()) {
+    if (typeof projectHeld === "function" && projectHeld() && !readOnly) {
       // fromToggle используется и отложенными автоматическими шагами: право
       // снять удержание есть только у явных кнопок «Шаг»/«Включить».
       if (fromToggle) log("Проект ждёт ручного запуска после переключения.");

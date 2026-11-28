@@ -1,4 +1,4 @@
-// Пауза принадлежит вкладке, а не всем контейнерам (1.35.7).
+// Пауза принадлежит вкладке, а не всем контейнерам (1.35.8).
 //
 // 28.11 в 00:44:32 капча появилась в админском контейнере и поставила паузу.
 // `cfn-paused` — ключ хранилища ScriptCat, общий для всех вкладок профиля:
@@ -39,13 +39,16 @@ const tabKeyLine = source
   ?.trim();
 assert.ok(tabKeyLine, 'ключ паузы вкладки объявлен');
 
+// tabBornAt экспортируется отдельно: он нужен стенду, чтобы «открыть»
+// вкладку явно, а не при первой проверке паузы.
 const body = [
-  grab('tabBornAt'),
   grab('tabPauseReason'),
   grab('tabPauseSet'),
   grab('tabPauseContext'),
   grab('tabPauseContextSet'),
 ].join('\n');
+
+const born = grab('tabBornAt');
 
 /** Хранилище ScriptCat — общее; sessionStorage — своё у каждой вкладки. */
 function makeTab(shared) {
@@ -61,9 +64,13 @@ function makeTab(shared) {
   // eslint-disable-next-line no-new-func
   const factory = new Function(
     'sessionStorage', 'GM_getValue', 'GM_setValue', 'K',
-    `${tabKeyLine}\nconst PAUSE_CTX_TAB_KEY = "cfn-pause-context-tab-v1";\nconst TAB_BORN_KEY = "cfn-tab-born-v1";\n${body}\nreturn { tabPauseReason, tabPauseSet, isPaused: () => Boolean(tabPauseReason()) };`,
+    `${tabKeyLine}\nconst PAUSE_CTX_TAB_KEY = "cfn-pause-context-tab-v1";\nconst TAB_BORN_KEY = "cfn-tab-born-v1";\n${born}\n${body}\nreturn { tabBornAt, tabPauseReason, tabPauseSet, isPaused: () => Boolean(tabPauseReason()) };`,
   );
   const api = factory(sessionStorage, GM_getValue, GM_setValue, K);
+  // Вкладка «рождается» при открытии, а не при первой проверке паузы: иначе
+  // пауза, поставленная соседом до этой проверки, выглядела бы старше вкладки
+  // и наследовалась — проба падала через раз, в зависимости от миллисекунды.
+  api.tabBornAt();
   return { ...api, session };
 }
 
