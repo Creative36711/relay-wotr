@@ -95,11 +95,26 @@
     return { names, ids, cards };
   }
 
+  /**
+   * Занят ли этот контейнер командным ходом.
+   *
+   * Спрашивать «есть ли `K.pending`/`K.expect` вообще» нельзя: хранилище
+   * ScriptCat общее для всех контейнеров профиля, поэтому ход Координатора
+   * видели все вкладки и провижининг объявлял простой занятым на каждом слоте
+   * (28.11: создание агента не начиналось ни разу, хотя рабочие слоты стояли
+   * свободными). Берём только ход, который принадлежит этой вкладке.
+   */
+  function provisionLocalHandoff() {
+    const owned = (value) => Boolean(value) &&
+      (typeof relayOwnsHandoff !== "function" || relayOwnsHandoff(value));
+    return owned(GM_getValue(K.pending, null)) || owned(GM_getValue(K.expect, null));
+  }
+
   function provisionIdleReason(cfg = provisionConfig()) {
     if (!cfg.agentProvisionEnabled) return "provisioning выключен";
     if (!C.notion) return "нет Notion-токена профиля";
     if (typeof isPaused === "function" ? isPaused() : GM_getValue(K.paused, "")) return "цикл на паузе";
-    if (GM_getValue(K.pending, null) || GM_getValue(K.expect, null)) return "активный командный ход";
+    if (provisionLocalHandoff()) return "активный командный ход";
     if (GM_getValue(K.pilotWait, null)) return "идёт пилот";
     if (provisionRequestState()) return "provisioning-запрос уже выдан";
     if (provisionLockHeldByOther()) return "provisioning занят другой вкладкой";
@@ -480,7 +495,7 @@
     if (visibleError) return provisionPause(`Provisioning: ошибка Arena: ${visibleError.text || visibleError}`, request, job);
 
     if (["validated", "creating"].includes(job.state)) {
-      if (GM_getValue(K.pending, null) || GM_getValue(K.expect, null)) {
+      if (provisionLocalHandoff()) {
         return provisionPause("Provisioning: появился активный командный ход; создание не начинаю.", request, job);
       }
       if (!provisionBootstrapClean(cfg.agentBootstrapPrompt)) return provisionPause("Provisioning: bootstrap-пробник пуст или запрещён.", request, job);

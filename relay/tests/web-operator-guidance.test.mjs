@@ -108,6 +108,23 @@ test("queued card guidance explains Relay slot, quota, provisioning and manual d
   assert.match(result.detail, /в ручном режиме нажмите «Шаг»/);
 });
 
+test("отложенное создание агента называется причиной, а не бодрым «готов к шагу»", () => {
+  // 28.11: отказ создания («bootstrap-пробник пуст или запрещён», «задание для
+  // worker-2, вкладка опознана как worker-1») не назывался в пульте. Человек
+  // видел «проект ждёт ручного запуска», жал «Шаг», получал тот же отказ, и так
+  // по кругу каждые полторы минуты.
+  const result = helpers.operatorGuidance(snapshot({
+    counts: { waiting: 1, inFlight: 0, blocked: 1, slots: 4 },
+    lastStep: { at: "2026-11-28T09:00:00Z", count: 0,
+      why: "создание агента Godot World в worker-1 приостановлено до 2026-11-28T09:10:00Z: bootstrap-пробник пуст или запрещён (попыток 2)" },
+  }));
+  assert.equal(result.canStep, false, "повтор «Шага» даст тот же отказ");
+  assert.match(result.title, /Создание агента приостановлено/);
+  assert.match(result.detail, /bootstrap-пробник пуст или запрещён/, "причина названа словами ScriptCat");
+  assert.match(result.detail, /allowlist репозиториев/, "сказано, где причину убрать");
+  assert.match(result.detail, /«Экземплярах»/, "сказано, где видно состояние пары");
+});
+
 test("support report includes project gate state without exposing connection secrets", () => {
   const report = helpers.diagnosticReport(snapshot({
     scriptClients: [{
