@@ -135,14 +135,32 @@ test("создать не удалось — причина записана, а
   assert.match(task["Комментарий"], /квоты/);
 });
 
-test("неудача не блокирует навсегда: следующая карточка снова просит агента", async () => {
-  const { service } = makeService({ queue: [queueRow({ id: "q-1", role: "Technical Artist" })] });
+test("неудача не блокирует навсегда, но и не повторяется на каждом pull", async () => {
+  // 28.11: отказ создания («bootstrap-пробник пуст», «задание для worker-2,
+  // вкладка worker-1») закрывал строку задания как blocked, а следующий `pull`
+  // заводил новую — и так каждые полторы минуты. Пульт показывал «проект ждёт
+  // ручного запуска», хотя причина одна и та же.
+  let clock = Date.parse("2026-11-26T10:00:00Z");
+  const store = createFakeStore({
+    slots: slotRows(), settings: settingsRows(), queue: [queueRow({ id: "q-1", role: "Technical Artist" })],
+    runs: [], events: [], agents: [],
+  });
+  const service = createService({ store, now: () => clock, log: () => {} });
+
   await service.pull({ scriptVersion: "1.34.1", slotId: "worker-2" });
   await service.agentReady({ role: "Technical Artist", slotId: "worker-2", failed: true, note: "сбой" });
 
   const again = await service.pull({ scriptVersion: "1.34.1", slotId: "worker-2", tab: "bb22" });
-  assert.equal(again.kind, "provision", "вторая попытка разрешена");
-  assert.match(again.why, /не создался раньше/);
+  assert.notEqual(again.kind, "provision", "тот же отказ второй раз не превращается в задание");
+  assert.match(again.why, /приостановлено/);
+  assert.match(again.why, /сбой/, "причина отказа названа, а не проглочена");
+  assert.equal(store.objects("queue").filter((row) => row["Вид"] === "provision").length, 1,
+    "вторая строка задания не заводится");
+
+  clock += 11 * 60_000;
+  const retried = await service.pull({ scriptVersion: "1.34.1", slotId: "worker-2", tab: "bb22" });
+  assert.equal(retried.kind, "provision", "после окна ожидания попытка разрешена снова");
+  assert.match(retried.why, /не создался раньше/);
 });
 
 test("без роли, слота или адреса строка не пишется молча", async () => {

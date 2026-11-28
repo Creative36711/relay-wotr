@@ -58,7 +58,22 @@ export function createMemoryState() {
     slotMismatches: new Map(), // rate limit incorrect Firefox container/account bindings
     coordinatorTurnRequest: null, // one panel Step waiting for the admin Arena tab
     projectApprovalRequests: new Map(), // explicit pult request; ScriptCat validates locally before granting
+    // Отказы создания агентов: пара (роль|слот) → { tries, until, why }. Пока
+    // срок не вышел, задание не выдаётся заново — иначе один и тот же отказ
+    // рождал новую строку очереди на каждом `pull` (28.11).
+    agentCreateFailures: new Map(),
   };
+}
+
+/**
+ * Лимит попыток создания агента на пару (роль, слот).
+ *
+ * Возвращает `{ blocked, tries, until, why }`. Пустая запись — пробовать можно.
+ * Счётчик живёт в памяти службы: после перезапуска он пуст, и это правильно —
+ * человек, чинивший настройку, обычно и перезапускает пульт.
+ */
+function agentRetryKey(role, slot) {
+  return `${String(role || "").trim().toLowerCase()}|${String(slot || "").trim().toLowerCase()}`;
 }
 
 const SLOT_CACHE_MS = 30000;
@@ -69,6 +84,10 @@ const SUPPORTED_SCRIPT_VERSION = "1.34.1";
 const TURN_REQUEST_TTL_MS = 15 * 60_000;
 const TURN_REQUEST_CLAIM_MS = 30_000;
 const CLIENT_ACTIVE_MS = 3 * 60_000;
+// Сколько пара (роль, слот) ждёт после отказа создать агента, прежде чем
+// пробовать снова. Отказ — это настройка профиля или не тот контейнер, а не
+// случайность сети: чинится человеком и не раньше следующей минуты.
+const AGENT_CREATE_RETRY_MS = 10 * 60_000;
 
 function versionAtLeast(actual, minimum) {
   const parse = (value) => {
@@ -134,6 +153,39 @@ export function createService({
 
   let autoRunnerTimer = null;
   let autoRunnerBusy = false;
+
+  /**
+   * Лимит попыток создания агента на пару (роль, слот).
+   *
+   * Служба узнаёт об отказе только косвенно: строка задания уходит в `blocked`,
+   * а `agentDecision` по-прежнему видит «агента нет». Без этого гейта каждый
+   * `pull` заводил новую строку, вкладка снова отказывалась по той же причине,
+   * и пульт мигал «проект ждёт ручного запуска» (28.11).
+   */
+  function agentRetryGate(role, slot) {
+    const failures = memory.agentCreateFailures instanceof Map ? memory.agentCreateFailures : new Map();
+    memory.agentCreateFailures = failures;
+    const entry = failures.get(agentRetryKey(role, slot));
+    if (!entry) return { blocked: false, tries: 0, until: 0, why: "" };
+    if (Number(entry.until || 0) <= now()) {
+      failures.delete(agentRetryKey(role, slot));
+      return { blocked: false, tries: 0, until: 0, why: "" };
+    }
+    return { blocked: true, tries: Number(entry.tries || 0), until: Number(entry.until || 0), why: String(entry.why || "") };
+  }
+
+  /** Отказ создания запомнен: пару не трогаем, пока не истечёт окно. */
+  function noteAgentFailure(role, slot, why) {
+    const failures = memory.agentCreateFailures instanceof Map ? memory.agentCreateFailures : new Map();
+    memory.agentCreateFailures = failures;
+    const key = agentRetryKey(role, slot);
+    const previous = failures.get(key) || { tries: 0 };
+    failures.set(key, {
+      tries: Number(previous.tries || 0) + 1,
+      until: now() + AGENT_CREATE_RETRY_MS,
+      why: String(why || previous.why || "").slice(0, 240),
+    });
+  }
 
   async function loadSlots(force = false) {
     if (!force && memory.slotsCache && now() - memory.slotsAt < slotsCacheMs) return memory.slotsCache;
@@ -380,6 +432,27 @@ export function createService({
     if (instance && norm(instance.state) === AGENT_STATE.CREATING) {
       return { ok: false, why: `агент ${role} в ${slot.slotId} уже создаётся`, instance };
     }
+    // Отказ создания не должен превращаться в новое задание на каждом `pull`.
+    //
+    // 28.11 так и вышло: вкладка честно отказывалась («bootstrap-пробник пуст
+    // или запрещён», «задание для worker-2, вкладка опознана как worker-1»),
+    // строка задания закрывалась как `blocked`, `agentDecision` снова видел
+    // «агента нет» — и служба заводила следующую. Пульт при этом показывал
+    // «проект ждёт ручного запуска», а в журнале каждые полторы минуты
+    // появлялся новый планирующий ход Координатора. Это не работа цикла, а
+    // его холостой ход: пока причину не убрали, повтор даст тот же отказ.
+    //
+    // Поэтому после отказа пара ждёт ТОГО ЖЕ отказа, а не новой попытки:
+    // лимит попыток на пару в окне, и до его конца задание не выдаётся.
+    const retry = agentRetryGate(role, slot.slotId);
+    if (retry.blocked) {
+      return {
+        ok: false,
+        wait: true,
+        why: `создание агента ${role} в ${slot.slotId} приостановлено до ${isoNow(retry.until)}: ` +
+          `${retry.why || "причина не названа"} (попыток ${retry.tries})`,
+      };
+    }
     // Открытое задание на эту пару — второе не нужно.
     //
     // Открытое, а не только `waiting`: взятое (`leased`) задание — это уже
@@ -545,11 +618,18 @@ export function createService({
       })]);
     }
 
+    // Отказ запоминается, успех снимает память: иначе одна и та же причина
+    // («bootstrap-пробник пуст», «задание для worker-2, вкладка worker-1»)
+    // заводила новое задание на каждом `pull`, и цикл крутился вхолостую.
+    if (failed) noteAgentFailure(name, target, note || "причина не названа");
+    else if (memory.agentCreateFailures instanceof Map) memory.agentCreateFailures.delete(agentRetryKey(name, target));
+
     await record({
       slot: target, account: slot.account, tab, kind: "provision",
       level: failed ? "error" : "info",
       text: failed
-        ? `агент ${name} в ${target} не создан: ${note || "причина не названа"}`
+        ? `агент ${name} в ${target} не создан: ${note || "причина не названа"}. ` +
+          `Повтор не раньше ${Math.round(AGENT_CREATE_RETRY_MS / 60000)} мин: пока причину не убрали, он даст тот же отказ.`
         : `агент ${name} в ${target} готов: ${address}`,
       data: { role: name, slot: target, url: address },
     });
@@ -883,6 +963,10 @@ export function createService({
         ? await takeProvision(slot, await loadAll(), tab)
         : null;
       if (task) return task;
+      // Отказ уже назван — второй раз просить нечего: пульт должен сказать
+      // причину, а не «готовит другая вкладка» (28.11 это и читалось как
+      // «проект ждёт ручного запуска» без единого действия).
+      if (requested.wait) return idle(requested.why);
       return idle(`агента «${plan.item["Роль"]}» в ${slot.slotId} готовит другая вкладка этого слота`);
     }
 
@@ -1255,6 +1339,8 @@ export function createService({
       // не хуже, чем прямой запрос вкладки.
       const issued = [];
       const agentRequests = [];
+      // Причина, по которой создание агента сейчас запрещено (см. ниже).
+      let lastAgentBlock = "";
       const roles = await loadRoles();
       for (const item of plan.plans) {
         const fresh = await loadAll();
@@ -1274,6 +1360,9 @@ export function createService({
         if (decision.action === "create") {
           const asked = await requestAgent({ role: replan.item["Роль"], slot: replan.slot, data: fresh, reason: decision.why });
           if (asked.ok) agentRequests.push({ role: replan.item["Роль"], slot: replan.slot.slotId });
+          // Отказ уже назван и запомнен: не заводим новую строку задания и не
+          // просим планирующий ход — иначе пульт снова покажет «ждёт запуска».
+          else if (asked.wait) lastAgentBlock = asked.why;
           continue;
         }
         const run = await issue({ plan: replan, slot: replan.slot, data: fresh, origin, agentUrl: decision.url });
@@ -1286,6 +1375,20 @@ export function createService({
       let why = plan.why;
       let turnRequested = false;
       let turnRequestId = "";
+      // Создание агента отложено после отказа. Планирующий ход здесь ничего не
+      // изменит: причина — настройка профиля или не тот контейнер, и новый
+      // план даст ту же карточку и тот же отказ. Поэтому называем причину, а
+      // не просим ход заново (28.11: так и рождался «планирующий ход
+      // Координатора» каждые полторы минуты).
+      if (!issued.length && !agentRequests.length && lastAgentBlock) {
+        why = lastAgentBlock;
+        memory.lastTick = now();
+        memory.lastStep = { at: isoNow(now()), count: 0, why };
+        const repeated = origin === "auto" && memory.lastAutoIdleReason === why;
+        if (!repeated) await record({ kind: "tick", level: "warn", text: `шаг: ${why}` });
+        memory.lastAutoIdleReason = origin === "auto" ? why : "";
+        return { ok: true, planned: 0, requested: 0, why, plans: [], agentRequests, turnRequested: false, summary: data.settings };
+      }
       if (!issued.length && !agentRequests.length) {
         const turn = String(data.settings["cycle.turn"] || "coordinator");
         const waiting = data.queue.filter((item) => norm(item["Статус"]) === QUEUE.WAITING).length;

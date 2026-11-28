@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Relay — передача хода между агентами
 // @namespace    https://arena.ai/
-// @version      1.35.8
+// @version      1.35.9
 // @updateURL    https://raw.githubusercontent.com/Creative36711/relay-wotr/main/tools/script-cat/relay.user.js
 // @downloadURL  https://raw.githubusercontent.com/Creative36711/relay-wotr/main/tools/script-cat/relay.user.js
 // @description  Цикл Координатор → исполнитель → Координатор: агент сам коммитит, пушит и мержит PR; ScriptCat ждёт мерж и нажимает Continue.
@@ -97,7 +97,7 @@
     // D-073: отпечаток сборки вшивает build.mjs (SHA-256 источника). Номер версии
     // говорит «какой выпуск», отпечаток — «какая именно сборка»: без него проверка
     // «работает новая версия, а не прежняя под новым номером» невозможна.
-    buildFingerprint: "c02f9a45ed1a9013",
+    buildFingerprint: "3096c28cd8a09026",
     repo: "", // для ссылки на PR из номера
     tickMs: 15000,
     mergeGraceMs: 90000, // сколько ждём мерж, прежде чем нажать кнопки за агента
@@ -900,7 +900,7 @@
 
   const NTFY_BASE = "https://ntfy.sh";
   const SCRIPT_VERSION =
-    (typeof GM_info !== "undefined" && GM_info?.script?.version) || "1.35.8";
+    (typeof GM_info !== "undefined" && GM_info?.script?.version) || "1.35.9";
 
   /** «https://ntfy.sh/topic?x=1» и «topic» одинаково дают topic. */
   function normalizeNtfyTopic(raw) {
@@ -19167,11 +19167,26 @@
     return { names, ids, cards };
   }
 
+  /**
+   * Занят ли этот контейнер командным ходом.
+   *
+   * Спрашивать «есть ли `K.pending`/`K.expect` вообще» нельзя: хранилище
+   * ScriptCat общее для всех контейнеров профиля, поэтому ход Координатора
+   * видели все вкладки и провижининг объявлял простой занятым на каждом слоте
+   * (28.11: создание агента не начиналось ни разу, хотя рабочие слоты стояли
+   * свободными). Берём только ход, который принадлежит этой вкладке.
+   */
+  function provisionLocalHandoff() {
+    const owned = (value) => Boolean(value) &&
+      (typeof relayOwnsHandoff !== "function" || relayOwnsHandoff(value));
+    return owned(GM_getValue(K.pending, null)) || owned(GM_getValue(K.expect, null));
+  }
+
   function provisionIdleReason(cfg = provisionConfig()) {
     if (!cfg.agentProvisionEnabled) return "provisioning выключен";
     if (!C.notion) return "нет Notion-токена профиля";
     if (typeof isPaused === "function" ? isPaused() : GM_getValue(K.paused, "")) return "цикл на паузе";
-    if (GM_getValue(K.pending, null) || GM_getValue(K.expect, null)) return "активный командный ход";
+    if (provisionLocalHandoff()) return "активный командный ход";
     if (GM_getValue(K.pilotWait, null)) return "идёт пилот";
     if (provisionRequestState()) return "provisioning-запрос уже выдан";
     if (provisionLockHeldByOther()) return "provisioning занят другой вкладкой";
@@ -19552,7 +19567,7 @@
     if (visibleError) return provisionPause(`Provisioning: ошибка Arena: ${visibleError.text || visibleError}`, request, job);
 
     if (["validated", "creating"].includes(job.state)) {
-      if (GM_getValue(K.pending, null) || GM_getValue(K.expect, null)) {
+      if (provisionLocalHandoff()) {
         return provisionPause("Provisioning: появился активный командный ход; создание не начинаю.", request, job);
       }
       if (!provisionBootstrapClean(cfg.agentBootstrapPrompt)) return provisionPause("Provisioning: bootstrap-пробник пуст или запрещён.", request, job);
@@ -22588,6 +22603,9 @@ function reviewPullRequest({ files, pr, zone } = {}) {
     lastPresenceAt: 0,
     lastLocalHold: "",
     lastHoldReportAt: 0,
+    // Ожидание в общем хранилище принадлежит другой роли: строка в журнал
+    // пишется один раз, а не на каждом тике.
+    foreignWaiting: "",
     // Смена профиля, отложенная до конца текущего хода (занятая вкладка).
     settingsReloadPending: false,
     lastMarker: { hash: "", at: 0 },
@@ -22677,6 +22695,65 @@ function reviewPullRequest({ files, pr, zone } = {}) {
     return out;
   }
 
+  /**
+   * Чей это ход — этой вкладки или чужой.
+   *
+   * `cfn-expect` живёт в хранилище ScriptCat, а оно общее для всех контейнеров
+   * одного профиля. 28.11 из-за этого пульт зациклился: ход Координатора
+   * (роль admin-слота) держали в `expect` все четыре вкладки, каждая
+   * докладывала `localWaiting: "expect:plan"`, и пульт видел «все заняты» там,
+   * где работала ровно одна. Служба не могла отличить держателя хода от
+   * соседа, поэтому не выдавала ни план, ни провижининг, а планирующий ход
+   * запрашивался заново каждую минуту.
+   *
+   * Признак держателя — адрес роли из ожидания против адреса этой вкладки.
+   * Сверять по `roleId` нельзя: у неадминских ролей в «Ролях» адреса нет
+   * (D-015), и там он пуст у всех. Пустой адрес — не улика, а отсутствие
+   * данных: тогда считаем ход своим, как это уже делает `stepOwnsTurn`.
+   */
+  function relayOwnsHandoff(waiting) {
+    if (!waiting || typeof waiting !== "object") return false;
+    const same = (a, b) => {
+      const left = String(a || "").trim().toLowerCase();
+      const right = String(b || "").trim().toLowerCase();
+      return Boolean(left && right && left === right);
+    };
+    const differ = (a, b) => {
+      const left = String(a || "").trim();
+      const right = String(b || "").trim();
+      return Boolean(left && right && !same(left, right));
+    };
+    // 1. Адрес агента: id из ожидания против id этой страницы. Сильнее всего,
+    //    но у рабочих ролей его в «Ролях» нет (D-015) — тогда идём дальше.
+    const hereId = (() => {
+      try { return typeof roleFromPath === "function" ? roleFromPath() : ""; } catch { return ""; }
+    })();
+    if (differ(waiting.roleId, hereId)) return false;
+    if (same(waiting.roleId, hereId)) return true;
+    // 2. Полный адрес роли из ожидания против адреса открытой страницы.
+    const expected = String(waiting.roleUrl || "").trim();
+    const herePath = (() => {
+      try { return String(location.pathname || ""); } catch { return ""; }
+    })();
+    if (expected && herePath) {
+      let target = "";
+      try { target = new URL(expected, location.href).pathname; } catch { target = ""; }
+      if (target) return target === herePath;
+    }
+    // 3. Имя роли по кешу «Ролей»: у неадминских ролей это единственный
+    //    признак, который есть и в ожидании, и на странице.
+    const hereName = (() => {
+      try {
+        const row = typeof accountRoleForPath === "function" ? accountRoleForPath() : null;
+        return row ? String(row.name || "") : "";
+      } catch { return ""; }
+    })();
+    if (differ(waiting.roleName, hereName)) return false;
+    // Данных не хватило — считаем ход своим: чужой ход в своей вкладке
+    // безопаснее (шаг сам увидит, что маркера нет), чем брошенный свой.
+    return true;
+  }
+
   /** POST действия в службу. Служба живёт на машине владельца, без неё — тишина. */
   async function relayPost(body) {
     const base = relayBase();
@@ -22747,10 +22824,20 @@ function reviewPullRequest({ files, pr, zone } = {}) {
     const expectedSlot = typeof relayManagerExpectedSlot === "function" ? relayManagerExpectedSlot() : "";
     const waitingState = GM_getValue(K.expect, null);
     const pendingState = GM_getValue(K.pending, null);
-    const localBusy = Boolean(waitingState || pendingState);
-    const localWaiting = waitingState
+    // Чужое ожидание — не занятость этой вкладки. Хранилище ScriptCat общее
+    // для контейнеров профиля, поэтому `expect` может принадлежать соседу;
+    // докладывать его как своё удержание значит врать пульту (28.11: так
+    // «занятыми» выглядели все четыре вкладки, и ход не двигался ни у кого).
+    const ownsWaiting = Boolean(waitingState) && relayOwnsHandoff(waitingState);
+    const ownsPending = Boolean(pendingState) && relayOwnsHandoff(pendingState);
+    const localBusy = ownsWaiting || ownsPending;
+    const localWaiting = ownsWaiting
       ? `expect:${String(waitingState.kind || "ход")}`
-      : pendingState ? "pending" : "";
+      : ownsPending ? "pending" : "";
+    if (waitingState && !ownsWaiting && relayClient.foreignWaiting !== "1") {
+      relayClient.foreignWaiting = "1";
+      log("Локальное ожидание принадлежит другой роли: эту вкладку оно не занимает, состояние соседа не трогаю.", false, { ntfy: "quiet" });
+    } else if (ownsWaiting) relayClient.foreignWaiting = "";
     const projectConfigUpdatedAt = String(GM_getValue("cfn-relay-settings-updated-at", "") || "");
     const projectCredentialsSynced = GM_getValue("cfn-relay-project-credentials-synced", false) === true;
     const res = await relayPost({
@@ -23035,14 +23122,21 @@ function reviewPullRequest({ files, pr, zone } = {}) {
     }
     if (GM_getValue(K.step, false) && projectApproved() &&
         typeof projectCredentialsReady === "function" && projectCredentialsReady() &&
-        !projectHeld() && !busy && !GM_getValue(K.pending, null) && !GM_getValue(K.expect, null)) {
+        !projectHeld() && !busy &&
+        !relayOwnsHandoff(GM_getValue(K.pending, null)) && !relayOwnsHandoff(GM_getValue(K.expect, null))) {
       GM_setValue(K.step, false);
       log("Подключения синхронизированы; выполняю сохранённый отложенный шаг.");
       if (typeof tick === "function") await tick(true);
       return;
     }
-    const pending = GM_getValue(K.pending, null);
-    const waiting = GM_getValue(K.expect, null);
+    // Только СВОЁ ожидание удерживает pull. Ожидание соседнего контейнера —
+    // не работа этой вкладки: она свободна и может спросить очередь. Иначе
+    // одна admin-вкладка с `expect:plan` держала «занятыми» все остальные, и
+    // пульт не мог ни выдать карточку, ни запустить создание агента (28.11).
+    const pendingRaw = GM_getValue(K.pending, null);
+    const waitingRaw = GM_getValue(K.expect, null);
+    const pending = pendingRaw && relayOwnsHandoff(pendingRaw) ? pendingRaw : null;
+    const waiting = waitingRaw && relayOwnsHandoff(waitingRaw) ? waitingRaw : null;
     // Просьба пульта «дожать ход» проверяется раньше удержания и раньше
     // любой локальной работы — кроме одного случая: агент ещё печатает.
     //
