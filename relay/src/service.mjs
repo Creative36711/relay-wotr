@@ -1363,7 +1363,11 @@ export function createService({
     if (!active.length) {
       return { ok: false, why: "админ-вкладка не на связи: откройте вкладку контейнера, ScriptCat объявит её службе" };
     }
-    if (!active.some((client) => client.localPaused)) {
+    // Пауза одной вкладки не должна молча отменять просьбу для остальных:
+    // спрашиваем про ту, которой ход и принадлежит (держит ожидание), а если
+    // такой нет — про любую непаузную.
+    const holder = active.find((client) => String(client.localWaiting || "")) || active[0];
+    if (!holder.localPaused) {
       memory.nudge = { slots: target, at: now(), by: "пульт" };
       await record({
         kind: "ui",
@@ -1377,7 +1381,7 @@ export function createService({
       };
     }
     // Пауза вкладки — не повод молчать: называем её причину и что именно снять.
-    const paused = active.find((client) => client.localPaused) || {};
+    const paused = holder;
     memory.nudge = { slots: target, at: now(), by: "пульт" };
     const captcha = /капч|security verification|recaptcha/i.test(String(paused.localPauseReason || ""));
     return {

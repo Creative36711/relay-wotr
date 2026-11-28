@@ -301,18 +301,35 @@
   }
 
   /**
-   * Шаг только читает уже отправленный ход: маркер в чате, ожидание плана,
-   * карточку приёмки. Ему не нужен сетевой вход в Notion/Drive — он ничего не
-   * пишет и не читает в базах. Поэтому гейт credentials его не касается.
+   * Ход, который лежит у этой вкладки.
    *
-   * Что случилось. 28.11 в 01:31 владелец нажал «Дожать ход», пульт передал
-   * просьбу, вкладка сделала шаг — и упёрлась в «Relay ещё не синхронизировал
-   * сохранённые Notion/Drive credentials». Ход при этом лежал в чате целиком,
-   * его надо было только прочитать. Кнопка обещала действие и не сделала его
-   * из-за входа, который этому действию не нужен.
+   * `K.expect` общий на профиль (так устроен обмен между контейнерами), поэтому
+   * «чужой» и «свой» ход здесь различаются не наличием записи, а ролью: если
+   * сохранено ожидание роли этой страницы — ход мой. Запись без роли — след
+   * старой версии, и она тоже моя.
+   */
+  const stepOwnsTurn = () => {
+    const waiting = GM_getValue(K.expect, null);
+    if (!waiting || !waiting.kind) return false;
+    if (!String(waiting.roleId || "")) return true;
+    const here = typeof roleFromPath === "function" ? roleFromPath() : "";
+    return Boolean(here) && norm(waiting.roleId) === norm(here);
+  };
+
+  /**
+   * Шаг, который доводит уже полученный ход: читает маркер из чата, применяет
+   * ответ Координатора, передаёт карточку дальше. Такой шаг ничего не пишет и
+   * не читает в базах Notion/Drive, поэтому гейт подключений его не касается.
+   *
+   * Почему это не мелочь. 28.11 в 01:31 владелец нажал «Дожать ход», вкладка
+   * сделала шаг — и упёрлась в «Relay ещё не синхронизировал сохранённые
+   * Notion/Drive credentials». Ход лежал в чате целиком, его надо было только
+   * прочитать. Кнопка обещала действие и не сделала его из-за входа, который
+   * этому действию не нужен. То же и с удержанием после переключения проекта:
+   * оно защищает от ЧУЖОЙ работы, а не от продолжения своего же хода.
    */
   const readOnlyStep = (fromToggle, mode = "") =>
-    Boolean(fromToggle) && (mode === "read" || mode === "nudge");
+    Boolean(fromToggle) && (mode === "read" || mode === "nudge" || stepOwnsTurn());
 
   /**
    * Режим следующего шага. Сигнатура `tick` остаётся прежней: её проверяют
@@ -331,6 +348,10 @@
     // Пробы транспорта собирают `tick` из фрагментов, без соседних замыканий:
     // отсутствие заявки — это «обычный шаг», а не поломка.
     const mode = typeof takeStepMode === "function" ? takeStepMode() : "";
+    // `readOnlyStep` может отсутствовать только в пробе, которая собирает
+    // `tick` из фрагментов: тогда это обычный шаг, а не поломка. Считаем один
+    // раз на шаг: оба гейта — подключения и удержание — спрашивают одно и то же.
+    const readOnly = typeof readOnlyStep === "function" && readOnlyStep(fromToggle, mode);
     if (typeof projectApproved === "function" && !projectApproved()) {
       if (fromToggle) {
         log(typeof projectBlockedText === "function" ? projectBlockedText()
@@ -339,14 +360,14 @@
       }
       return;
     }
-    if (typeof projectCredentialsReady === "function" && !projectCredentialsReady() && !readOnlyStep(fromToggle, mode)) {
+    if (typeof projectCredentialsReady === "function" && !projectCredentialsReady() && !readOnly) {
       if (fromToggle) log("Шаг не начат: Relay ещё не синхронизировал сохранённые Notion/Drive credentials. Повторю после подключения; вводить уже сохранённые значения не нужно.", true);
       return;
     }
     // Допуск есть — очередь обратной связи обязана жить, даже если панель
     // монтировалась раньше, чем работа была разрешена (внешний D-023).
     if (typeof armFeedbackWatch === "function") armFeedbackWatch();
-    if (typeof projectHeld === "function" && projectHeld()) {
+    if (typeof projectHeld === "function" && projectHeld() && !readOnly) {
       // fromToggle используется и отложенными автоматическими шагами: право
       // снять удержание есть только у явных кнопок «Шаг»/«Включить».
       if (fromToggle) log("Проект ждёт ручного запуска после переключения.");
