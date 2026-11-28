@@ -297,6 +297,23 @@
   }
 
   /**
+   * D-051: доставка подтверждена — капча прошлой попытки закрыта самой
+   * отправкой. Без этого пауза оставалась после «Задание отправлено»:
+   * Мастер видел «Решите капчу», жал «Продолжить» и попадал в сверку
+   * уже успешно ушедшего хода.
+   */
+  function liftDeliveredCaptchaPause() {
+    const info = typeof tabPauseContext === "function" ? tabPauseContext() : GM_getValue(K.pause, null);
+    if (!info || info.kind !== "captcha") return false;
+    if (typeof tabPauseSet === "function") tabPauseSet("");
+    else GM_setValue(K.paused, "");
+    if (typeof tabPauseContextSet === "function") tabPauseContextSet(null);
+    else GM_setValue(K.pause, null);
+    log("Сообщение доставлено — капча больше не актуальна, локальная пауза снята.", false, { ntfy: "quiet" });
+    return true;
+  }
+
+  /**
    * Кнопка рядом с полем ввода.
    *
    * Геометрия — единственный признак, который отличает Send от кнопки аккаунта

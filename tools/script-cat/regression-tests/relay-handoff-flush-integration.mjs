@@ -433,7 +433,8 @@ for (const [why, over] of [
   const lostAt = consumeBlock.indexOf('kind: "delivery-state-lost"');
   const receiptAt = consumeBlock.indexOf('// D-045: квитанция пишется и тогда, когда ожидание потеряно.');
   assert.ok(receiptAt > 0 && lostAt > receiptAt, 'факт доставки сохраняется раньше паузы');
-  assert.match(consumeBlock, /if \(!expect \|\| norm\(expect\.roleId\) !== norm\(me\)\) \{\s*pause\(/, 'потерянное ожидание по-прежнему не называется успехом');
+  assert.match(consumeBlock, /if \(!expect \|\| norm\(expect\.roleId\) !== norm\(me\)\) \{\s*const meNow = /, 'потерянное ожидание проходит через сверку D-051, а не через молчаливый успех');
+  assert.match(consumeBlock, /journalDelivery\(rebuilt, "delivered"\)/, 'доказанная доставка восстанавливается из очереди (D-051)');
   assert.match(consumeBlock, /if \(await adoptOrphanDispatch\(pending, me\)\) return true;/, 'сверка стоит до отправки');
   const deliverAt = consumeBlock.indexOf('const delivery = await deliver(');
   const adoptAt = consumeBlock.indexOf('await adoptOrphanDispatch(');
