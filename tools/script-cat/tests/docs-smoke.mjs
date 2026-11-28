@@ -159,10 +159,15 @@ for (const [name, spec] of Object.entries(contract.markers)) {
 // 4. markers.md согласован с контрактом.
 const markersDoc = readFileSync(join(root, 'docs/agents/markers.md'), 'utf8');
 for (const name of Object.keys(contract.markers)) assert.ok(markersDoc.includes(name), `markers.md: ${name}`);
+// D-024: согласование создания агентов выброшено — контракт маркеров больше не
+// знает CF_AGENT_PROVISION_RESULT, и в документации его быть не должно.
+assert.equal(contract.markers.CF_AGENT_PROVISION_RESULT, undefined, 'маркер согласования не вернулся в контракт');
+assert.ok(!markersDoc.includes('CF_AGENT_PROVISION_RESULT'), 'markers.md не описывает выброшенный маркер');
 assert.match(markersDoc, /durable gate/i);
 assert.match(markersDoc, /gate:true.*need:/s);
 assert.match(markersDoc, /sourceRoleId/);
 const protoDoc = readFileSync(join(root, 'docs/agents/protocol.md'), 'utf8');
+assert.ok(!protoDoc.includes('CF_AGENT_PROVISION_RESULT'), 'protocol.md не описывает выброшенный маркер');
 assert.match(protoDoc, /Durable-возврат результата по `gate` \(D-105\)/);
 assert.match(protoDoc, /исходными ID/);
 

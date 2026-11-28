@@ -15,15 +15,16 @@ export const NEW = UUID(7);
 export const OTHER = UUID(8);
 const norm = (s) => String(s || '').replace(/-/g, '').toLowerCase();
 
-export function makeWorld({ cfg = {}, mode = 'auto', replace = false } = {}) {
+export function makeWorld({ cfg = {}, replace = false } = {}) {
   const store = new Map();
   const session = new Map();
   const GM_getValue = (k, d) => (store.has(k) ? store.get(k) : d);
   const GM_setValue = (k, v) => store.set(k, v);
   let seq = 500;
+  // D-024: удалённых ключей (`agentProvisionEnabled`, режим, allowlist,
+  // `agentBootstrapPrompt`) в профиле больше нет — стенд обязан быть таким же,
+  // иначе проба «проходит» на настройках, которых код уже не читает.
   const defaults = {
-    agentProvisionEnabled: true, agentProvisionMode: mode, agentProvisionRepoAllowlist: ['owner/repo'],
-    agentBootstrapPrompt: 'Что изображено на картинке test.jpg в репозитории https://github.com/owner/test?',
     agentProvisionMaxJobs: 3, agentProvisionDailyMax: 5, agentBootstrapWaitMs: 600000,
     agentUrlWaitMs: 30000, agentRenameAttempts: 3, agentProvisionAutoActivate: true, agentProvisionArchiveOld: true,
   };
@@ -35,9 +36,11 @@ export function makeWorld({ cfg = {}, mode = 'auto', replace = false } = {}) {
   const pages = new Map();
   const row = (over = {}) => ({
     id: CAND, pageId: CAND, name: 'Executor Core', fn: 'Executor', status: 'Ждёт', url: '', repo: 'owner/repo',
-    agentAdmin: false, agentState: 'запрошен', previousAgentUrl: '', ...over,
+    agentState: 'запрошен', previousAgentUrl: '', ...over,
   });
-  pages.set(ADMIN, row({ id: ADMIN, pageId: ADMIN, name: 'Admin Coord', fn: 'Coordinator', status: 'Активна', url: `https://arena.ai/agent/${ADMIN}`, agentAdmin: true, agentState: 'не требуется' }));
+  // Админ-флага в модели D-024 нет вовсе: роль в административном слоте — это
+  // функция Coordinator, а не checkbox.
+  pages.set(ADMIN, row({ id: ADMIN, pageId: ADMIN, name: 'Admin Coord', fn: 'Coordinator', status: 'Активна', url: `https://arena.ai/agent/${ADMIN}`, agentState: 'не требуется' }));
   pages.set(UUID(3), row({ id: UUID(3), pageId: UUID(3), name: 'Reviewer', fn: 'Reviewer', status: 'Активна', url: `https://arena.ai/agent/${UUID(3)}`, agentState: 'не требуется' }));
   pages.set(CAND, row(replace ? { url: `https://arena.ai/agent/${OLD}` } : {}));
   const world = {
@@ -104,7 +107,6 @@ export function makeWorld({ cfg = {}, mode = 'auto', replace = false } = {}) {
             'Статус': { type: 'select' },
             'Agent URL': { type: 'url' },
             'Agent State': { type: 'select' },
-            'Agent Admin': { type: 'checkbox' },
             'Previous Agent URL': { type: 'url' },
             ...(page.properties || {}),
           },
@@ -123,12 +125,13 @@ export function makeWorld({ cfg = {}, mode = 'auto', replace = false } = {}) {
     taskRole: (p) => p.to || '',
     rt: (v) => (v && typeof v === 'object' ? v.rich_text?.[0]?.text?.content || '' : String(v || '')),
     richText: (v) => [{ type: 'text', text: { content: String(v) } }],
-    PromptCompiler: { compile: () => (world.compileFail ? { ok: false, error: { code: 'budget_exceeded', message: 'budget' } } : { ok: true, text: 'PROVISION_PROMPT' }) },
     ensureComposer: async () => ({ editor: {} }),
     writePrompt: () => true,
     deliver: async (editor, text) => {
       world.delivers.push(text);
-      if (text === C.agentBootstrapPrompt) {
+      // Новый чат появляется после первого промпта: адрес берётся из адресной
+      // строки уже на следующем шаге (D-024).
+      if (text === provisionProbe) {
         location.assign(`/agent/${NEW}`);
         world.sidebar.set(NEW, { textContent: 'Old Name' });
       }
@@ -138,7 +141,6 @@ export function makeWorld({ cfg = {}, mode = 'auto', replace = false } = {}) {
     messages: () => [],
     nodeId: (x) => x,
     messagesAfter: () => world.pendingReplies,
-    parseMarker: (raw) => (String(raw).includes('CF_AGENT_PROVISION_RESULT') ? world.markerObj : null),
     captchaDialog: () => world.captcha,
     detectToolCallLimit: () => (world.toolLimit ? { text: 'limit' } : null),
     detectVisibleErrorCard: () => world.visibleError,
@@ -160,13 +162,11 @@ export function makeWorld({ cfg = {}, mode = 'auto', replace = false } = {}) {
     relayIdentity: async () => world.relaySlot,
     relayPost: async (body) => { world.relayReports.push(body); return { ok: true }; },
   };
+  // Промпт, который поток реально отправляет: стенд не должен угадывать его из
+  // профиля (там его больше нет).
+  const provisionProbe = 'Что изображено на картинке test.jpg в репозитории https://github.com/Creative36711/test? ' +
+    'Если у тебя нет функции визуального распознавания, скажи прямо.';
   const names = Object.keys(deps);
-  const api = new Function(...names, `${source}\nreturn { consumeProvision, provisionStartRequest, provisionStartRelayTask, provisionCancelRequest, provisionState, provisionRequestState, provisionActiveJob };`)(...names.map((n) => deps[n]));
-  const approve = (jobs) => {
-    const request = store.get(K.provisionRequest);
-    world.markerObj = { request_id: request.requestId, jobs, reason: 'ok' };
-    world.pendingReplies = [{ raw: 'CF_AGENT_PROVISION_RESULT {}' }];
-  };
-  const candidateJob = (action = replace ? 'replace' : 'create') => ({ role_page_id: CAND, role_name: 'Executor Core', repo: 'owner/repo', action });
-  return { api, world, location, approve, candidateJob, store, session };
+  const api = new Function(...names, `${source}\nreturn { consumeProvision, provisionStartRelayTask, provisionCancelRequest, provisionState, provisionRequestState, provisionActiveJob, provisionIdleReason, PROVISION_PROBE_PROMPT };`)(...names.map((n) => deps[n]));
+  return { api, world, location, store, session, probe: provisionProbe };
 }

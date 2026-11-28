@@ -104,9 +104,10 @@ test("agents: экземпляры слота — то, что вкладка д
 });
 
 test("agents: пары для промпта показывают «готов / нет агента», а не только занятость", () => {
+  // D-024: административность роли — её функция, а не checkbox «Agent Admin».
   const roles = [
-    { name: "Godot World", agentAdmin: false, url: "" },
-    { name: "Coordinator", agentAdmin: true, url: "https://arena/agent/c" },
+    { name: "Godot World", fn: "Executor", url: "" },
+    { name: "Coordinator", fn: "Coordinator", url: "https://arena/agent/c" },
   ];
   const slotsParsed = [
     { slotId: "admin", admin: true, enabled: true },

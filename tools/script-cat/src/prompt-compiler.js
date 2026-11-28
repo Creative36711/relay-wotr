@@ -188,8 +188,6 @@
         // D-053: вердикт арбитра относится к конкретной карточке и ходу.
         if (c.arbiter?.cardId && !eq(obj.dispatch_id, c.arbiter.cardId)) return "dispatch_id маркера не совпадает с карточкой арбитража";
         if (c.turnId && !eq(obj.turn_id, c.turnId)) return "turn_id маркера не совпадает с ctx";
-      } else if (name === "CF_AGENT_PROVISION_RESULT") {
-        if (c.provision?.requestId && !eq(obj.request_id, c.provision.requestId)) return "request_id маркера не совпадает с ctx";
       }
       return null;
     }

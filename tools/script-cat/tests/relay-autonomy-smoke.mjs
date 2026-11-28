@@ -177,8 +177,10 @@ for (const kind of Object.keys(HEAL_MASTER_ONLY)) {
     'Coordinator role selection excludes phase, URL and account/container state');
   assert.match(coordinator, /Admin URL\/права\/удаление — Мастер/,
     'administrative identity remains owner-managed');
-  const provision = blocks.slice(blocks.indexOf('def("authority.provision"'));
-  assert.match(provision, /Процессные поля неадминской строки/, 'приёмка одобряет процессные поля сама');
+  // D-024: блока согласования создания агентов больше нет. Права Мастера
+  // остаются в authority.coordinator/authority.reviewer, а «одобрять строку
+  // перед созданием агента» нечего: создание больше не согласуется.
+  assert.ok(!blocks.includes('def("authority.provision"'), 'блок согласования не вернулся');
 }
 
 console.log('OK: relay-autonomy — D-092: закрытый список, инверсия по умолчанию, вопрос вместо остановки, метрика и зона как данные');

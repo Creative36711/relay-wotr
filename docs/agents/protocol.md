@@ -23,7 +23,6 @@ A reply with missing, placeholder or foreign IDs is not credited. A retry or con
 | Reviewer/Warden | mission acceptance | `CF_REVIEW_RESULT` |
 | Reviewer/role | question answer | `CF_ANSWER_RESULT` |
 | Reviewer | loop arbitration | `CF_ARBITER_RESULT` |
-| Admin reviewer/coordinator | provisioning approval | `CF_AGENT_PROVISION_RESULT` |
 
 Marker is the final physical line, with no prose or code fence after it. It never replaces a factual report.
 

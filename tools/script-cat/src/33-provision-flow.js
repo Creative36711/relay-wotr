@@ -1,8 +1,14 @@
-  // ───────────────────── provisioning: Relay-задача или админ-запрос ─────────────────────
-  // Оба пути не пишут K.pending/K.expect и не меняют общий Agent URL роли.
-  // Административный режим по-прежнему ждёт CF_AGENT_PROVISION_RESULT; pull
-  // Relay уже является разрешением, создаёт пару (роль, слот) и возвращает URL
-  // в очередь action=agent. Bootstrap/allowlist/лимит профиля общие для обоих.
+  // ───────────────────── provisioning: задание Relay (D-024) ─────────────────────
+  // Один вход: служба Relay даёт задание «создать агента роли R в контейнере S».
+  // Это уже разрешение — отдельного согласования админ-роли нет. Координатор
+  // выдаёт карточку и не проверяет, есть ли агент: транспорт сам идёт в
+  // названный контейнер, и если роли там нет — создаёт её (роль есть → задание,
+  // роли нет → агент). Контур не пишет K.pending/K.expect и не меняет общий
+  // Agent URL роли в Notion.
+  //
+  // Активация одна и та же для всех: после создания сессии отправляется
+  // фиксированный первый промпт (test.jpg), ответ не проверяется, а адрес
+  // берётся из адресной строки после этого ответа.
 
   let provisionRunning = false;
 
@@ -110,117 +116,22 @@
     return owned(GM_getValue(K.pending, null)) || owned(GM_getValue(K.expect, null));
   }
 
-  function provisionIdleReason(cfg = provisionConfig()) {
-    if (!cfg.agentProvisionEnabled) return "provisioning выключен";
+  /**
+   * Почему контейнер сейчас не берётся за создание агента.
+   *
+   * D-024: список причин короткий и не содержит «блокеров модели» — админ-роли,
+   * allowlist, включённости контура и пустого пробника больше нет. Остаётся
+   * только то, что физически мешает шагу: нет доступа к Notion, цикл на паузе,
+   * идёт свой командный ход, контур занят другой вкладкой или исчерпан суточный
+   * предел. Ни одна из причин не требует человека с админ-правами.
+   */
+  function provisionIdleReason() {
     if (!C.notion) return "нет Notion-токена профиля";
     if (typeof isPaused === "function" ? isPaused() : GM_getValue(K.paused, "")) return "цикл на паузе";
     if (provisionLocalHandoff()) return "активный командный ход";
-    if (GM_getValue(K.pilotWait, null)) return "идёт пилот";
-    if (provisionRequestState()) return "provisioning-запрос уже выдан";
     if (provisionLockHeldByOther()) return "provisioning занят другой вкладкой";
-    if (!provisionBootstrapClean(cfg.agentBootstrapPrompt)) return "bootstrap-пробник пуст или запрещён";
-    if (!provisionDailyAllow(cfg)) return "суточный лимит provisioning";
+    if (!provisionDailyAllow()) return "суточный лимит создания агентов";
     return "";
-  }
-
-  async function provisionGather(cfg = provisionConfig()) {
-    const rows = await rolesFresh();
-    const busy = await provisionBusyContext();
-    const { candidates, rejected } = provisionCandidates(rows, cfg, busy);
-    const admin = provisionAdminRole(rows);
-    return { rows, busy, candidates, rejected, admin };
-  }
-
-  /** Выдать запрос админ-роли. Вызывается кнопкой или холостым автоциклом. */
-  async function provisionStartRequest({ auto = false } = {}) {
-    const cfg = provisionConfig();
-    const why = provisionIdleReason(cfg);
-    if (why) { provisionLog(`Запрос не выдан: ${why}.`); return false; }
-    const { candidates, rejected, admin } = await provisionGather(cfg);
-    for (const item of rejected) provisionEvent("provision_noop", { rolePageId: item.rolePageId, reason: item.reason });
-    if (!admin) {
-      pause("Provisioning: нет активной админ-роли (Agent Admin=true, Coordinator/Reviewer). Создайте или включите админ-роль вручную.", { kind: "provision-no-admin" });
-      provisionEvent("provision_paused", { reason: "provision-no-admin" });
-      return false;
-    }
-    if (!candidates.length) { provisionEvent("provision_noop", { reason: "нет кандидатов" }); return false; }
-    const requestId = uid();
-    const request = {
-      requestId, state: "prepared", auto, resumeAuto: autoOn(),
-      adminPageId: admin.pageId, adminAgentId: admin.id, adminRoleName: admin.name,
-      adminFn: admin.fn, adminUrl: admin.url, candidates,
-      jobIds: [], createdAt: nowIso(), updatedAt: nowIso(), watermark: "", seen: [],
-    };
-    saveProvisionRequest(request);
-    provisionAcquireLock(requestId, request.resumeAuto);
-    autoSet(false);
-    provisionLog(`Provisioning: запрос ${requestId} подготовлен для админ-роли «${admin.name}», кандидатов ${candidates.length}.`);
-    if (provisionCurrentAgentUuid() !== String(admin.id).toLowerCase()) {
-      location.assign(admin.url);
-      return true;
-    }
-    return provisionSendRequest(request);
-  }
-
-  async function provisionSendRequest(request) {
-    const cfg = provisionConfig();
-    const admin = await provisionFreshRole(request.adminPageId);
-    if (!admin || admin.agentAdmin !== true || admin.status !== "Активна") {
-      return provisionPause("Provisioning: адресат запроса больше не активная админ-роль.", request, null);
-    }
-    if (provisionCurrentAgentUuid() !== String(admin.id).toLowerCase()) { location.assign(admin.url); return true; }
-    const compiled = PromptCompiler.compile({
-      kind: "provision", role: { fn: request.adminFn, name: request.adminRoleName },
-      provision: { requestId: request.requestId, candidates: request.candidates, maxJobs: cfg.agentProvisionMaxJobs },
-      delivery: { tier: "full" },
-    });
-    if (!compiled.ok) return provisionPause(`Provisioning prompt не собран: ${compiled.error?.message || compiled.error?.code}`, request, null);
-    const ready = await ensureComposer(C.pageWaitMs);
-    if (!ready?.editor) return provisionPause("Provisioning: поле ввода админ-роли не появилось.", request, null);
-    if (!writePrompt(ready.editor, compiled.text)) return provisionPause("Provisioning: не удалось вставить запрос админ-роли.", request, null);
-    request.watermark = lastMessageId();
-    request.seen = messages().map(nodeId);
-    request.state = "sending";
-    saveProvisionRequest(request);
-    const sent = await deliver(ready.editor, compiled.text);
-    if (!sent?.ok) return provisionPause("Provisioning: запрос админ-роли не доставлен.", request, null);
-    request.state = "awaiting";
-    request.sentAt = nowIso();
-    saveProvisionRequest(request);
-    provisionEvent("provision_request_sent", { requestId: request.requestId, rolePageId: request.adminPageId, step: "awaiting" });
-    provisionLog(`Provisioning: запрос ${request.requestId} отправлен админ-роли «${request.adminRoleName}». Жду маркер одобрения.`);
-    return true;
-  }
-
-  async function provisionConsumeApproval(request) {
-    const cfg = provisionConfig();
-    if (provisionCurrentAgentUuid() !== String(request.adminAgentId).toLowerCase()) { location.assign(request.adminUrl); return true; }
-    if (captchaDialog()) return provisionPause("Provisioning: капча на странице админ-роли.", request, null);
-    if (detectToolCallLimit()) return provisionPause("Provisioning: tool-call limit у админ-роли; продолжение запроса не поддерживается.", request, null);
-    const visibleError = detectVisibleErrorCard();
-    if (visibleError) return provisionPause(`Provisioning: ошибка Arena у админ-роли: ${visibleError.text || visibleError}`, request, null);
-    const admin = await provisionFreshRole(request.adminPageId);
-    if (!admin || admin.agentAdmin !== true || admin.status !== "Активна") {
-      return provisionPause("Provisioning: право одобрения потеряно (Agent Admin/Статус изменились).", request, null);
-    }
-    const replies = messagesAfter(request.watermark, request.seen);
-    const hit = replies.map((m) => ({ m, obj: parseMarker(m.raw, "CF_AGENT_PROVISION_RESULT") })).filter((x) => x.obj).at(-1);
-    if (!hit) return true; // ждём ответ админ-роли, автоцикл выключен
-    const fresh = await rolesFresh();
-    const verdict = validateProvisionMarker(hit.obj, request, fresh, cfg);
-    if (!verdict.ok) {
-      provisionEvent("provision_rejected", { requestId: request.requestId, reason: verdict.reason });
-      return provisionPause(`Provisioning: маркер одобрения отклонён — ${verdict.reason}.`, request, null);
-    }
-    request.state = "approved";
-    request.approvedAt = nowIso();
-    request.approvalReason = verdict.reason;
-    request.approvedJobs = verdict.jobs;
-    saveProvisionRequest(request);
-    provisionEvent("provision_approved", { requestId: request.requestId, rolePageId: request.adminPageId, reason: verdict.reason || `jobs ${verdict.jobs.length}` });
-    provisionLog(`Provisioning: одобрено jobs ${verdict.jobs.length}.`);
-    if (!verdict.jobs.length) return provisionFinishRequest(request, "одобрено 0 jobs");
-    return true;
   }
 
   async function provisionEnsureRecipientOption(roleName) {
@@ -234,25 +145,27 @@
     return true;
   }
 
+  /**
+   * Можно ли активировать роль после создания агента.
+   *
+   * D-024: «блокеров модели» нет. Роль не активируется только тогда, когда это
+   * физически нельзя или вредно прямо сейчас: строки уже нет, Agent URL в
+   * Notion успел стать другим, имени на sidebar нет (агент не создан по факту),
+   * по роли уже идёт работа. Проверки «остаётся ли активный Reviewer/Coordinator»
+   * убраны: это правило состава миссии, а не создание агента, и оно не должно
+   * стоять между владельцем и ролью.
+   */
   async function provisionActivationBlockReason(job, cfg) {
     const rows = await rolesFresh();
     const row = rows.find((r) => norm(r.pageId) === norm(job.rolePageId));
     if (!row) return "строка роли исчезла";
-    if (row.agentAdmin === true) return "админ-роль не активируется provisioning";
     if (norm(row.url) !== norm(job.agentUrl)) return "Agent URL в Notion не равен новому";
-    if (normalizeProvisionRepo(row.repo) !== job.repo) return "repo роли изменился";
     const item = provisionFindSidebarItem(provisionAgentUuid(job.agentUrl));
     if (!item || provisionText(item) !== job.roleName) return "имя sidebar не равно роли";
     const busy = await provisionBusyContext();
     if (busy.names.has(norm(job.roleName)) || busy.ids.has(norm(job.roleAgentId)) || busy.ids.has(norm(job.rolePageId))) {
       return "по роли есть активная работа";
     }
-    const active = rows.filter((r) => r.status === "Активна" && r.url);
-    if (job.fn === "Coordinator" && active.some((r) => r.fn === "Coordinator" && norm(r.pageId) !== norm(job.rolePageId))) {
-      return "уже есть активный Coordinator";
-    }
-    const reviewers = active.filter((r) => r.fn === "Reviewer" && norm(r.pageId) !== norm(job.rolePageId));
-    if (!reviewers.length && job.fn !== "Reviewer") return "не остаётся активного Reviewer";
     if (["Executor", "Auditor", "Auditory"].includes(job.fn)) {
       try { await provisionEnsureRecipientOption(job.roleName); }
       catch (error) { return `не удалось добавить «Кому»: ${error.message}`; }
@@ -263,7 +176,6 @@
   async function provisionPatchNotion(job, request) {
     const row = await provisionFreshRole(job.rolePageId);
     if (!row) return provisionPause("Provisioning: строка роли исчезла до записи Notion.", request, job, { event: "provision_conflict" });
-    if (row.agentAdmin === true) return provisionPause("Provisioning: попытка записать админ-роль.", request, job, { event: "provision_conflict" });
     const currentUrl = String(row.url || "").trim();
     const newUrl = job.agentUrl;
     if (currentUrl && norm(currentUrl) !== norm(newUrl) && norm(currentUrl) !== norm(job.oldAgentUrl)) {
@@ -271,9 +183,6 @@
     }
     if (row.status === "Активна" && currentUrl && norm(currentUrl) !== norm(newUrl)) {
       return provisionPause("Provisioning: роль уже активна с другим Agent URL.", request, job, { event: "provision_conflict" });
-    }
-    if (row.agentState === "не требуется") {
-      return provisionPause("Provisioning: Agent State больше не запрошен.", request, job, { event: "provision_conflict" });
     }
     const alreadyUrl = norm(currentUrl) === norm(newUrl);
     // Только те поля, что есть в схеме. Notion отвечает validation_error на всю
@@ -286,14 +195,14 @@
     // строка, свойств Notion в ней нет, поэтому спрашиваем живой объект: без
     // этого проверка была бы всегда истинной и ничего не защищала.
     const canWrite = await provisionCanWriteProps(job.rolePageId);
-    const props = {
-      "Agent State": { select: { name: "создан" } },
-    };
+    const props = {};
     if (canWrite("Agent Job ID")) props["Agent Job ID"] = { rich_text: richText(job.id) };
     if (canWrite("Agent Created At")) props["Agent Created At"] = { date: { start: nowIso() } };
     if (!alreadyUrl) props["Agent URL"] = { url: newUrl };
     if (job.action === "replace" && job.oldAgentUrl && canWrite("Previous Agent URL")) props["Previous Agent URL"] = { url: job.oldAgentUrl };
-    if (!(row.status === "Активна" && alreadyUrl)) await patch(job.rolePageId, props);
+    // Пустая запись в Notion — это не «ничего не делать», а лишний вызов,
+    // который на старом поле падал бы целиком. Поэтому не шлём её вовсе.
+    if (Object.keys(props).length && !(row.status === "Активна" && alreadyUrl)) await patch(job.rolePageId, props);
     provisionEvent("provision_notion_updated", { requestId: request.requestId, jobId: job.id, rolePageId: job.rolePageId, repo: job.repo, step: "notion_updated" });
     job.state = "notion_updated";
     provisionSaveJob(job);
@@ -409,6 +318,16 @@
     return true;
   }
 
+  /**
+   * Задание службы Relay: создать агента роли R в контейнере S.
+   *
+   * D-024: задание — и есть разрешение. Здесь нет ни согласования админ-роли,
+   * ни проверки «это административный контейнер», ни allowlist, ни пробника в
+   * профиле: транспорт идёт в назначенный контейнер и делает там ровно одно —
+   * роли нет → создать агента, роль есть → ничего не ломать. Отказ остаётся
+   * только один: задание пришло не тому контейнеру или роль нельзя завести
+   * вовсе (нет строки / Maintainer). Причина уходит в очередь как есть.
+   */
   async function provisionStartRelayTask({ roleName = "", slotId = "", queueId = "", error = "" } = {}) {
     const role = String(roleName || "").trim();
     const target = String(slotId || "").trim();
@@ -420,7 +339,7 @@
     let active = provisionRequestState();
     if (active) {
       if (active.relay && String(active.queueId || "") === id && active.state === "relay_preparing") {
-        // Восстановление после перезагрузки до проверки роли/репозитория.
+        // Восстановление после перезагрузки до проверки роли.
       } else if (active.relay && String(active.queueId || "") === id) return true;
       else {
         provisionQueueRelayTask({ queueId: id, roleName: role, slotId: target, error });
@@ -439,39 +358,25 @@
     }
     if (error) return provisionBeginRelayFailure(role, target, id, error);
     const actualSlot = typeof relayIdentity === "function" ? await relayIdentity() : "";
-    if (!actualSlot || actualSlot !== target || relayClient.admin) {
-      const why = !actualSlot ? "контейнер не опознан" : relayClient.admin ? "административный контейнер не создаёт worker-агентов" : `задание для ${target}, вкладка опознана как ${actualSlot}`;
+    if (!actualSlot || actualSlot !== target) {
+      const why = !actualSlot ? "контейнер не опознан" : `задание для ${target}, вкладка опознана как ${actualSlot}`;
       return provisionBeginRelayFailure(role, target, id, why);
     }
     const cfg = provisionConfig();
-    if (!provisionBootstrapClean(cfg.agentBootstrapPrompt)) {
-      const why = "в профиле не задан безопасный bootstrap-пробник";
-      return provisionBeginRelayFailure(role, target, id, why);
-    }
     let row = null;
     try {
       row = (await rolesFresh()).find((item) => norm(item.name) === norm(role)) || null;
     } catch (error) {
       return provisionBeginRelayFailure(role, target, id, `не удалось перечитать роли: ${String(error?.message || error).slice(0, 180)}`);
     }
-    const repo = normalizeProvisionRepo(row?.repo);
-    const allow = (cfg.agentProvisionRepoAllowlist || []).map(normalizeProvisionRepo);
-    if (!row || row.agentAdmin === true || !["Executor", "Auditor", "Auditory"].includes(row.fn) || row.status !== "Активна" || !repo || !allow.includes(repo)) {
-      const why = !row ? "роль не найдена в свежих данных Notion"
-        : row.agentAdmin === true || !["Executor", "Auditor", "Auditory"].includes(row.fn) ? "роль не является разрешённой worker-ролью"
-          : row.status !== "Активна" ? "роль не активна"
-            : !repo ? "репозиторий роли не задан в формате owner/repo" : "репозиторий роли не входит в allowlist профиля";
-      return provisionBeginRelayFailure(role, target, id, why);
-    }
+    const allowed = row ? provisionCandidateFromRow(row, cfg, {}) : { ok: false, reason: "роль не найдена в свежих данных Notion" };
+    if (!allowed.ok) return provisionBeginRelayFailure(role, target, id, allowed.reason);
     if (!provisionDailyAllow(cfg)) {
       const why = "достигнут суточный лимит создания агентов профиля";
       return provisionBeginRelayFailure(role, target, id, why);
     }
     const requestId = active.requestId;
-    const candidate = {
-      rolePageId: row.pageId, roleName: String(row.name).trim(), fn: row.fn,
-      repo, action: "create", oldAgentUrl: "", roleAgentId: row.id || "",
-    };
+    const candidate = allowed.candidate;
     const request = {
       ...active, requestId, state: "approved", relay: true, queueId: id, targetSlot: target,
       roleName: candidate.roleName, resumeAuto: false, approvedJobs: [candidate], jobIds: [],
@@ -479,7 +384,7 @@
     };
     saveProvisionRequest(request);
     provisionAcquireLock(requestId, false);
-    provisionLog(`Relay provisioning: задание ${id} разрешено очередью; создаю отдельный экземпляр «${candidate.roleName}» в ${target}.`);
+    provisionLog(`Relay provisioning: задание ${id}; создаю экземпляр «${candidate.roleName}» в ${target}.`);
     await consumeProvision();
     return true;
   }
@@ -498,10 +403,9 @@
       if (provisionLocalHandoff()) {
         return provisionPause("Provisioning: появился активный командный ход; создание не начинаю.", request, job);
       }
-      if (!provisionBootstrapClean(cfg.agentBootstrapPrompt)) return provisionPause("Provisioning: bootstrap-пробник пуст или запрещён.", request, job);
       const row = request.relay ? null : await provisionFreshRole(job.rolePageId);
-      if (!request.relay && (!row || row.agentAdmin === true || !["запрошен", "создаётся"].includes(row.agentState))) {
-        return provisionPause("Provisioning: строка роли изменилась до создания.", request, job, { event: "provision_conflict" });
+      if (!request.relay && !row) {
+        return provisionPause("Provisioning: строка роли исчезла до создания.", request, job, { event: "provision_conflict" });
       }
       if (provisionCurrentAgentUuid()) {
         // Новая сессия создаётся только с /agent. Если вкладка уже в чужом
@@ -511,23 +415,29 @@
         return true;
       }
       job.state = "creating"; provisionSaveJob(job);
-      const selected = await provisionSelectRepository(job.repo, cfg);
-      provisionEvent("provision_repo_selected", { requestId: request.requestId, jobId: job.id, rolePageId: job.rolePageId, repo: job.repo, step: "repo_selected", reason: selected.alreadySelected ? "already" : `attempts ${selected.attempts}` });
+      if (job.repo) {
+        const selected = await provisionSelectRepository(job.repo, cfg);
+        provisionEvent("provision_repo_selected", { requestId: request.requestId, jobId: job.id, rolePageId: job.rolePageId, repo: job.repo, step: "repo_selected", reason: selected.alreadySelected ? "already" : `attempts ${selected.attempts}` });
+      }
+      // D-024: роль без разобранного repo не стопорится — агент создаётся,
+      // адрес пары записывается, а repo досоздаётся правкой строки. Иначе
+      // «нет репозитория» снова стал бы блокером создания.
       job.state = "repo_selected"; provisionSaveJob(job);
     }
 
     if (job.state === "repo_selected") {
       const ready = await ensureComposer(C.pageWaitMs);
       if (!ready?.editor) return provisionPause("Provisioning: composer новой сессии не появился.", request, job);
-      if (!writePrompt(ready.editor, cfg.agentBootstrapPrompt)) return provisionPause("Provisioning: bootstrap-пробник не вставлен.", request, job);
+      const probe = provisionBootstrapPrompt();
+      if (!writePrompt(ready.editor, probe)) return provisionPause("Provisioning: первый промпт не вставлен.", request, job);
       job.bootstrapMsgId = lastMessageId();
       job.bootstrapSeen = messages().map(nodeId);
       job.bootstrapStartedAt = Date.now();
       job.urlWaitStartedAt = Date.now();
       job.state = "bootstrap_sent";
       provisionSaveJob(job); // до deliver: перезагрузка не должна создать вторую сессию
-      const sent = await deliver(ready.editor, cfg.agentBootstrapPrompt);
-      if (!sent?.ok) return provisionPause("Provisioning: bootstrap-пробник не доставлен.", request, job);
+      const sent = await deliver(ready.editor, probe);
+      if (!sent?.ok) return provisionPause("Provisioning: первый промпт не доставлен.", request, job);
       provisionEvent("provision_bootstrap_sent", { requestId: request.requestId, jobId: job.id, rolePageId: job.rolePageId, repo: job.repo, step: "bootstrap_sent" });
     }
 
@@ -557,10 +467,13 @@
     if (job.state === "url_captured") {
       if (provisionCurrentAgentUuid() !== provisionAgentUuid(job.agentUrl)) { location.assign(job.agentUrl); return true; }
       const waited = Date.now() - Number(job.bootstrapStartedAt || Date.now());
-      if (waited > cfg.agentBootstrapWaitMs) return provisionPause("Provisioning: bootstrap не завершился за agentBootstrapWaitMs.", request, job);
+      if (waited > cfg.agentBootstrapWaitMs) return provisionPause("Provisioning: первый ответ агента не пришёл за agentBootstrapWaitMs.", request, job);
       if (stillWorking()) return true;
       const replies = messagesAfter(job.bootstrapMsgId, job.bootstrapSeen || []);
-      if (!replies.length) return true; // смысл ответа не проверяем, нужен факт нового assistant
+      // D-024: смысл ответа не проверяется — нужен факт первого ответа
+      // агента, после которого адрес уже взят из адресной строки. Роутер
+      // Arena сам подбирает модель с распознаванием изображения.
+      if (!replies.length) return true;
       job.state = "renaming"; provisionSaveJob(job);
     }
 
@@ -653,15 +566,21 @@
     return false;
   }
 
-  /** Ранний вход tick. Не трогает K.pending/K.expect. */
+  /**
+   * Ранний вход tick. Не трогает K.pending/K.expect.
+   *
+   * D-024: единственная модель — задание службы. Локальная очередь заданий
+   * остаётся, чтобы второе задание не потерялось, пока первое в работе; но
+   * больше нет ни «режима auto/manual», ни запроса админ-роли, ни состояний
+   * `prepared`/`sending`/`awaiting` — они существовали только ради согласования.
+   */
   async function consumeProvision() {
     if (provisionRunning) return true;
-    const cfg = provisionConfig();
     let request = provisionRequestState();
     if (provisionLockHeldByOther()) {
-      // Relay-задача принадлежит контейнеру, а не конкретной вкладке. После
+      // Задание принадлежит контейнеру, а не конкретной вкладке. После
       // закрытия/замены вкладки любая вкладка того же слота может безопасно
-      // продолжить задание, сохраняя запрет на запуск в другом контейнере.
+      // продолжить создание, сохраняя запрет на запуск в другом контейнере.
       const slotId = request?.relay && typeof relayIdentity === "function"
         ? await relayIdentity().catch(() => "") : "";
       if (request?.relay && slotId && slotId === request.targetSlot) {
@@ -672,35 +591,28 @@
       const slotId = typeof relayIdentity === "function" ? await relayIdentity().catch(() => "") : "";
       const pending = provisionRelayQueue();
       const index = pending.findIndex((item) => String(item.slotId || "") === String(slotId || ""));
-      if (index >= 0) {
-        const [task] = pending.splice(index, 1);
-        provisionSaveRelayQueue(pending);
-        return provisionStartRelayTask(task);
-      }
-      if (!cfg.agentProvisionEnabled) return false;
-    } else {
-      if (!request.relay && !cfg.agentProvisionEnabled) return false;
-      if (request.relay) {
-        const slotId = typeof relayIdentity === "function" ? await relayIdentity().catch(() => "") : "";
-        if (!slotId || slotId !== request.targetSlot) return false;
-        if (request.state === "relay_preparing") {
-          return provisionStartRelayTask({ roleName: request.roleName, slotId: request.targetSlot, queueId: request.queueId });
-        }
+      if (index < 0) return false;
+      const [task] = pending.splice(index, 1);
+      provisionSaveRelayQueue(pending);
+      return provisionStartRelayTask(task);
+    }
+    if (request.relay) {
+      const slotId = typeof relayIdentity === "function" ? await relayIdentity().catch(() => "") : "";
+      if (!slotId || slotId !== request.targetSlot) return false;
+      if (request.state === "relay_preparing") {
+        return provisionStartRelayTask({ roleName: request.roleName, slotId: request.targetSlot, queueId: request.queueId });
       }
     }
     provisionRunning = true;
     try {
-      if (!request) {
-        if (cfg.agentProvisionMode !== "auto" || !autoOn()) return false;
-        const why = provisionIdleReason(cfg);
-        if (why) return false;
-        return await provisionStartRequest({ auto: true });
+      // Устаревшие состояния прежней модели (согласование админ-роли) не
+      // должны держать очередь мёртвой: задание без работы просто закрывается.
+      if (["prepared", "sending", "awaiting"].includes(request.state)) {
+        provisionEvent("provision_noop", { requestId: request.requestId, reason: "состояние прежней модели согласования" });
+        saveProvisionRequest(null);
+        provisionReleaseLock();
+        return false;
       }
-      if (request.state === "prepared") return await provisionSendRequest(request);
-      if (request.state === "sending") {
-        return provisionPause("Provisioning: отправка запроса прервана; повторять запрос без проверки Мастера нельзя.", request, null);
-      }
-      if (request.state === "awaiting") return await provisionConsumeApproval(request);
       if (request.state === "approved") return await provisionRunNextJob(request);
       if (request.state === "paused") return true;
       if (request.state === "done") return await provisionFinishRequest(request, "done");
@@ -712,14 +624,12 @@
     }
   }
 
-  /** Отмена ещё не одобренного запроса (кнопка UI). Активные jobs не отменяет. */
+  /** Отмена задания до создания агента (кнопка UI). Активные jobs не отменяет. */
   function provisionCancelRequest() {
     const request = provisionRequestState();
-    if (!request || !["prepared", "sending", "awaiting"].includes(request.state)) return false;
-    provisionEvent("provision_rejected", { requestId: request.requestId, reason: "отменено Мастером" });
-    const resume = request.resumeAuto === true && !GM_getValue(K.paused, "");
+    if (!request || request.state !== "relay_preparing") return false;
+    provisionEvent("provision_noop", { requestId: request.requestId, reason: "отменено Мастером" });
     saveProvisionRequest(null);
     provisionReleaseLock();
-    if (resume) autoSet(true);
     return true;
   }

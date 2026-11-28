@@ -478,17 +478,6 @@
     def("pilot.continue", { audience: ["pilot"], render: () =>
       "Продолжи пилотный ход с того места, где он остановился. Не начинай сначала.\nНе используй внутренние знания, командные маркеры и закрытые документы.\nЗаверши публичный отчёт по брифу: что сделано, как запущено, артефакты и затруднения." });
 
-    // ── provisioning Arena-агентов: одобряет только активная админ-роль ──
-    def("identity.provision", { audience: ["Coordinator", "Reviewer"], render: (c) =>
-      `Provisioning-запрос Arena-агентов. Это не миссия и не рабочая карточка. request_id: ${c.provision?.requestId}.` });
-    def("authority.provision", { audience: ["Coordinator", "Reviewer"], ruleIds: ["R-MASTER-ONLY"], render: () =>
-      "Одобряй только создание/замену неадмин-ролей из списка. Нельзя одобрять админ-роли, удаление строк, ручную активацию и изменение прав. Сомнительного кандидата не включай. Архивация старого агента — внутреннее следствие replace, отдельной команды нет. Процессные поля неадминской строки — Зона записи, Гейт, Репозиторий, Функция — одобряй сам: это постановка, а не права (D-092)." });
-    def("provision.candidates", { audience: ["Coordinator", "Reviewer"], verbatim: true, render: (c) =>
-      `Кандидаты:\n${JSON.stringify((c.provision?.candidates || []).map((x) => ({
-        role_page_id: x.rolePageId, role_name: x.roleName, fn: x.fn, repo: x.repo, action: x.action,
-      })))}` });
-    def("provision.policy", { audience: ["Coordinator", "Reviewer"], render: (c) =>
-      `Верни только одобренные jobs (не больше ${c.provision?.maxJobs ?? 3}). Пустой jobs допустим. role_page_id бери из списка, role_name и repo — точно из свежей строки. action только create или replace. Ответ заверши одним маркером CF_AGENT_PROVISION_RESULT.` });
     // D-073: передача хода Maintainer'у. Это не карточка и не миссия: факты —
     // инцидент, класс причины и сборка. Переписки в блоке нет: контекст
     // собирает транспорт, а не чат.
@@ -507,11 +496,6 @@
       "Этот авто-возврат сверяет только ScriptCat userscript version/fingerprint. FIXED — только когда новая сборка ScriptCat готова и подтверждена пробой до/после; укажи версию и fingerprint. Первая строка: FIXED <изменение, версия> либо NOTFIXED <причина>.",
       "Инцидент Node-службы relay/** отделяй от userscript: package.json version и перезапуск/развёртывание службы не подтверждаются ScriptCat fingerprint. Не заявляй FIXED и не обещай авто-возврат; дай диагноз/шаг проверки, NOTFIXED до отдельной Maintainer card и проверки Node gate.",
       "Если причина вне транспорта (капча, вход в Arena, сбой сайта) — NOTFIXED с этой причиной.",
-    ].join("\n") });
-
-    def("marker.provision", { audience: ["Coordinator", "Reviewer"], ruleIds: ["R-MARKER"], render: (c) => [
-      "Маркер — последней строкой. Команды archive/delete/activate/admin как отдельные команды запрещены.",
-      `CF_AGENT_PROVISION_RESULT {"request_id":"${c.provision?.requestId}","jobs":[],"reason":"краткое обоснование"}`,
     ].join("\n") });
 
     return B;

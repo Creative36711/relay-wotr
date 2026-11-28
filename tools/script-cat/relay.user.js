@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Relay — передача хода между агентами
 // @namespace    https://arena.ai/
-// @version      1.35.9
+// @version      1.36.0
 // @updateURL    https://raw.githubusercontent.com/Creative36711/relay-wotr/main/tools/script-cat/relay.user.js
 // @downloadURL  https://raw.githubusercontent.com/Creative36711/relay-wotr/main/tools/script-cat/relay.user.js
 // @description  Цикл Координатор → исполнитель → Координатор: агент сам коммитит, пушит и мержит PR; ScriptCat ждёт мерж и нажимает Continue.
@@ -97,7 +97,7 @@
     // D-073: отпечаток сборки вшивает build.mjs (SHA-256 источника). Номер версии
     // говорит «какой выпуск», отпечаток — «какая именно сборка»: без него проверка
     // «работает новая версия, а не прежняя под новым номером» невозможна.
-    buildFingerprint: "3096c28cd8a09026",
+    buildFingerprint: "18109c955b7368d2",
     repo: "", // для ссылки на PR из номера
     tickMs: 15000,
     mergeGraceMs: 90000, // сколько ждём мерж, прежде чем нажать кнопки за агента
@@ -207,14 +207,17 @@
   const REPO_ENTRY = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
   const BRANCH_ENTRY = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,99}$/;
 
-  // Provisioning Arena-агентов: выключен по умолчанию и не содержит проектных
-  // имён. Bootstrap-пробник задаётся владельцем профиля; пустой пробник не
-  // отправляется. Значения ниже — аддитивные настройки старых профилей.
+  // Provisioning Arena-агентов (D-024): админ-роли, согласования, allowlist и
+  // текста пробника больше нет. Контур работает по заданию службы Relay: есть
+  // роль — выдаётся задание, нет — создаётся агент. Остались только пределы,
+  // которые защищают квоту и время ожидания, и они аддитивны старым профилям.
+  //
+  // Удалённые ключи (`agentProvisionEnabled`, `agentProvisionMode`,
+  // `agentProvisionRepoAllowlist`, `agentBootstrapPrompt`) не читаются вовсе:
+  // профиль с ними нормализуется как есть, а старый текст пробника не
+  // подставляется вместо фиксированного — иначе «блокер» вернулся бы через
+  // сохранённое значение.
   const PROVISION_DEFAULTS = Object.freeze({
-    agentProvisionEnabled: false,
-    agentProvisionMode: "manual",
-    agentProvisionRepoAllowlist: [],
-    agentBootstrapPrompt: "",
     agentProvisionMaxJobs: 3,
     agentProvisionDailyMax: 5,
     agentBootstrapWaitMs: 600000,
@@ -228,14 +231,7 @@
     return Number.isFinite(n) ? Math.min(max, Math.max(min, Math.floor(n))) : fallback;
   };
   function normalizeProvisionConfig(profile = {}) {
-    const allow = Array.isArray(profile.agentProvisionRepoAllowlist)
-      ? [...new Set(profile.agentProvisionRepoAllowlist.map((x) => String(x || "").trim()).filter(Boolean))]
-      : [];
     return {
-      agentProvisionEnabled: profile.agentProvisionEnabled === true,
-      agentProvisionMode: profile.agentProvisionMode === "auto" ? "auto" : "manual",
-      agentProvisionRepoAllowlist: allow,
-      agentBootstrapPrompt: String(profile.agentBootstrapPrompt || ""),
       agentProvisionMaxJobs: provisionInt(profile.agentProvisionMaxJobs, PROVISION_DEFAULTS.agentProvisionMaxJobs, 1, 20),
       agentProvisionDailyMax: provisionInt(profile.agentProvisionDailyMax, PROVISION_DEFAULTS.agentProvisionDailyMax, 1, 100),
       agentBootstrapWaitMs: provisionInt(profile.agentBootstrapWaitMs, PROVISION_DEFAULTS.agentBootstrapWaitMs, 1000, 3600000),
@@ -335,8 +331,7 @@
     const folder = String(p.driveFolder || "");
     if (!/^[a-z0-9][a-z0-9._-]{0,50}$/.test(folder) || folder.includes("..") ||
       ["logs", "payloads", "artifacts"].includes(folder)) return false;
-    const prov = normalizeProvisionConfig(p);
-    return prov.agentProvisionRepoAllowlist.every((r) => REPO_ENTRY.test(r) && !r.includes(".."));
+    return true;
   }
   function selectedProfileId() {
     try { return sessionStorage.getItem(PROFILE_SESSION_KEY) || LEGACY_PROFILE_ID; }
@@ -466,7 +461,7 @@
   const projectProfileSnapshot = () => {
     if (ACTIVE_PROFILE.invalid || ACTIVE_PROFILE.legacy) return null;
     const keys = ["id", "name", "roles", "missions", "requests", "questions", "pageUrl", "questionsUrl", "repo", "branch", "driveFolder", "repos", "roleRepos",
-      "agentProvisionEnabled", "agentProvisionMode", "agentProvisionRepoAllowlist", "agentBootstrapPrompt", "agentProvisionMaxJobs", "agentProvisionDailyMax",
+      "agentProvisionMaxJobs", "agentProvisionDailyMax",
       "agentBootstrapWaitMs", "agentUrlWaitMs", "agentRenameAttempts", "agentProvisionAutoActivate", "agentProvisionArchiveOld"];
     const snapshot = Object.fromEntries(keys.filter((key) => ACTIVE_PROFILE[key] !== undefined).map((key) => [key, ACTIVE_PROFILE[key]]));
     snapshot.ntfyTopic = String(GM_getValue(K.ntfyTopic, "") || "");
@@ -900,7 +895,7 @@
 
   const NTFY_BASE = "https://ntfy.sh";
   const SCRIPT_VERSION =
-    (typeof GM_info !== "undefined" && GM_info?.script?.version) || "1.35.9";
+    (typeof GM_info !== "undefined" && GM_info?.script?.version) || "1.36.0";
 
   /** «https://ntfy.sh/topic?x=1» и «topic» одинаково дают topic. */
   function normalizeNtfyTopic(raw) {
@@ -2445,10 +2440,11 @@
           for (const name of ["Аккаунт", "Доступность"]) {
             if (source.properties[name] && source.properties[name].type !== "select") errors.push(`${name}: нужен select`);
           }
-          // Поля provisioning: обязательны по смыслу (без «Agent State» роли
-          // никогда не создаются), но проверяются только если присутствуют —
-          // база без них работает по-старому, как «Аккаунт» по D-004.
-          for (const [name, type] of Object.entries({ "Agent State": "select", "Agent Admin": "checkbox" })) {
+          // Поля provisioning: проверяются только если присутствуют — база без
+          // них работает по-старому, как «Аккаунт» по D-004. «Agent Admin» из
+          // списка убран: D-024 отменил админ-флаг, и советовать его завести
+          // значило бы вернуть выброшенную механику.
+          for (const [name, type] of Object.entries({ "Agent State": "select" })) {
             if (source.properties[name] && source.properties[name].type !== type) errors.push(`${name}: нужен ${type}`);
           }
         }
@@ -2463,14 +2459,14 @@
         // молчала: `Тип` был в живой базе, но не здесь, и код писал его в пустоту.
         // Поля, которые транспорт читает или пишет, но которые не нужны для
         // работы базы (аддитивные по D-004/D-005, как «Аккаунт»). Раньше
-        // «Agent State» и «Agent Admin» попадали в «лишние» и человеку
-        // советовали их удалить — а без них provisioning не работает вовсе.
+        // «Agent State» попадал в «лишние», и человеку советовали его удалить —
+        // а по нему переносится состав ролей в книгу.
         // Проверка типов для них есть выше: «лишнее» здесь значит «не
         // обязательное», а не «ненужное».
         // Поля для людей («Устав») сюда НЕ входят: их никто не читает, и
         // человек должен об этом узнать, а не считать поле рабочим.
         const additive = label === "Роли"
-          ? ["Repository", "Репозиторий", "Аккаунт", "Доступность", "Agent State", "Agent Admin", "Agent Job ID", "Agent Created At", "Previous Agent URL"]
+          ? ["Repository", "Репозиторий", "Аккаунт", "Доступность", "Agent State", "Agent Job ID", "Agent Created At", "Previous Agent URL"]
           : ["Repository", "Репозиторий"];
         const extra = Object.keys(source.properties || {}).filter((name) => !(name in fields) && !additive.includes(name));
         if (extra.length) warnings.push(`«${label}»: лишние поля — ${extra.join(", ")} (схема их не знает; правьте схему в Notion только сами).`);
@@ -3070,9 +3066,10 @@
       gate: rt(p.properties["Гейт"]),
       repo: rt(p.properties["Репозиторий"]),
       pageId: p.id,
-      // Аддитивные поля provisioning. Старые строки без них читаются как
-      // «не админ» и «не требуется»; старые поля не переименовываются.
-      agentAdmin: p.properties["Agent Admin"]?.checkbox === true,
+      // D-024: «Agent Admin» больше не читается — админ-роли в provisioning нет,
+      // а слот роли определяет функция (`isAdminRole`). «Agent State» остаётся
+      // живым полем базы для людей и для переноса ролей в книгу; решений о
+      // создании агента по нему больше не принимается.
       agentState: sel(p.properties["Agent State"]) || "не требуется",
       // 1.23.0: «Agent Job ID» и «Agent Created At» удалены из базы — задание и
       // дата создания теперь живут в листе «Экземпляры» книги состояния (D-011),
@@ -4508,7 +4505,6 @@
   // принят за сдачу карточки.
   const MARKER_STEPS = {
     CF_ANSWER_RESULT: [["question_id"]],
-    CF_AGENT_PROVISION_RESULT: [["request_id"], ["jobs"]],
     CF_ARBITER_RESULT: [["verdict", "action"], ["action", "fix"]],
     CF_REVIEW_RESULT: [["verdict"]],
     // У сдачи карточки нет вердикта: вердикт — это приёмка или арбитраж, и
@@ -10355,7 +10351,6 @@
       // D-053: разбор повторяющейся петли. Карточка и ход названы явно: вердикт
       // арбитра обязан относиться именно к этой выдаче, а не к похожей.
       CF_ARBITER_RESULT: { kind: "arbiter", ids: ["dispatch_id", "turn_id"], role: "Reviewer", optional: ["action", "reason", "fix", "summary", "question"] },
-      CF_AGENT_PROVISION_RESULT: { kind: "provision", ids: ["request_id"], role: "Coordinator|Reviewer" },
     };
     const forKind = (kind, roleFn) => {
       if (kind === "plan") return "CF_COORDINATOR_RESULT";
@@ -10363,7 +10358,9 @@
       if (kind === "answer") return "CF_ANSWER_RESULT";
       if (kind === "arbiter") return "CF_ARBITER_RESULT";
       if (kind === "dispatch") return "CF_AGENT_RESULT";
-      if (kind === "provision") return "CF_AGENT_PROVISION_RESULT";
+      // D-024: маркера согласования создания агентов больше нет — согласование
+      // админ-роли выброшено целиком.
+      if (kind === "provision") return null;
       if (kind === "reminder") return null; // reminder наследует маркер исходного хода
       return null;
     };
@@ -10852,17 +10849,6 @@
     def("pilot.continue", { audience: ["pilot"], render: () =>
       "Продолжи пилотный ход с того места, где он остановился. Не начинай сначала.\nНе используй внутренние знания, командные маркеры и закрытые документы.\nЗаверши публичный отчёт по брифу: что сделано, как запущено, артефакты и затруднения." });
 
-    // ── provisioning Arena-агентов: одобряет только активная админ-роль ──
-    def("identity.provision", { audience: ["Coordinator", "Reviewer"], render: (c) =>
-      `Provisioning-запрос Arena-агентов. Это не миссия и не рабочая карточка. request_id: ${c.provision?.requestId}.` });
-    def("authority.provision", { audience: ["Coordinator", "Reviewer"], ruleIds: ["R-MASTER-ONLY"], render: () =>
-      "Одобряй только создание/замену неадмин-ролей из списка. Нельзя одобрять админ-роли, удаление строк, ручную активацию и изменение прав. Сомнительного кандидата не включай. Архивация старого агента — внутреннее следствие replace, отдельной команды нет. Процессные поля неадминской строки — Зона записи, Гейт, Репозиторий, Функция — одобряй сам: это постановка, а не права (D-092)." });
-    def("provision.candidates", { audience: ["Coordinator", "Reviewer"], verbatim: true, render: (c) =>
-      `Кандидаты:\n${JSON.stringify((c.provision?.candidates || []).map((x) => ({
-        role_page_id: x.rolePageId, role_name: x.roleName, fn: x.fn, repo: x.repo, action: x.action,
-      })))}` });
-    def("provision.policy", { audience: ["Coordinator", "Reviewer"], render: (c) =>
-      `Верни только одобренные jobs (не больше ${c.provision?.maxJobs ?? 3}). Пустой jobs допустим. role_page_id бери из списка, role_name и repo — точно из свежей строки. action только create или replace. Ответ заверши одним маркером CF_AGENT_PROVISION_RESULT.` });
     // D-073: передача хода Maintainer'у. Это не карточка и не миссия: факты —
     // инцидент, класс причины и сборка. Переписки в блоке нет: контекст
     // собирает транспорт, а не чат.
@@ -10881,11 +10867,6 @@
       "Этот авто-возврат сверяет только ScriptCat userscript version/fingerprint. FIXED — только когда новая сборка ScriptCat готова и подтверждена пробой до/после; укажи версию и fingerprint. Первая строка: FIXED <изменение, версия> либо NOTFIXED <причина>.",
       "Инцидент Node-службы relay/** отделяй от userscript: package.json version и перезапуск/развёртывание службы не подтверждаются ScriptCat fingerprint. Не заявляй FIXED и не обещай авто-возврат; дай диагноз/шаг проверки, NOTFIXED до отдельной Maintainer card и проверки Node gate.",
       "Если причина вне транспорта (капча, вход в Arena, сбой сайта) — NOTFIXED с этой причиной.",
-    ].join("\n") });
-
-    def("marker.provision", { audience: ["Coordinator", "Reviewer"], ruleIds: ["R-MARKER"], render: (c) => [
-      "Маркер — последней строкой. Команды archive/delete/activate/admin как отдельные команды запрещены.",
-      `CF_AGENT_PROVISION_RESULT {"request_id":"${c.provision?.requestId}","jobs":[],"reason":"краткое обоснование"}`,
     ].join("\n") });
 
     return B;
@@ -10971,7 +10952,7 @@
       forbidden: ["git.executor", "git.auditor", "marker.agent", "marker.review", "marker.answer",
         "task.assignment", "task.acceptance", "task.scope", "task.intent", "task.invariants", "task.freedom",
         "queue.coordinator", "review.evidence", "review.protocol", "answer.question", "answer.protocol",
-        "questions.protocol", "adr.protocol", "marker.coordinator", "marker.provision"],
+        "questions.protocol", "adr.protocol", "marker.coordinator"],
       budget: { overhead: 2400 },
     });
     def("reviewer.card", {
@@ -11073,27 +11054,16 @@
         "mission.returned", "plan.note", "coordinator.prime", "delivery.retry", "delivery.recovery",
         "delivery.tool_limit", "reminder.marker", "arbiter.case", "arbiter.protocol", "pilot.brief", "pilot.stop",
         "pilot.repo", "pilot.continue", "marker.agent", "marker.coordinator", "marker.review", "marker.answer",
-        "marker.arbiter", "marker.provision"],
+        "marker.arbiter"],
       budget: { overhead: 900 },
-    });
-
-    // Provisioning: отдельный административный запрос, не миссия и не карточка.
-    def("admin.provision", {
-      audience: ["Coordinator", "Reviewer"], marker: "CF_AGENT_PROVISION_RESULT",
-      blocks: ["identity.provision", "authority.provision", "provision.candidates", "provision.policy", "marker.provision"],
-      requiredFacts: ["provision.requestId", "provision.candidates"],
-      forbidden: ["identity.task", "identity.mission", "mission.returned", "queue.snapshot", "queue.coordinator",
-        "answers.delta", "git.executor", "git.auditor", "task.intent", "task.invariants", "task.acceptance",
-        "task.scope", "task.freedom", "task.assignment", "review.evidence", "review.protocol", "answer.question",
-        "answer.protocol", "answer.resume", "drive.layout", "delivery.retry", "delivery.recovery", "delivery.tool_limit",
-        "reminder.marker", "pilot.brief", "pilot.stop", "pilot.repo", "pilot.continue",
-        "marker.agent", "marker.coordinator", "marker.review", "marker.answer"],
-      budget: { overhead: 1800 },
     });
 
     // Выбор профиля по kind + role.fn + tier.
     const select = (kind, fn, tier) => {
-      if (kind === "provision") return "admin.provision";
+      // D-024: отдельного provisioning-профиля нет. Согласование админ-роли
+      // выброшено вместе с маркером, и вид `provision` больше не собирается:
+      // создание агента — работа контура, а не ход роли.
+      if (kind === "provision") return null;
       // D-073: разбор транспорта — свой профиль без маркера, не dispatch и не review.
       if (kind === "heal") return "heal.report";
       // D-093: человек — не единственный адресат повторной отправки. Строка
@@ -11326,8 +11296,6 @@
         // D-053: вердикт арбитра относится к конкретной карточке и ходу.
         if (c.arbiter?.cardId && !eq(obj.dispatch_id, c.arbiter.cardId)) return "dispatch_id маркера не совпадает с карточкой арбитража";
         if (c.turnId && !eq(obj.turn_id, c.turnId)) return "turn_id маркера не совпадает с ctx";
-      } else if (name === "CF_AGENT_PROVISION_RESULT") {
-        if (c.provision?.requestId && !eq(obj.request_id, c.provision.requestId)) return "request_id маркера не совпадает с ctx";
       }
       return null;
     }
@@ -18562,9 +18530,9 @@
   }
 
   // ───────────────────────── provisioning: ядро состояния и правил ─────────────────────────
-  // Два входа используют общее состояние/job: запрос админ-роли (одобрение по
-  // Agent Admin) и конкретная задача Relay (разрешение уже дано pull). Оба
-  // обходятся без K.pending/K.expect и не создают рабочие карточки. Имена
+  // Контур создаёт экземпляр агента для пары (роль, слот) по заданию службы
+  // Relay: разрешение уже дано `pull`, отдельного согласования нет (D-024).
+  // Обходится без K.pending/K.expect и не создаёт рабочие карточки. Имена
   // проектов и ролей транспорта здесь не зашиты.
 
   const PROVISION_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -18573,18 +18541,30 @@
   const PROVISION_FUNCTIONS = ["Coordinator", "Executor", "Auditor", "Auditory", "Reviewer"];
   const PROVISION_STATES = ["validated", "creating", "repo_selected", "bootstrap_sent", "url_captured",
     "renaming", "renamed", "notion_updated", "activating", "activated", "archiving_old", "done", "paused", "error"];
-  const PROVISION_EVENTS = ["provision_request_sent", "provision_approved", "provision_rejected",
-    "provision_job_started", "provision_repo_selected", "provision_bootstrap_sent", "provision_url_captured",
-    "provision_renamed", "provision_notion_updated", "provision_activated", "provision_activation_blocked",
-    "provision_old_archived", "provision_old_archive_unverified", "provision_job_done", "provision_paused",
-    "provision_conflict", "provision_noop", "provision_schema_unread"];
+  const PROVISION_EVENTS = ["provision_job_started", "provision_repo_selected", "provision_bootstrap_sent",
+    "provision_url_captured", "provision_renamed", "provision_notion_updated", "provision_activated",
+    "provision_activation_blocked", "provision_old_archived", "provision_old_archive_unverified",
+    "provision_job_done", "provision_paused", "provision_conflict", "provision_noop",
+    "provision_schema_unread"];
   const PROVISION_BOOTSTRAP_FORBIDDEN = [
     /CF_[A-Z_]+/i, /notion/i, /aux-workspace/i, /REGULATION/, /WARDEN/i, /DECISIONS/,
     /ntn_[A-Za-z0-9]/, /secret_[A-Za-z0-9]/, /ghp_[A-Za-z0-9]/, /github_pat_[A-Za-z0-9]/,
     /Bearer\s+[A-Za-z0-9]/i, /sk-[A-Za-z0-9]{12}/, /app\.notion|notion\.so|notion\.site/i,
   ];
 
+  /**
+   * D-024: первый промпт агента — фиксированный и один на всех.
+   *
+   * Смысл не в ответе, а в том, чтобы новый чат получил ход и появился адрес
+   * `…/agent/<uuid>`; сам ответ не проверяется, модель с распознаванием
+   * изображений роутер Arena подбирает сам. Поэтому промпт не настройка
+   * профиля: `agentBootstrapPrompt` удалён, старое значение игнорируется.
+   */
+  const PROVISION_PROBE_PROMPT = "Что изображено на картинке test.jpg в репозитории https://github.com/Creative36711/test? " +
+    "Если у тебя нет функции визуального распознавания, скажи прямо.";
+
   const provisionConfig = () => normalizeProvisionConfig(C);
+  const provisionBootstrapPrompt = () => PROVISION_PROBE_PROMPT;
   const provisionBootstrapClean = (text) => {
     const s = String(text || "").trim();
     return s.length > 0 && !PROVISION_BOOTSTRAP_FORBIDDEN.some((re) => re.test(s));
@@ -18662,31 +18642,37 @@
     saveProvisionState(state);
   }
 
-  /** Кандидат из свежей строки. Возвращает причину отказа, а не молча пропускает. */
+  /**
+   * Кандидат из свежей строки роли.
+   *
+   * D-024: сигнала «Agent State = запрошен», админ-флага и allowlist больше нет.
+   * Кандидатом роль делает само задание службы: транспорт идёт в названный
+   * контейнер, и если роли там нет — создаёт её. Отказов осталось ровно
+   * четыре, и все они — «агента физически нельзя завести или сейчас некуда»:
+   * нет строки, недопустимая функция (Maintainer закулисный), пустое имя и
+   * живая работа по этой же роли.
+   */
   function provisionCandidateFromRow(row, cfg, busy = {}) {
     if (!row || !row.pageId) return { ok: false, reason: "нет строки роли" };
-    if (row.agentAdmin === true) return { ok: false, reason: "админ-роль не provisioning-кандидат" };
-    if ((row.agentState || "не требуется") !== "запрошен") return { ok: false, reason: "Agent State не запрошен" };
     const name = String(row.name || "").trim();
     if (!name || name.length > 100) return { ok: false, reason: "имя роли пустое или длиннее 100" };
     if (!PROVISION_FUNCTIONS.includes(row.fn)) return { ok: false, reason: "недопустимая функция" };
-    const repo = normalizeProvisionRepo(row.repo);
-    if (!repo) return { ok: false, reason: "репозиторий не нормализуется в owner/repo" };
-    const allow = (cfg.agentProvisionRepoAllowlist || []).map(normalizeProvisionRepo);
-    if (!allow.includes(repo)) return { ok: false, reason: "репозиторий вне allowlist" };
     const busyNames = busy.names || new Set();
     const busyIds = busy.ids || new Set();
     if (busyNames.has(norm(name)) || busyIds.has(norm(row.id)) || busyIds.has(norm(row.pageId))) {
       return { ok: false, reason: "по роли есть активная работа" };
     }
+    // Репозиторий нужен только для выбора repo в composer. Роль без него
+    // (или с неразборчивым значением) всё равно получает агента: адрес пары
+    // важнее, а repo досоздастся правкой строки, не новой сессией (D-024).
+    const repo = normalizeProvisionRepo(row.repo);
     const url = String(row.url || "").trim();
     const action = url ? "replace" : "create";
     return {
       ok: true,
       candidate: {
         rolePageId: row.pageId, roleName: name, fn: row.fn, repo, action,
-        oldAgentUrl: action === "replace" ? url : "",
-        roleAgentId: row.id || "",
+        oldAgentUrl: action === "replace" ? url : "", roleAgentId: row.id || "",
       },
     };
   }
@@ -18697,114 +18683,11 @@
     for (const row of rows || []) {
       const result = provisionCandidateFromRow(row, cfg, busy);
       if (result.ok) candidates.push(result.candidate);
-      else if ((row?.agentState || "не требуется") === "запрошен" || row?.agentAdmin === true) {
+      else if (result.reason !== "по роли есть активная работа") {
         rejected.push({ rolePageId: row?.pageId || "", reason: result.reason });
       }
     }
     return { candidates: candidates.slice(0, cfg.agentProvisionMaxJobs), rejected };
-  }
-
-  /**
-   * Чего не хватает составу миссии и кто это делает.
-   *
-   * D-075 п. 3: сигнал на создание агента — `Agent State = запрошен`, и ставит
-   * его Coordinator: у него постоянное право на оболочку неадминской строки.
-   * `Статус = Ждёт` сигналом не является: по D-008 и D-052 роли нарочно ждут
-   * своей фазы, и автосоздание по статусу наплодило бы агентов отложенным ролям.
-   *
-   * Функция ничего не пишет и никого не создаёт: она отвечает, что именно
-   * предстоит и в каком режиме. Право записи строки — у Coordinator, доступы
-   * (`Статус`, `Agent URL`, `Agent Admin`) — у Мастера, создание агента —
-   * у контура после одобрения админ-роли.
-   */
-  function provisionRosterRequest(roles = [], cfg = provisionConfig(), state = null) {
-    const enabled = Boolean(cfg && cfg.agentProvisionEnabled);
-    const create = [];
-    const fill = [];
-    const blocked = [];
-    for (const role of roles || []) {
-      const name = String(role?.name || "").trim();
-      if (!name) continue;
-      const gaps = Array.isArray(role.gaps) ? role.gaps : [];
-      if (gaps.some((gap) => /нет в «Ролях»/.test(gap))) {
-        // Строки нет вовсе: сначала Coordinator создаёт оболочку и ставит
-        // сигнал, только потом контур (если включён) создаёт агента.
-        create.push({ name, why: "роли нет в «Ролях»", signal: enabled ? "Agent State = запрошен" : "" });
-        if (!enabled) blocked.push({ name, why: "контур создания выключен: строку и сигнал ставит Coordinator, агента создаёт Мастер" });
-        continue;
-      }
-      // Строка есть, но не готова: агента создавать не нужно — дозаполнить.
-      fill.push({ name, gaps });
-    }
-    const requested = (state && Array.isArray(state.candidates) ? state.candidates : [])
-      .map((c) => String(c.roleName || "")).filter(Boolean);
-    return {
-      enabled,
-      signal: "Agent State = запрошен",
-      signalOwner: "Coordinator",
-      create,
-      fill,
-      blocked,
-      requested: requested.length > 0,
-      requestedNames: requested,
-      // Ни одна строка не создаётся молча: без включённого контура создание
-      // агента и доступы остаются Мастеру, с включённым — спросит одобрение.
-      reason: !create.length ? "некомплект только в существующих строках: агента создавать не нужно"
-        : enabled ? "Coordinator создаёт строку и ставит «Agent State = запрошен» — дальше контур спросит одобрение админ-роли"
-          : "контур выключен: строку создаёт Coordinator, агента — Мастер",
-    };
-  }
-
-  /** Активная админ-роль: предпочтительно Coordinator, иначе Reviewer. */
-  function provisionAdminRole(rows) {
-    const admins = (rows || []).filter((r) => r.agentAdmin === true && r.status === "Активна" &&
-      r.url && r.pageId && PROVISION_UUID.test(String(r.pageId)) &&
-      (r.fn === "Coordinator" || r.fn === "Reviewer"));
-    admins.sort((a, b) => (a.fn === b.fn ? String(a.name).localeCompare(String(b.name)) : a.fn === "Coordinator" ? -1 : 1));
-    return admins[0] || null;
-  }
-
-  /** Проверка маркера одобрения по свежему Notion и выданным кандидатам. */
-  function validateProvisionMarker(obj, request, freshRows, cfg = provisionConfig()) {
-    if (!obj || typeof obj !== "object") return { ok: false, reason: "маркер не разобран" };
-    for (const banned of ["archive", "delete", "activate", "admin", "command"]) {
-      if (banned in obj) return { ok: false, reason: `запрещённая команда маркера: ${banned}` };
-    }
-    const requestId = String(obj.request_id || "");
-    if (!PROVISION_UUID.test(requestId)) return { ok: false, reason: "request_id не UUID" };
-    if (norm(requestId) !== norm(request?.requestId || "")) return { ok: false, reason: "чужой request_id" };
-    if (!Array.isArray(obj.jobs)) return { ok: false, reason: "jobs не массив" };
-    if (obj.jobs.length > cfg.agentProvisionMaxJobs) return { ok: false, reason: "jobs больше agentProvisionMaxJobs" };
-    const sent = new Map((request?.candidates || []).map((c) => [norm(c.rolePageId), c]));
-    const fresh = new Map((freshRows || []).map((r) => [norm(r.pageId), r]));
-    const jobs = [];
-    for (const job of obj.jobs) {
-      if (!job || typeof job !== "object") return { ok: false, reason: "job не объект" };
-      for (const banned of ["archive", "delete", "activate", "admin", "command"]) {
-        if (banned in job) return { ok: false, reason: `запрещённая команда в job: ${banned}` };
-      }
-      const pageId = String(job.role_page_id || "");
-      if (!PROVISION_UUID.test(pageId)) return { ok: false, reason: "role_page_id не UUID" };
-      const candidate = sent.get(norm(pageId));
-      if (!candidate) return { ok: false, reason: "job вне кандидатов, отправленных в prompt" };
-      if (!["create", "replace"].includes(job.action)) return { ok: false, reason: "action только create или replace" };
-      const row = fresh.get(norm(pageId));
-      if (!row) return { ok: false, reason: "строка роли исчезла" };
-      if (row.agentAdmin === true) return { ok: false, reason: "попытка одобрить админ-роль" };
-      if (String(row.name || "").trim() !== String(job.role_name || "").trim()) return { ok: false, reason: "role_name не совпадает со свежей строкой" };
-      const repo = normalizeProvisionRepo(row.repo);
-      if (!repo || repo !== normalizeProvisionRepo(job.repo)) return { ok: false, reason: "repo не совпадает со свежей строкой" };
-      const allow = (cfg.agentProvisionRepoAllowlist || []).map(normalizeProvisionRepo);
-      if (!allow.includes(repo)) return { ok: false, reason: "repo вне allowlist" };
-      const freshAction = String(row.url || "").trim() ? "replace" : "create";
-      if (job.action !== freshAction || job.action !== candidate.action) return { ok: false, reason: "action не совпадает с текущим Agent URL" };
-      jobs.push({
-        rolePageId: row.pageId, roleName: String(row.name).trim(), fn: row.fn, repo,
-        action: job.action, oldAgentUrl: freshAction === "replace" ? String(row.url).trim() : "",
-        roleAgentId: row.id || "",
-      });
-    }
-    return { ok: true, jobs, reason: String(obj.reason || "").slice(0, 300) };
   }
 
   function provisionNewJob(candidate, requestId) {
@@ -19070,11 +18953,17 @@
     return { archived: false, unverified: true, reason: "признак архивации не подтверждён" };
   }
 
-  // ───────────────────── provisioning: Relay-задача или админ-запрос ─────────────────────
-  // Оба пути не пишут K.pending/K.expect и не меняют общий Agent URL роли.
-  // Административный режим по-прежнему ждёт CF_AGENT_PROVISION_RESULT; pull
-  // Relay уже является разрешением, создаёт пару (роль, слот) и возвращает URL
-  // в очередь action=agent. Bootstrap/allowlist/лимит профиля общие для обоих.
+  // ───────────────────── provisioning: задание Relay (D-024) ─────────────────────
+  // Один вход: служба Relay даёт задание «создать агента роли R в контейнере S».
+  // Это уже разрешение — отдельного согласования админ-роли нет. Координатор
+  // выдаёт карточку и не проверяет, есть ли агент: транспорт сам идёт в
+  // названный контейнер, и если роли там нет — создаёт её (роль есть → задание,
+  // роли нет → агент). Контур не пишет K.pending/K.expect и не меняет общий
+  // Agent URL роли в Notion.
+  //
+  // Активация одна и та же для всех: после создания сессии отправляется
+  // фиксированный первый промпт (test.jpg), ответ не проверяется, а адрес
+  // берётся из адресной строки после этого ответа.
 
   let provisionRunning = false;
 
@@ -19182,117 +19071,22 @@
     return owned(GM_getValue(K.pending, null)) || owned(GM_getValue(K.expect, null));
   }
 
-  function provisionIdleReason(cfg = provisionConfig()) {
-    if (!cfg.agentProvisionEnabled) return "provisioning выключен";
+  /**
+   * Почему контейнер сейчас не берётся за создание агента.
+   *
+   * D-024: список причин короткий и не содержит «блокеров модели» — админ-роли,
+   * allowlist, включённости контура и пустого пробника больше нет. Остаётся
+   * только то, что физически мешает шагу: нет доступа к Notion, цикл на паузе,
+   * идёт свой командный ход, контур занят другой вкладкой или исчерпан суточный
+   * предел. Ни одна из причин не требует человека с админ-правами.
+   */
+  function provisionIdleReason() {
     if (!C.notion) return "нет Notion-токена профиля";
     if (typeof isPaused === "function" ? isPaused() : GM_getValue(K.paused, "")) return "цикл на паузе";
     if (provisionLocalHandoff()) return "активный командный ход";
-    if (GM_getValue(K.pilotWait, null)) return "идёт пилот";
-    if (provisionRequestState()) return "provisioning-запрос уже выдан";
     if (provisionLockHeldByOther()) return "provisioning занят другой вкладкой";
-    if (!provisionBootstrapClean(cfg.agentBootstrapPrompt)) return "bootstrap-пробник пуст или запрещён";
-    if (!provisionDailyAllow(cfg)) return "суточный лимит provisioning";
+    if (!provisionDailyAllow()) return "суточный лимит создания агентов";
     return "";
-  }
-
-  async function provisionGather(cfg = provisionConfig()) {
-    const rows = await rolesFresh();
-    const busy = await provisionBusyContext();
-    const { candidates, rejected } = provisionCandidates(rows, cfg, busy);
-    const admin = provisionAdminRole(rows);
-    return { rows, busy, candidates, rejected, admin };
-  }
-
-  /** Выдать запрос админ-роли. Вызывается кнопкой или холостым автоциклом. */
-  async function provisionStartRequest({ auto = false } = {}) {
-    const cfg = provisionConfig();
-    const why = provisionIdleReason(cfg);
-    if (why) { provisionLog(`Запрос не выдан: ${why}.`); return false; }
-    const { candidates, rejected, admin } = await provisionGather(cfg);
-    for (const item of rejected) provisionEvent("provision_noop", { rolePageId: item.rolePageId, reason: item.reason });
-    if (!admin) {
-      pause("Provisioning: нет активной админ-роли (Agent Admin=true, Coordinator/Reviewer). Создайте или включите админ-роль вручную.", { kind: "provision-no-admin" });
-      provisionEvent("provision_paused", { reason: "provision-no-admin" });
-      return false;
-    }
-    if (!candidates.length) { provisionEvent("provision_noop", { reason: "нет кандидатов" }); return false; }
-    const requestId = uid();
-    const request = {
-      requestId, state: "prepared", auto, resumeAuto: autoOn(),
-      adminPageId: admin.pageId, adminAgentId: admin.id, adminRoleName: admin.name,
-      adminFn: admin.fn, adminUrl: admin.url, candidates,
-      jobIds: [], createdAt: nowIso(), updatedAt: nowIso(), watermark: "", seen: [],
-    };
-    saveProvisionRequest(request);
-    provisionAcquireLock(requestId, request.resumeAuto);
-    autoSet(false);
-    provisionLog(`Provisioning: запрос ${requestId} подготовлен для админ-роли «${admin.name}», кандидатов ${candidates.length}.`);
-    if (provisionCurrentAgentUuid() !== String(admin.id).toLowerCase()) {
-      location.assign(admin.url);
-      return true;
-    }
-    return provisionSendRequest(request);
-  }
-
-  async function provisionSendRequest(request) {
-    const cfg = provisionConfig();
-    const admin = await provisionFreshRole(request.adminPageId);
-    if (!admin || admin.agentAdmin !== true || admin.status !== "Активна") {
-      return provisionPause("Provisioning: адресат запроса больше не активная админ-роль.", request, null);
-    }
-    if (provisionCurrentAgentUuid() !== String(admin.id).toLowerCase()) { location.assign(admin.url); return true; }
-    const compiled = PromptCompiler.compile({
-      kind: "provision", role: { fn: request.adminFn, name: request.adminRoleName },
-      provision: { requestId: request.requestId, candidates: request.candidates, maxJobs: cfg.agentProvisionMaxJobs },
-      delivery: { tier: "full" },
-    });
-    if (!compiled.ok) return provisionPause(`Provisioning prompt не собран: ${compiled.error?.message || compiled.error?.code}`, request, null);
-    const ready = await ensureComposer(C.pageWaitMs);
-    if (!ready?.editor) return provisionPause("Provisioning: поле ввода админ-роли не появилось.", request, null);
-    if (!writePrompt(ready.editor, compiled.text)) return provisionPause("Provisioning: не удалось вставить запрос админ-роли.", request, null);
-    request.watermark = lastMessageId();
-    request.seen = messages().map(nodeId);
-    request.state = "sending";
-    saveProvisionRequest(request);
-    const sent = await deliver(ready.editor, compiled.text);
-    if (!sent?.ok) return provisionPause("Provisioning: запрос админ-роли не доставлен.", request, null);
-    request.state = "awaiting";
-    request.sentAt = nowIso();
-    saveProvisionRequest(request);
-    provisionEvent("provision_request_sent", { requestId: request.requestId, rolePageId: request.adminPageId, step: "awaiting" });
-    provisionLog(`Provisioning: запрос ${request.requestId} отправлен админ-роли «${request.adminRoleName}». Жду маркер одобрения.`);
-    return true;
-  }
-
-  async function provisionConsumeApproval(request) {
-    const cfg = provisionConfig();
-    if (provisionCurrentAgentUuid() !== String(request.adminAgentId).toLowerCase()) { location.assign(request.adminUrl); return true; }
-    if (captchaDialog()) return provisionPause("Provisioning: капча на странице админ-роли.", request, null);
-    if (detectToolCallLimit()) return provisionPause("Provisioning: tool-call limit у админ-роли; продолжение запроса не поддерживается.", request, null);
-    const visibleError = detectVisibleErrorCard();
-    if (visibleError) return provisionPause(`Provisioning: ошибка Arena у админ-роли: ${visibleError.text || visibleError}`, request, null);
-    const admin = await provisionFreshRole(request.adminPageId);
-    if (!admin || admin.agentAdmin !== true || admin.status !== "Активна") {
-      return provisionPause("Provisioning: право одобрения потеряно (Agent Admin/Статус изменились).", request, null);
-    }
-    const replies = messagesAfter(request.watermark, request.seen);
-    const hit = replies.map((m) => ({ m, obj: parseMarker(m.raw, "CF_AGENT_PROVISION_RESULT") })).filter((x) => x.obj).at(-1);
-    if (!hit) return true; // ждём ответ админ-роли, автоцикл выключен
-    const fresh = await rolesFresh();
-    const verdict = validateProvisionMarker(hit.obj, request, fresh, cfg);
-    if (!verdict.ok) {
-      provisionEvent("provision_rejected", { requestId: request.requestId, reason: verdict.reason });
-      return provisionPause(`Provisioning: маркер одобрения отклонён — ${verdict.reason}.`, request, null);
-    }
-    request.state = "approved";
-    request.approvedAt = nowIso();
-    request.approvalReason = verdict.reason;
-    request.approvedJobs = verdict.jobs;
-    saveProvisionRequest(request);
-    provisionEvent("provision_approved", { requestId: request.requestId, rolePageId: request.adminPageId, reason: verdict.reason || `jobs ${verdict.jobs.length}` });
-    provisionLog(`Provisioning: одобрено jobs ${verdict.jobs.length}.`);
-    if (!verdict.jobs.length) return provisionFinishRequest(request, "одобрено 0 jobs");
-    return true;
   }
 
   async function provisionEnsureRecipientOption(roleName) {
@@ -19306,25 +19100,27 @@
     return true;
   }
 
+  /**
+   * Можно ли активировать роль после создания агента.
+   *
+   * D-024: «блокеров модели» нет. Роль не активируется только тогда, когда это
+   * физически нельзя или вредно прямо сейчас: строки уже нет, Agent URL в
+   * Notion успел стать другим, имени на sidebar нет (агент не создан по факту),
+   * по роли уже идёт работа. Проверки «остаётся ли активный Reviewer/Coordinator»
+   * убраны: это правило состава миссии, а не создание агента, и оно не должно
+   * стоять между владельцем и ролью.
+   */
   async function provisionActivationBlockReason(job, cfg) {
     const rows = await rolesFresh();
     const row = rows.find((r) => norm(r.pageId) === norm(job.rolePageId));
     if (!row) return "строка роли исчезла";
-    if (row.agentAdmin === true) return "админ-роль не активируется provisioning";
     if (norm(row.url) !== norm(job.agentUrl)) return "Agent URL в Notion не равен новому";
-    if (normalizeProvisionRepo(row.repo) !== job.repo) return "repo роли изменился";
     const item = provisionFindSidebarItem(provisionAgentUuid(job.agentUrl));
     if (!item || provisionText(item) !== job.roleName) return "имя sidebar не равно роли";
     const busy = await provisionBusyContext();
     if (busy.names.has(norm(job.roleName)) || busy.ids.has(norm(job.roleAgentId)) || busy.ids.has(norm(job.rolePageId))) {
       return "по роли есть активная работа";
     }
-    const active = rows.filter((r) => r.status === "Активна" && r.url);
-    if (job.fn === "Coordinator" && active.some((r) => r.fn === "Coordinator" && norm(r.pageId) !== norm(job.rolePageId))) {
-      return "уже есть активный Coordinator";
-    }
-    const reviewers = active.filter((r) => r.fn === "Reviewer" && norm(r.pageId) !== norm(job.rolePageId));
-    if (!reviewers.length && job.fn !== "Reviewer") return "не остаётся активного Reviewer";
     if (["Executor", "Auditor", "Auditory"].includes(job.fn)) {
       try { await provisionEnsureRecipientOption(job.roleName); }
       catch (error) { return `не удалось добавить «Кому»: ${error.message}`; }
@@ -19335,7 +19131,6 @@
   async function provisionPatchNotion(job, request) {
     const row = await provisionFreshRole(job.rolePageId);
     if (!row) return provisionPause("Provisioning: строка роли исчезла до записи Notion.", request, job, { event: "provision_conflict" });
-    if (row.agentAdmin === true) return provisionPause("Provisioning: попытка записать админ-роль.", request, job, { event: "provision_conflict" });
     const currentUrl = String(row.url || "").trim();
     const newUrl = job.agentUrl;
     if (currentUrl && norm(currentUrl) !== norm(newUrl) && norm(currentUrl) !== norm(job.oldAgentUrl)) {
@@ -19343,9 +19138,6 @@
     }
     if (row.status === "Активна" && currentUrl && norm(currentUrl) !== norm(newUrl)) {
       return provisionPause("Provisioning: роль уже активна с другим Agent URL.", request, job, { event: "provision_conflict" });
-    }
-    if (row.agentState === "не требуется") {
-      return provisionPause("Provisioning: Agent State больше не запрошен.", request, job, { event: "provision_conflict" });
     }
     const alreadyUrl = norm(currentUrl) === norm(newUrl);
     // Только те поля, что есть в схеме. Notion отвечает validation_error на всю
@@ -19358,14 +19150,14 @@
     // строка, свойств Notion в ней нет, поэтому спрашиваем живой объект: без
     // этого проверка была бы всегда истинной и ничего не защищала.
     const canWrite = await provisionCanWriteProps(job.rolePageId);
-    const props = {
-      "Agent State": { select: { name: "создан" } },
-    };
+    const props = {};
     if (canWrite("Agent Job ID")) props["Agent Job ID"] = { rich_text: richText(job.id) };
     if (canWrite("Agent Created At")) props["Agent Created At"] = { date: { start: nowIso() } };
     if (!alreadyUrl) props["Agent URL"] = { url: newUrl };
     if (job.action === "replace" && job.oldAgentUrl && canWrite("Previous Agent URL")) props["Previous Agent URL"] = { url: job.oldAgentUrl };
-    if (!(row.status === "Активна" && alreadyUrl)) await patch(job.rolePageId, props);
+    // Пустая запись в Notion — это не «ничего не делать», а лишний вызов,
+    // который на старом поле падал бы целиком. Поэтому не шлём её вовсе.
+    if (Object.keys(props).length && !(row.status === "Активна" && alreadyUrl)) await patch(job.rolePageId, props);
     provisionEvent("provision_notion_updated", { requestId: request.requestId, jobId: job.id, rolePageId: job.rolePageId, repo: job.repo, step: "notion_updated" });
     job.state = "notion_updated";
     provisionSaveJob(job);
@@ -19481,6 +19273,16 @@
     return true;
   }
 
+  /**
+   * Задание службы Relay: создать агента роли R в контейнере S.
+   *
+   * D-024: задание — и есть разрешение. Здесь нет ни согласования админ-роли,
+   * ни проверки «это административный контейнер», ни allowlist, ни пробника в
+   * профиле: транспорт идёт в назначенный контейнер и делает там ровно одно —
+   * роли нет → создать агента, роль есть → ничего не ломать. Отказ остаётся
+   * только один: задание пришло не тому контейнеру или роль нельзя завести
+   * вовсе (нет строки / Maintainer). Причина уходит в очередь как есть.
+   */
   async function provisionStartRelayTask({ roleName = "", slotId = "", queueId = "", error = "" } = {}) {
     const role = String(roleName || "").trim();
     const target = String(slotId || "").trim();
@@ -19492,7 +19294,7 @@
     let active = provisionRequestState();
     if (active) {
       if (active.relay && String(active.queueId || "") === id && active.state === "relay_preparing") {
-        // Восстановление после перезагрузки до проверки роли/репозитория.
+        // Восстановление после перезагрузки до проверки роли.
       } else if (active.relay && String(active.queueId || "") === id) return true;
       else {
         provisionQueueRelayTask({ queueId: id, roleName: role, slotId: target, error });
@@ -19511,39 +19313,25 @@
     }
     if (error) return provisionBeginRelayFailure(role, target, id, error);
     const actualSlot = typeof relayIdentity === "function" ? await relayIdentity() : "";
-    if (!actualSlot || actualSlot !== target || relayClient.admin) {
-      const why = !actualSlot ? "контейнер не опознан" : relayClient.admin ? "административный контейнер не создаёт worker-агентов" : `задание для ${target}, вкладка опознана как ${actualSlot}`;
+    if (!actualSlot || actualSlot !== target) {
+      const why = !actualSlot ? "контейнер не опознан" : `задание для ${target}, вкладка опознана как ${actualSlot}`;
       return provisionBeginRelayFailure(role, target, id, why);
     }
     const cfg = provisionConfig();
-    if (!provisionBootstrapClean(cfg.agentBootstrapPrompt)) {
-      const why = "в профиле не задан безопасный bootstrap-пробник";
-      return provisionBeginRelayFailure(role, target, id, why);
-    }
     let row = null;
     try {
       row = (await rolesFresh()).find((item) => norm(item.name) === norm(role)) || null;
     } catch (error) {
       return provisionBeginRelayFailure(role, target, id, `не удалось перечитать роли: ${String(error?.message || error).slice(0, 180)}`);
     }
-    const repo = normalizeProvisionRepo(row?.repo);
-    const allow = (cfg.agentProvisionRepoAllowlist || []).map(normalizeProvisionRepo);
-    if (!row || row.agentAdmin === true || !["Executor", "Auditor", "Auditory"].includes(row.fn) || row.status !== "Активна" || !repo || !allow.includes(repo)) {
-      const why = !row ? "роль не найдена в свежих данных Notion"
-        : row.agentAdmin === true || !["Executor", "Auditor", "Auditory"].includes(row.fn) ? "роль не является разрешённой worker-ролью"
-          : row.status !== "Активна" ? "роль не активна"
-            : !repo ? "репозиторий роли не задан в формате owner/repo" : "репозиторий роли не входит в allowlist профиля";
-      return provisionBeginRelayFailure(role, target, id, why);
-    }
+    const allowed = row ? provisionCandidateFromRow(row, cfg, {}) : { ok: false, reason: "роль не найдена в свежих данных Notion" };
+    if (!allowed.ok) return provisionBeginRelayFailure(role, target, id, allowed.reason);
     if (!provisionDailyAllow(cfg)) {
       const why = "достигнут суточный лимит создания агентов профиля";
       return provisionBeginRelayFailure(role, target, id, why);
     }
     const requestId = active.requestId;
-    const candidate = {
-      rolePageId: row.pageId, roleName: String(row.name).trim(), fn: row.fn,
-      repo, action: "create", oldAgentUrl: "", roleAgentId: row.id || "",
-    };
+    const candidate = allowed.candidate;
     const request = {
       ...active, requestId, state: "approved", relay: true, queueId: id, targetSlot: target,
       roleName: candidate.roleName, resumeAuto: false, approvedJobs: [candidate], jobIds: [],
@@ -19551,7 +19339,7 @@
     };
     saveProvisionRequest(request);
     provisionAcquireLock(requestId, false);
-    provisionLog(`Relay provisioning: задание ${id} разрешено очередью; создаю отдельный экземпляр «${candidate.roleName}» в ${target}.`);
+    provisionLog(`Relay provisioning: задание ${id}; создаю экземпляр «${candidate.roleName}» в ${target}.`);
     await consumeProvision();
     return true;
   }
@@ -19570,10 +19358,9 @@
       if (provisionLocalHandoff()) {
         return provisionPause("Provisioning: появился активный командный ход; создание не начинаю.", request, job);
       }
-      if (!provisionBootstrapClean(cfg.agentBootstrapPrompt)) return provisionPause("Provisioning: bootstrap-пробник пуст или запрещён.", request, job);
       const row = request.relay ? null : await provisionFreshRole(job.rolePageId);
-      if (!request.relay && (!row || row.agentAdmin === true || !["запрошен", "создаётся"].includes(row.agentState))) {
-        return provisionPause("Provisioning: строка роли изменилась до создания.", request, job, { event: "provision_conflict" });
+      if (!request.relay && !row) {
+        return provisionPause("Provisioning: строка роли исчезла до создания.", request, job, { event: "provision_conflict" });
       }
       if (provisionCurrentAgentUuid()) {
         // Новая сессия создаётся только с /agent. Если вкладка уже в чужом
@@ -19583,23 +19370,29 @@
         return true;
       }
       job.state = "creating"; provisionSaveJob(job);
-      const selected = await provisionSelectRepository(job.repo, cfg);
-      provisionEvent("provision_repo_selected", { requestId: request.requestId, jobId: job.id, rolePageId: job.rolePageId, repo: job.repo, step: "repo_selected", reason: selected.alreadySelected ? "already" : `attempts ${selected.attempts}` });
+      if (job.repo) {
+        const selected = await provisionSelectRepository(job.repo, cfg);
+        provisionEvent("provision_repo_selected", { requestId: request.requestId, jobId: job.id, rolePageId: job.rolePageId, repo: job.repo, step: "repo_selected", reason: selected.alreadySelected ? "already" : `attempts ${selected.attempts}` });
+      }
+      // D-024: роль без разобранного repo не стопорится — агент создаётся,
+      // адрес пары записывается, а repo досоздаётся правкой строки. Иначе
+      // «нет репозитория» снова стал бы блокером создания.
       job.state = "repo_selected"; provisionSaveJob(job);
     }
 
     if (job.state === "repo_selected") {
       const ready = await ensureComposer(C.pageWaitMs);
       if (!ready?.editor) return provisionPause("Provisioning: composer новой сессии не появился.", request, job);
-      if (!writePrompt(ready.editor, cfg.agentBootstrapPrompt)) return provisionPause("Provisioning: bootstrap-пробник не вставлен.", request, job);
+      const probe = provisionBootstrapPrompt();
+      if (!writePrompt(ready.editor, probe)) return provisionPause("Provisioning: первый промпт не вставлен.", request, job);
       job.bootstrapMsgId = lastMessageId();
       job.bootstrapSeen = messages().map(nodeId);
       job.bootstrapStartedAt = Date.now();
       job.urlWaitStartedAt = Date.now();
       job.state = "bootstrap_sent";
       provisionSaveJob(job); // до deliver: перезагрузка не должна создать вторую сессию
-      const sent = await deliver(ready.editor, cfg.agentBootstrapPrompt);
-      if (!sent?.ok) return provisionPause("Provisioning: bootstrap-пробник не доставлен.", request, job);
+      const sent = await deliver(ready.editor, probe);
+      if (!sent?.ok) return provisionPause("Provisioning: первый промпт не доставлен.", request, job);
       provisionEvent("provision_bootstrap_sent", { requestId: request.requestId, jobId: job.id, rolePageId: job.rolePageId, repo: job.repo, step: "bootstrap_sent" });
     }
 
@@ -19629,10 +19422,13 @@
     if (job.state === "url_captured") {
       if (provisionCurrentAgentUuid() !== provisionAgentUuid(job.agentUrl)) { location.assign(job.agentUrl); return true; }
       const waited = Date.now() - Number(job.bootstrapStartedAt || Date.now());
-      if (waited > cfg.agentBootstrapWaitMs) return provisionPause("Provisioning: bootstrap не завершился за agentBootstrapWaitMs.", request, job);
+      if (waited > cfg.agentBootstrapWaitMs) return provisionPause("Provisioning: первый ответ агента не пришёл за agentBootstrapWaitMs.", request, job);
       if (stillWorking()) return true;
       const replies = messagesAfter(job.bootstrapMsgId, job.bootstrapSeen || []);
-      if (!replies.length) return true; // смысл ответа не проверяем, нужен факт нового assistant
+      // D-024: смысл ответа не проверяется — нужен факт первого ответа
+      // агента, после которого адрес уже взят из адресной строки. Роутер
+      // Arena сам подбирает модель с распознаванием изображения.
+      if (!replies.length) return true;
       job.state = "renaming"; provisionSaveJob(job);
     }
 
@@ -19725,15 +19521,21 @@
     return false;
   }
 
-  /** Ранний вход tick. Не трогает K.pending/K.expect. */
+  /**
+   * Ранний вход tick. Не трогает K.pending/K.expect.
+   *
+   * D-024: единственная модель — задание службы. Локальная очередь заданий
+   * остаётся, чтобы второе задание не потерялось, пока первое в работе; но
+   * больше нет ни «режима auto/manual», ни запроса админ-роли, ни состояний
+   * `prepared`/`sending`/`awaiting` — они существовали только ради согласования.
+   */
   async function consumeProvision() {
     if (provisionRunning) return true;
-    const cfg = provisionConfig();
     let request = provisionRequestState();
     if (provisionLockHeldByOther()) {
-      // Relay-задача принадлежит контейнеру, а не конкретной вкладке. После
+      // Задание принадлежит контейнеру, а не конкретной вкладке. После
       // закрытия/замены вкладки любая вкладка того же слота может безопасно
-      // продолжить задание, сохраняя запрет на запуск в другом контейнере.
+      // продолжить создание, сохраняя запрет на запуск в другом контейнере.
       const slotId = request?.relay && typeof relayIdentity === "function"
         ? await relayIdentity().catch(() => "") : "";
       if (request?.relay && slotId && slotId === request.targetSlot) {
@@ -19744,35 +19546,28 @@
       const slotId = typeof relayIdentity === "function" ? await relayIdentity().catch(() => "") : "";
       const pending = provisionRelayQueue();
       const index = pending.findIndex((item) => String(item.slotId || "") === String(slotId || ""));
-      if (index >= 0) {
-        const [task] = pending.splice(index, 1);
-        provisionSaveRelayQueue(pending);
-        return provisionStartRelayTask(task);
-      }
-      if (!cfg.agentProvisionEnabled) return false;
-    } else {
-      if (!request.relay && !cfg.agentProvisionEnabled) return false;
-      if (request.relay) {
-        const slotId = typeof relayIdentity === "function" ? await relayIdentity().catch(() => "") : "";
-        if (!slotId || slotId !== request.targetSlot) return false;
-        if (request.state === "relay_preparing") {
-          return provisionStartRelayTask({ roleName: request.roleName, slotId: request.targetSlot, queueId: request.queueId });
-        }
+      if (index < 0) return false;
+      const [task] = pending.splice(index, 1);
+      provisionSaveRelayQueue(pending);
+      return provisionStartRelayTask(task);
+    }
+    if (request.relay) {
+      const slotId = typeof relayIdentity === "function" ? await relayIdentity().catch(() => "") : "";
+      if (!slotId || slotId !== request.targetSlot) return false;
+      if (request.state === "relay_preparing") {
+        return provisionStartRelayTask({ roleName: request.roleName, slotId: request.targetSlot, queueId: request.queueId });
       }
     }
     provisionRunning = true;
     try {
-      if (!request) {
-        if (cfg.agentProvisionMode !== "auto" || !autoOn()) return false;
-        const why = provisionIdleReason(cfg);
-        if (why) return false;
-        return await provisionStartRequest({ auto: true });
+      // Устаревшие состояния прежней модели (согласование админ-роли) не
+      // должны держать очередь мёртвой: задание без работы просто закрывается.
+      if (["prepared", "sending", "awaiting"].includes(request.state)) {
+        provisionEvent("provision_noop", { requestId: request.requestId, reason: "состояние прежней модели согласования" });
+        saveProvisionRequest(null);
+        provisionReleaseLock();
+        return false;
       }
-      if (request.state === "prepared") return await provisionSendRequest(request);
-      if (request.state === "sending") {
-        return provisionPause("Provisioning: отправка запроса прервана; повторять запрос без проверки Мастера нельзя.", request, null);
-      }
-      if (request.state === "awaiting") return await provisionConsumeApproval(request);
       if (request.state === "approved") return await provisionRunNextJob(request);
       if (request.state === "paused") return true;
       if (request.state === "done") return await provisionFinishRequest(request, "done");
@@ -19784,19 +19579,21 @@
     }
   }
 
-  /** Отмена ещё не одобренного запроса (кнопка UI). Активные jobs не отменяет. */
+  /** Отмена задания до создания агента (кнопка UI). Активные jobs не отменяет. */
   function provisionCancelRequest() {
     const request = provisionRequestState();
-    if (!request || !["prepared", "sending", "awaiting"].includes(request.state)) return false;
-    provisionEvent("provision_rejected", { requestId: request.requestId, reason: "отменено Мастером" });
-    const resume = request.resumeAuto === true && !GM_getValue(K.paused, "");
+    if (!request || request.state !== "relay_preparing") return false;
+    provisionEvent("provision_noop", { requestId: request.requestId, reason: "отменено Мастером" });
     saveProvisionRequest(null);
     provisionReleaseLock();
-    if (resume) autoSet(true);
     return true;
   }
 
   // ───────────────────────── provisioning: диалог Мастера ─────────────────────────
+  // D-024: окно больше ничего не «запрашивает» и никого не «одобряет». Задание
+  // даёт служба Relay (карточка → контейнер), а окно честно показывает, что
+  // происходит: какое задание в работе, чем закончилось предыдущее и почему
+  // шаг сейчас не идёт. Кнопок согласования нет — их не за что нажимать.
 
   async function provisionOpenDialog() {
     if (typeof projectApproved === "function" && !projectApproved()) {
@@ -19809,61 +19606,40 @@
     box.style.cssText = "position:fixed;inset:0;z-index:2147483001;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center";
     const card = document.createElement("div");
     card.style.cssText = "width:min(720px,94vw);max-height:88vh;overflow:auto;background:#15171c;color:#e7eaee;border:1px solid #2b2f38;border-radius:10px;padding:16px;font:13px/1.45 ui-monospace,Menlo,Consolas,monospace";
-    card.innerHTML = `<h3 style="margin:0 0 8px">🤖 Provisioning Arena-агентов</h3><div id="cfn-provision-body">Читаю свежие роли…</div>
+    card.innerHTML = `<h3 style="margin:0 0 8px">🤖 Provisioning Arena-агентов</h3><div id="cfn-provision-body">Читаю состояние…</div>
       <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap">
-        <button id="cfn-provision-request" style="padding:6px 10px">Запросить создание/замену</button>
-        <button id="cfn-provision-cancel" style="padding:6px 10px">Отменить запрос</button>
         <button id="cfn-provision-close" style="padding:6px 10px">Закрыть</button>
       </div>`;
     box.appendChild(card);
     document.body.appendChild(box);
     const body = card.querySelector("#cfn-provision-body");
-    const requestBtn = card.querySelector("#cfn-provision-request");
-    const cancelBtn = card.querySelector("#cfn-provision-cancel");
     card.querySelector("#cfn-provision-close").onclick = () => box.remove();
     box.onclick = (e) => { if (e.target === box) box.remove(); };
-    requestBtn.disabled = true;
-    cancelBtn.disabled = true;
     try {
       const request = provisionRequestState();
       const state = provisionState();
       const active = provisionActiveJob();
-      let html = `<div style="color:#aab4c3">enabled=${cfg.agentProvisionEnabled} mode=${cfg.agentProvisionMode} allowlist=${cfg.agentProvisionRepoAllowlist.length} maxJobs=${cfg.agentProvisionMaxJobs} dailyMax=${cfg.agentProvisionDailyMax} bootstrap=${provisionBootstrapClean(cfg.agentBootstrapPrompt) ? "ok" : "пуст/запрещён"}</div>`;
+      let html = `<div style="color:#aab4c3">maxJobs=${cfg.agentProvisionMaxJobs} dailyMax=${cfg.agentProvisionDailyMax} ` +
+        `first=${provisionBootstrapClean(provisionBootstrapPrompt()) ? "ok" : "запрещён"}</div>`;
+      html += `<p style="margin:8px 0 0">Задание даёт служба Relay: есть роль — выдаётся работа, нет — создаётся агент. ` +
+        `Отдельного согласования и админ-роли нет.</p>`;
       if (request) {
-        html += `<div style="margin-top:8px">Запрос ${escapeHtml(request.requestId)}: ${escapeHtml(request.state)}; админ «${escapeHtml(request.adminRoleName || "")}»; jobs ${(request.jobIds || []).length}.</div>`;
-        cancelBtn.disabled = !["prepared", "sending", "awaiting"].includes(request.state);
-      }
-      if (active) html += `<div style="margin-top:6px">Активный job ${escapeHtml(active.id)}: ${escapeHtml(active.state)} «${escapeHtml(active.roleName)}» ${escapeHtml(active.repo)}${active.agentUrl ? ` URL ${escapeHtml(active.agentUrl)}` : ""}.</div>`;
-      if (!cfg.agentProvisionEnabled) {
-        html += `<p>Provisioning выключен в профиле. Включите его в управлении проектами и задайте allowlist/bootstrap.</p>`;
-        body.innerHTML = html;
-        return;
-      }
-      const { candidates, rejected, admin } = await provisionGather(cfg);
-      html += `<div style="margin-top:8px">Админ-роль: ${admin ? `«${escapeHtml(admin.name)}» (${escapeHtml(admin.fn)})` : "<b>нет активной админ-роли</b>"}.</div>`;
-      if (candidates.length) {
-        html += `<table style="width:100%;border-collapse:collapse;margin-top:8px"><tr><th align="left">Роль</th><th align="left">Функция</th><th align="left">Repo</th><th align="left">Action</th></tr>`;
-        for (const c of candidates) html += `<tr><td>${escapeHtml(c.roleName)}</td><td>${escapeHtml(c.fn)}</td><td>${escapeHtml(c.repo)}</td><td>${escapeHtml(c.action)}</td></tr>`;
-        html += `</table>`;
-      } else html += `<p>Кандидатов нет. Нужны строки с Agent State=запрошен, не админ, repo в allowlist, без активной работы.</p>`;
-      if (rejected.length) html += `<div style="margin-top:8px;color:#ffd479">Отклонено: ${rejected.map((r) => `${escapeHtml(r.rolePageId)} — ${escapeHtml(r.reason)}`).join("; ")}</div>`;
-      const idle = provisionIdleReason(cfg);
-      if (idle) html += `<div style="margin-top:8px;color:#ffd479">Запрос сейчас не будет выдан: ${escapeHtml(idle)}.</div>`;
+        html += `<div style="margin-top:8px">Задание ${escapeHtml(request.requestId)}: ${escapeHtml(request.state)}` +
+          `${request.targetSlot ? `, контейнер ${escapeHtml(request.targetSlot)}` : ""}` +
+          `${request.roleName ? `, роль «${escapeHtml(request.roleName)}»` : ""}; jobs ${(request.jobIds || []).length}.</div>`;
+        if (request.error) html += `<div style="margin-top:6px;color:#ffd479">Причина: ${escapeHtml(request.error)}</div>`;
+      } else html += `<div style="margin-top:8px">Задания нет: контур свободен.</div>`;
+      if (active) html += `<div style="margin-top:6px">Активный job ${escapeHtml(active.id)}: ${escapeHtml(active.state)} «${escapeHtml(active.roleName)}» ${escapeHtml(active.repo || "repo не задан")}${active.agentUrl ? ` URL ${escapeHtml(active.agentUrl)}` : ""}.</div>`;
+      const idle = provisionIdleReason();
+      if (idle) html += `<div style="margin-top:8px;color:#ffd479">Шаг сейчас не пойдёт: ${escapeHtml(idle)}.</div>`;
+      const history = (state.history || []).slice(-5).map((item) =>
+        `${escapeHtml(item.at)} ${escapeHtml(item.reason || "")} jobs ${(item.jobs || []).length}`);
+      if (history.length) html += `<div style="margin-top:10px;color:#aab4c3;font-size:12px">Завершено:<br>${history.join("<br>")}</div>`;
       const journal = state.journal.slice(-8).map((e) => `${escapeHtml(e.at)} ${escapeHtml(e.event)} ${escapeHtml(e.reason || e.step || "")}`).join("<br>");
       if (journal) html += `<div style="margin-top:10px;color:#aab4c3;font-size:12px">${journal}</div>`;
       body.innerHTML = html;
-      requestBtn.disabled = Boolean(idle) || !candidates.length || !admin || Boolean(request);
-      requestBtn.onclick = async () => {
-        if (!confirm(`Выдать запрос админ-роли «${admin.name}» на ${candidates.length} кандидат(ов)? Создание начнётся только после маркера одобрения.`)) return;
-        requestBtn.disabled = true;
-        box.remove();
-        await provisionStartRequest({ auto: false });
-      };
-      cancelBtn.onclick = () => {
-        if (provisionCancelRequest()) { log("Provisioning: запрос отменён Мастером."); box.remove(); }
-      };
     } catch (error) {
-      body.textContent = `Не удалось прочитать кандидатов: ${error.message || error}`;
+      body.textContent = `Не удалось прочитать состояние: ${error.message || error}`;
     }
   }
 
@@ -19936,7 +19712,6 @@
     // Доступы и состав: строку «Роли», Agent URL и флаг правит Мастер.
     "mission-roster": "agent",
     provision: "agent",
-    "provision-no-admin": "agent",
     "project-role-origin": "agent",
     "no-reviewer": "agent",
     "heal-no-maintainer": "agent",
@@ -20171,7 +19946,6 @@
     "pilot-tool-limit": "master",
     "pilot-timeout": "master",
     provision: "master",
-    "provision-no-admin": "master",
     // D-092: класс оставлен `master`, но пауза теперь поднимается только там,
     // где нет очереди отправки (см. 18-state-recovery.js). Тот случай — сверка,
     // а не решение; Мастеру он не показывается как вопрос (тихий).
@@ -22565,8 +22339,9 @@ function reviewPullRequest({ files, pr, zone } = {}) {
   // ─────────────── D-026: клиент протокола службы Relay ───────────────
   //
   // Вкладка — исполнитель (D-009): решения принимает служба, здесь действия
-  // протокола и обязанность не терять выдачу. Pull-задача provision запускает
-  // разрешённое создание именно в своём worker-слоте; планирования нет.
+  // протокола и обязанность не терять выдачу. Pull-задача provision — это и
+  // есть разрешение создать агента (D-024): вкладка идёт в свой контейнер, и
+  // если роли там нет — создаёт её. Планирования и согласований нет.
   //
   //   hello  — «я вкладка аккаунта X» → слот (один раз, дальше кеш);
   //   pull   — «дай работу» → строка очереди книги (карточка миссии);
@@ -23196,7 +22971,9 @@ function reviewPullRequest({ files, pr, zone } = {}) {
     relayClient.lastLocalHold = "";
     const provision = typeof provisionRequestState === "function" ? provisionRequestState() : null;
     const queuedProvision = GM_getValue(K.provisionRelayQueue, []).some((item) => String(item.slotId || "") === slotId);
-    const ownProvision = Boolean(provision && ((!provision.relay) || String(provision.targetSlot || "") === slotId));
+    // Задание прежней модели (без relay) больше не разрешение создать агента:
+    // оно не должно держать pull, иначе остаток согласования запер бы вкладку.
+    const ownProvision = Boolean(provision && provision.relay && String(provision.targetSlot || "") === slotId);
     if (ownProvision || queuedProvision) {
       if (typeof consumeProvision === "function") await consumeProvision();
       return;

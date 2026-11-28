@@ -124,10 +124,11 @@
           for (const name of ["Аккаунт", "Доступность"]) {
             if (source.properties[name] && source.properties[name].type !== "select") errors.push(`${name}: нужен select`);
           }
-          // Поля provisioning: обязательны по смыслу (без «Agent State» роли
-          // никогда не создаются), но проверяются только если присутствуют —
-          // база без них работает по-старому, как «Аккаунт» по D-004.
-          for (const [name, type] of Object.entries({ "Agent State": "select", "Agent Admin": "checkbox" })) {
+          // Поля provisioning: проверяются только если присутствуют — база без
+          // них работает по-старому, как «Аккаунт» по D-004. «Agent Admin» из
+          // списка убран: D-024 отменил админ-флаг, и советовать его завести
+          // значило бы вернуть выброшенную механику.
+          for (const [name, type] of Object.entries({ "Agent State": "select" })) {
             if (source.properties[name] && source.properties[name].type !== type) errors.push(`${name}: нужен ${type}`);
           }
         }
@@ -142,14 +143,14 @@
         // молчала: `Тип` был в живой базе, но не здесь, и код писал его в пустоту.
         // Поля, которые транспорт читает или пишет, но которые не нужны для
         // работы базы (аддитивные по D-004/D-005, как «Аккаунт»). Раньше
-        // «Agent State» и «Agent Admin» попадали в «лишние» и человеку
-        // советовали их удалить — а без них provisioning не работает вовсе.
+        // «Agent State» попадал в «лишние», и человеку советовали его удалить —
+        // а по нему переносится состав ролей в книгу.
         // Проверка типов для них есть выше: «лишнее» здесь значит «не
         // обязательное», а не «ненужное».
         // Поля для людей («Устав») сюда НЕ входят: их никто не читает, и
         // человек должен об этом узнать, а не считать поле рабочим.
         const additive = label === "Роли"
-          ? ["Repository", "Репозиторий", "Аккаунт", "Доступность", "Agent State", "Agent Admin", "Agent Job ID", "Agent Created At", "Previous Agent URL"]
+          ? ["Repository", "Репозиторий", "Аккаунт", "Доступность", "Agent State", "Agent Job ID", "Agent Created At", "Previous Agent URL"]
           : ["Repository", "Репозиторий"];
         const extra = Object.keys(source.properties || {}).filter((name) => !(name in fields) && !additive.includes(name));
         if (extra.length) warnings.push(`«${label}»: лишние поля — ${extra.join(", ")} (схема их не знает; правьте схему в Notion только сами).`);

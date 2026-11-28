@@ -444,7 +444,6 @@
   // принят за сдачу карточки.
   const MARKER_STEPS = {
     CF_ANSWER_RESULT: [["question_id"]],
-    CF_AGENT_PROVISION_RESULT: [["request_id"], ["jobs"]],
     CF_ARBITER_RESULT: [["verdict", "action"], ["action", "fix"]],
     CF_REVIEW_RESULT: [["verdict"]],
     // У сдачи карточки нет вердикта: вердикт — это приёмка или арбитраж, и

@@ -1,8 +1,9 @@
   // ─────────────── D-026: клиент протокола службы Relay ───────────────
   //
   // Вкладка — исполнитель (D-009): решения принимает служба, здесь действия
-  // протокола и обязанность не терять выдачу. Pull-задача provision запускает
-  // разрешённое создание именно в своём worker-слоте; планирования нет.
+  // протокола и обязанность не терять выдачу. Pull-задача provision — это и
+  // есть разрешение создать агента (D-024): вкладка идёт в свой контейнер, и
+  // если роли там нет — создаёт её. Планирования и согласований нет.
   //
   //   hello  — «я вкладка аккаунта X» → слот (один раз, дальше кеш);
   //   pull   — «дай работу» → строка очереди книги (карточка миссии);
@@ -632,7 +633,9 @@
     relayClient.lastLocalHold = "";
     const provision = typeof provisionRequestState === "function" ? provisionRequestState() : null;
     const queuedProvision = GM_getValue(K.provisionRelayQueue, []).some((item) => String(item.slotId || "") === slotId);
-    const ownProvision = Boolean(provision && ((!provision.relay) || String(provision.targetSlot || "") === slotId));
+    // Задание прежней модели (без relay) больше не разрешение создать агента:
+    // оно не должно держать pull, иначе остаток согласования запер бы вкладку.
+    const ownProvision = Boolean(provision && provision.relay && String(provision.targetSlot || "") === slotId);
     if (ownProvision || queuedProvision) {
       if (typeof consumeProvision === "function") await consumeProvision();
       return;

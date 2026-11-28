@@ -34,13 +34,12 @@ CF_ANSWER_RESULT {"question_id":"<uuid>","turn_id":"<uuid>","answer":"full decis
 CF_ARBITER_RESULT {"dispatch_id":"<uuid>","turn_id":"<uuid>","verdict":"accept|rework|master","reason":"loop decision"}
 ```
 
-## Agent provisioning approval
+## Agent provisioning
 
-```text
-CF_AGENT_PROVISION_RESULT {"request_id":"<uuid>","jobs":[],"reason":"why these create/replace jobs are safe"}
-```
-
-Only approved `create`/`replace` jobs for listed non-admin role rows are allowed. Archive/delete/activate/admin commands are not marker jobs.
+There is no provisioning marker (D-024). Creating an agent is not a turn of any
+role: the service hands the container a `kind=provision` task, and the container
+either issues the card (role exists) or creates the agent (role is missing). No
+approval, no `Agent Admin` flag and no allowlist take part.
 
 ## Optional question envelope
 

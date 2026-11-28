@@ -31,7 +31,7 @@
 // ждёт, а не отказывается: отказ был бы блокером, которого владелец просил не
 // делать.
 
-import { SHEETS, rowToObject, objectToRow } from "./schema.mjs";
+import { SHEETS, isAdminRole, rowToObject, objectToRow } from "./schema.mjs";
 import { norm } from "./util.mjs";
 
 export const AGENT_STATE = {
@@ -207,12 +207,14 @@ export function pairsForPrompt({ roles = [], slots = [], instances = [], liveRun
 }
 
 /**
- * Может ли роль жить в слоте. Дублируется здесь намеренно: `agents.mjs` не
- * должен тянуть за собой `slots.mjs` целиком только ради двух условий, а
- * расхождение ловится тестом на одинаковый ответ обеих функций.
+ * Может ли роль жить в слоте.
+ *
+ * Признак административности берётся из функции роли, как в `slots.mjs`, а не
+ * из checkbox «Agent Admin»: D-024 отменил флаг — он дублировал функцию и
+ * легко расходился с ней, а provisioning из-за него останавливался.
  */
 function slotAccepts(role, slot) {
   if (!slot || !slot.enabled) return false;
-  const admin = Boolean(role?.agentAdmin);
+  const admin = isAdminRole(role?.name, role?.fn);
   return admin === Boolean(slot.admin);
 }

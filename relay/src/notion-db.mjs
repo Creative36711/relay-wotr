@@ -827,7 +827,6 @@ export function normalizeRoleRow(page) {
     status: text(props["Статус"]),
     url: text(props["Agent URL"]),
     repo: text(props["Репозиторий"]),
-    agentAdmin: props["Agent Admin"]?.checkbox === true,
     agentState: text(props["Agent State"]) || "не требуется",
   };
 }

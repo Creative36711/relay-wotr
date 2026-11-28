@@ -12,7 +12,6 @@
       // D-053: разбор повторяющейся петли. Карточка и ход названы явно: вердикт
       // арбитра обязан относиться именно к этой выдаче, а не к похожей.
       CF_ARBITER_RESULT: { kind: "arbiter", ids: ["dispatch_id", "turn_id"], role: "Reviewer", optional: ["action", "reason", "fix", "summary", "question"] },
-      CF_AGENT_PROVISION_RESULT: { kind: "provision", ids: ["request_id"], role: "Coordinator|Reviewer" },
     };
     const forKind = (kind, roleFn) => {
       if (kind === "plan") return "CF_COORDINATOR_RESULT";
@@ -20,7 +19,9 @@
       if (kind === "answer") return "CF_ANSWER_RESULT";
       if (kind === "arbiter") return "CF_ARBITER_RESULT";
       if (kind === "dispatch") return "CF_AGENT_RESULT";
-      if (kind === "provision") return "CF_AGENT_PROVISION_RESULT";
+      // D-024: маркера согласования создания агентов больше нет — согласование
+      // админ-роли выброшено целиком.
+      if (kind === "provision") return null;
       if (kind === "reminder") return null; // reminder наследует маркер исходного хода
       return null;
     };
