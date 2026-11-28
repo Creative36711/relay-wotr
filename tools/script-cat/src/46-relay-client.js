@@ -586,7 +586,22 @@
     // впустую. Повторной отправки бояться не надо: шаг не отправляет задание,
     // а `tick` сам видит `pending` и сначала доводит отправку.
     const canTakeNudge = !(typeof stillWorking === "function" && stillWorking());
-    if (canTakeNudge) {
+    // D-052: просьбу «дожать ход» нельзя забирать вхолостую.
+    //
+    // 28.11 (14:33 МСК) служба записала «пульт просит дочитать ответ», а вкладка
+    // ответила «Шаг уже выполняется» — дважды, через сорок пять секунд. Просьба
+    // при этом уже была снята `takeNudge` (она одноразовая): человек нажал
+    // кнопку второй раз именно потому, что первый ничего не изменил.
+    // Причина не в сети: `relayPost` ограничен 45 с, `relayTurnMarker` в этом
+    // пути не ждут, а живого шага сторож не касается — вкладка стояла в
+    // собственном `busy` (длинная отправка/ожидание внутри шага).
+    //
+    // Поэтому «шаг уже идёт» — не отказ, а отсрочка: просьба остаётся
+    // невыполненной (`deferNudgeStep` в цикле) и повторяется, когда шаг
+    // закончится. Отсрочка одноразовая и с пределом: она не создаёт второй шаг
+    // поверх первого и не крутится вечно.
+    const stepRunning = Boolean(busy);
+    if (canTakeNudge && !stepRunning) {
       const nudgeRes = await relayPost({ action: "pull", slotId, nudgeOnly: true,
         projectId: ACTIVE_PROFILE?.id || "", projectName: ACTIVE_PROFILE?.name || "" }).catch(() => null);
       if (nudgeRes && nudgeRes.nudge) {
@@ -597,6 +612,16 @@
         if (typeof tick === "function") await tick(true);
         return;
       }
+    } else if (stepRunning) {
+      // Уже начатый шаг доводит ход сам. Но человеку обещали шаг — значит
+      // просьба не забывается: заявка уходит в цикл (`deferNudgeStep`) и будет
+      // выполнена сразу после текущего шага, уже без второго нажатия.
+      const why = "шаг уже выполняется: просьба остаётся и повторится после его конца";
+      if (typeof deferNudgeStep === "function") deferNudgeStep("прошлый шаг ещё не закончился");
+      else if (relayClient.nudgeDeferred !== why) log(`Пульт просит дочитать ответ, но ${why}.`, false, { ntfy: "quiet" });
+      relayClient.nudgeDeferred = why;
+    } else {
+      relayClient.nudgeDeferred = "";
     }
     if (pending || waiting) {
       // Не берём новую работу поверх текущего локального хода. Для admin это

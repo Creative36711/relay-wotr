@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Relay — передача хода между агентами
 // @namespace    https://arena.ai/
-// @version      1.36.1
+// @version      1.36.2
 // @updateURL    https://raw.githubusercontent.com/Creative36711/relay-wotr/main/tools/script-cat/relay.user.js
 // @downloadURL  https://raw.githubusercontent.com/Creative36711/relay-wotr/main/tools/script-cat/relay.user.js
 // @description  Цикл Координатор → исполнитель → Координатор: агент сам коммитит, пушит и мержит PR; ScriptCat ждёт мерж и нажимает Continue.
@@ -97,7 +97,7 @@
     // D-073: отпечаток сборки вшивает build.mjs (SHA-256 источника). Номер версии
     // говорит «какой выпуск», отпечаток — «какая именно сборка»: без него проверка
     // «работает новая версия, а не прежняя под новым номером» невозможна.
-    buildFingerprint: "89337c574b80da7b",
+    buildFingerprint: "ef1e9053064e7ab9",
     repo: "", // для ссылки на PR из номера
     tickMs: 15000,
     mergeGraceMs: 90000, // сколько ждём мерж, прежде чем нажать кнопки за агента
@@ -895,7 +895,7 @@
 
   const NTFY_BASE = "https://ntfy.sh";
   const SCRIPT_VERSION =
-    (typeof GM_info !== "undefined" && GM_info?.script?.version) || "1.36.1";
+    (typeof GM_info !== "undefined" && GM_info?.script?.version) || "1.36.2";
 
   /** «https://ntfy.sh/topic?x=1» и «topic» одинаково дают topic. */
   function normalizeNtfyTopic(raw) {
@@ -22997,7 +22997,22 @@ function reviewPullRequest({ files, pr, zone } = {}) {
     // впустую. Повторной отправки бояться не надо: шаг не отправляет задание,
     // а `tick` сам видит `pending` и сначала доводит отправку.
     const canTakeNudge = !(typeof stillWorking === "function" && stillWorking());
-    if (canTakeNudge) {
+    // D-052: просьбу «дожать ход» нельзя забирать вхолостую.
+    //
+    // 28.11 (14:33 МСК) служба записала «пульт просит дочитать ответ», а вкладка
+    // ответила «Шаг уже выполняется» — дважды, через сорок пять секунд. Просьба
+    // при этом уже была снята `takeNudge` (она одноразовая): человек нажал
+    // кнопку второй раз именно потому, что первый ничего не изменил.
+    // Причина не в сети: `relayPost` ограничен 45 с, `relayTurnMarker` в этом
+    // пути не ждут, а живого шага сторож не касается — вкладка стояла в
+    // собственном `busy` (длинная отправка/ожидание внутри шага).
+    //
+    // Поэтому «шаг уже идёт» — не отказ, а отсрочка: просьба остаётся
+    // невыполненной (`deferNudgeStep` в цикле) и повторяется, когда шаг
+    // закончится. Отсрочка одноразовая и с пределом: она не создаёт второй шаг
+    // поверх первого и не крутится вечно.
+    const stepRunning = Boolean(busy);
+    if (canTakeNudge && !stepRunning) {
       const nudgeRes = await relayPost({ action: "pull", slotId, nudgeOnly: true,
         projectId: ACTIVE_PROFILE?.id || "", projectName: ACTIVE_PROFILE?.name || "" }).catch(() => null);
       if (nudgeRes && nudgeRes.nudge) {
@@ -23008,6 +23023,16 @@ function reviewPullRequest({ files, pr, zone } = {}) {
         if (typeof tick === "function") await tick(true);
         return;
       }
+    } else if (stepRunning) {
+      // Уже начатый шаг доводит ход сам. Но человеку обещали шаг — значит
+      // просьба не забывается: заявка уходит в цикл (`deferNudgeStep`) и будет
+      // выполнена сразу после текущего шага, уже без второго нажатия.
+      const why = "шаг уже выполняется: просьба остаётся и повторится после его конца";
+      if (typeof deferNudgeStep === "function") deferNudgeStep("прошлый шаг ещё не закончился");
+      else if (relayClient.nudgeDeferred !== why) log(`Пульт просит дочитать ответ, но ${why}.`, false, { ntfy: "quiet" });
+      relayClient.nudgeDeferred = why;
+    } else {
+      relayClient.nudgeDeferred = "";
     }
     if (pending || waiting) {
       // Не берём новую работу поверх текущего локального хода. Для admin это
@@ -23506,6 +23531,52 @@ function reviewPullRequest({ files, pr, zone } = {}) {
     return mode;
   };
 
+  /**
+   * D-052: «дожать» пришло, пока шаг уже шёл.
+   *
+   * Просьба пульта одноразовая (`takeNudge`): если вкладка её забрала, а шаг
+   * сделать не смогла, человек нажимает кнопку второй раз ровно потому, что
+   * первый ничего не изменил (28.11, 14:33: «Пульт просит дочитать ответ» →
+   * «Шаг уже выполняется» дважды). Поэтому «шаг занят» — не отказ, а отсрочка:
+   * заявка остаётся здесь и выполняется один раз, когда текущий шаг закончится.
+   *
+   * Повтор идёт отложенным тиком и только заявкой режима `read`: новый запрос
+   * шага не создаётся, дубль задания не отправляется, а `tick` сам видит
+   * `pending` и сначала доводит отправку. Предел один — чтобы брошенная заявка
+   * не будила вкладку вечно.
+   */
+  let nudgeRetryDeadline = 0;
+  function deferNudgeStep(why = "") {
+    const now = Date.now();
+    if (!nudgeRetryDeadline) nudgeRetryDeadline = now + 600000;
+    if (now > nudgeRetryDeadline) {
+      nudgeRetryDeadline = 0;
+      log(
+        "Пульт просил дочитать ответ, но шаг всё это время был занят: просьба снята. " +
+          "Нажмите «Дожать ход» ещё раз — ответ в чате не потерян.",
+        true,
+        { ntfy: "quiet" },
+      );
+      return false;
+    }
+    logThrottled(
+      "nudge-deferred",
+      `Пульт просит дочитать ответ, но шаг уже идёт${why ? ` (${why})` : ""}: ` +
+        "просьба сохранена и повторится, как только он закончится.",
+      false,
+      60000,
+    );
+    return true;
+  }
+  /** Отложенная заявка: поднять тик, если шаг уже свободен. Иначе — ждём его конца. */
+  function resumeDeferredNudge() {
+    if (!nudgeRetryDeadline) return;
+    if (busy) return;
+    nudgeRetryDeadline = 0;
+    requestReadOnlyStep();
+    setTimeout(() => tick(true), 0);
+  }
+
   async function tick(fromToggle = false) {
     // Пробы транспорта собирают `tick` из фрагментов, без соседних замыканий:
     // отсутствие заявки — это «обычный шаг», а не поломка.
@@ -23549,7 +23620,12 @@ function reviewPullRequest({ files, pr, zone } = {}) {
       // это не сбой одного запроса, а поломка: дальше решает Мастер.
       const silentMs = Date.now() - busyAt;
       if (silentMs < 120000) {
-        if (fromToggle) log("Шаг уже выполняется: дождитесь его конца, повторный не нужен.");
+        // D-052: «дожать» при занятом шаге — не отказ. Заявка остаётся до конца
+        // шага (deferNudgeStep), и человеку не приходится жать кнопку второй раз.
+        if (fromToggle) {
+          const deferred = mode === "read" && typeof deferNudgeStep === "function" && deferNudgeStep("прошлый шаг ещё не закончился");
+          if (!deferred) log("Шаг уже выполняется: дождитесь его конца, повторный не нужен.");
+        }
         return;
       }
       stepRestarts += 1;
@@ -24305,6 +24381,13 @@ function reviewPullRequest({ files, pr, zone } = {}) {
       busy = false;
       stepRestarts = 0;
       setStatus();
+      // D-052: заявка «дожать», ждавшая конца шага, выполняется сразу — уже как
+      // свободный читающий шаг, а не как второй запуск поверх первого.
+      try {
+        if (typeof resumeDeferredNudge === "function") resumeDeferredNudge();
+      } catch (e) {
+        dbg("отложенная просьба «дожать» не поднята", e.message);
+      }
     }
   }
 
