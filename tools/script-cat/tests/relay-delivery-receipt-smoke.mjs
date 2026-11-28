@@ -183,8 +183,12 @@ const cpFrom = src.indexOf('  async function consumePending(');
 const cpTo = src.indexOf('  // ───────────────────── следы прошлых попыток', cpFrom);
 assert.ok(cpFrom > 0 && cpTo > cpFrom, 'consumePending на месте');
 const cp = src.slice(cpFrom, cpTo);
-assert.match(cp, /if \(!expect \|\| norm\(expect\.roleId\) !== norm\(me\)\) \{\s*pause\(/, 'потерянное ожидание ставит паузу, а не молчаливый успех');
-assert.match(cp, /kind: "delivery-state-lost"/);
+assert.match(cp, /const livePending = GM_getValue\(K\.pending, null\);\s*if \(!livePending \|\| livePending\.at !== pending\.at\)/, 'опоздавший проход закрывается без выводов (D-051)');
+assert.match(cp, /if \(!expect \|\| norm\(expect\.roleId\) !== norm\(me\)\) \{\s*const meNow = [\s\S]*?if \(!expect && delivery\.msgId && pending\.roleId && norm\(pending\.roleId\) === norm\(meNow\)\)/, 'потерянное ожидание с доказанной доставкой восстанавливается из очереди (D-051)');
+assert.match(cp, /journalDelivery\(rebuilt, "delivered"\)/, 'восстановленный ход пишется в журнал как доставленный');
+assert.match(cp, /kind: "delivery-state-lost"/, 'чужое ожидание по-прежнему ставит паузу');
+assert.match(src, /function liftDeliveredCaptchaPause/, 'доставка гасит капча-паузу (D-051)');
+assert.equal((cp.match(/liftDeliveredCaptchaPause\(\);/g) || []).length, 3, 'капча-пауза снимается во всех трёх путях подтверждения');
 assert.match(cp, /recordDeliveryReceipt\(expect, \{ messageId: delivery\.msgId, sentAt, watermark: mark, seen \}\);[\s\S]*?GM_setValue\(K\.expect, \{[\s\S]*?GM_setValue\(K\.pending, null\);/, 'квитанция и отметка пишутся до снятия очереди');
 
 // 10. Намеренный сброс доставки гасит квитанцию во всех путях повтора.

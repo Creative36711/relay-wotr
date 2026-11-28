@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Relay — передача хода между агентами
 // @namespace    https://arena.ai/
-// @version      1.36.0
+// @version      1.36.1
 // @updateURL    https://raw.githubusercontent.com/Creative36711/relay-wotr/main/tools/script-cat/relay.user.js
 // @downloadURL  https://raw.githubusercontent.com/Creative36711/relay-wotr/main/tools/script-cat/relay.user.js
 // @description  Цикл Координатор → исполнитель → Координатор: агент сам коммитит, пушит и мержит PR; ScriptCat ждёт мерж и нажимает Continue.
@@ -97,7 +97,7 @@
     // D-073: отпечаток сборки вшивает build.mjs (SHA-256 источника). Номер версии
     // говорит «какой выпуск», отпечаток — «какая именно сборка»: без него проверка
     // «работает новая версия, а не прежняя под новым номером» невозможна.
-    buildFingerprint: "18109c955b7368d2",
+    buildFingerprint: "89337c574b80da7b",
     repo: "", // для ссылки на PR из номера
     tickMs: 15000,
     mergeGraceMs: 90000, // сколько ждём мерж, прежде чем нажать кнопки за агента
@@ -895,7 +895,7 @@
 
   const NTFY_BASE = "https://ntfy.sh";
   const SCRIPT_VERSION =
-    (typeof GM_info !== "undefined" && GM_info?.script?.version) || "1.36.0";
+    (typeof GM_info !== "undefined" && GM_info?.script?.version) || "1.36.1";
 
   /** «https://ntfy.sh/topic?x=1» и «topic» одинаково дают topic. */
   function normalizeNtfyTopic(raw) {
@@ -5888,6 +5888,23 @@
   }
 
   /**
+   * D-051: доставка подтверждена — капча прошлой попытки закрыта самой
+   * отправкой. Без этого пауза оставалась после «Задание отправлено»:
+   * Мастер видел «Решите капчу», жал «Продолжить» и попадал в сверку
+   * уже успешно ушедшего хода.
+   */
+  function liftDeliveredCaptchaPause() {
+    const info = typeof tabPauseContext === "function" ? tabPauseContext() : GM_getValue(K.pause, null);
+    if (!info || info.kind !== "captcha") return false;
+    if (typeof tabPauseSet === "function") tabPauseSet("");
+    else GM_setValue(K.paused, "");
+    if (typeof tabPauseContextSet === "function") tabPauseContextSet(null);
+    else GM_setValue(K.pause, null);
+    log("Сообщение доставлено — капча больше не актуальна, локальная пауза снята.", false, { ntfy: "quiet" });
+    return true;
+  }
+
+  /**
    * Кнопка рядом с полем ввода.
    *
    * Геометрия — единственный признак, который отличает Send от кнопки аккаунта
@@ -8668,6 +8685,7 @@
       }
       GM_setValue(K.pending, null);
       pendingNoticeAt = 0;
+      if (typeof liftDeliveredCaptchaPause === "function") liftDeliveredCaptchaPause();
       // Старое ожидание без снимка распознаётся по последней реплике только
       // ради совместимости. Для пуша о доставке нужно более сильное
       // подтверждение: новая реплика относительно снимка до отправки.
@@ -8936,6 +8954,17 @@
       return true;
     }
     const expect = GM_getValue(K.expect, null);
+    // D-051: очередь общая для всех вкладок, `busy` — у каждой свой. Если
+    // другая вкладка уже разобрала эту очередь (сняла её или поставила
+    // новую), этот проход опоздал: исход решён, судить ожидание и писать
+    // квитанцию повторно нельзя — иначе подтверждённая доставка выглядит
+    // как «ожидание потеряно» (инцидент 28.11: msgId в чате есть, пауза
+    // delivery-state-lost).
+    const livePending = GM_getValue(K.pending, null);
+    if (!livePending || livePending.at !== pending.at) {
+      dbg("Send: очередь уже разобрана другой вкладкой — проход закрыт без выводов", { at: pending.at });
+      return true;
+    }
     // D-045: квитанция пишется и тогда, когда ожидание потеряно. Доставка
     // состоялась и подтверждена id сообщения — этот факт не должен зависеть
     // от того, дожила ли запись `K.expect` до перехода. Без квитанции пауза
@@ -8955,9 +8984,52 @@
       );
     }
     // D-044: сообщение в чате есть, а ожидание потеряно/подменено — это не
-    // «отправлено и можно забыть». Не снимаем очередь молча и не пишем успех:
-    // нужна сверка, иначе следующий шаг потеряет ход или продублирует его.
+    // «отправлено и можно забыть». D-051: потеря без подмены, с
+    // доказанной доставкой (msgId) и очередью, адресованной этой странице,
+    // — восстанавливаем ожидание из очереди (опознавательные данные хода
+    // едут в ней по построению) и продолжаем ждать ответа: сверка уже
+    // состоялась — её провёл сам deliver. Пауза остаётся только для чужого
+    // ожидания: его подменять нельзя.
     if (!expect || norm(expect.roleId) !== norm(me)) {
+      const meNow = typeof roleFromPath === "function" ? roleFromPath() : me;
+      if (!expect && delivery.msgId && pending.roleId && norm(pending.roleId) === norm(meNow)) {
+        const rebuilt = {
+          kind: pending.kind || "dispatch",
+          ref: pending.ref || "",
+          runId: pending.runId || "",
+          missionId: pending.missionId || "",
+          turnId: pending.turnId || "",
+          questionId: pending.questionId || "",
+          logId: pending.logId || "",
+          roleId: pending.roleId,
+          roleName: pending.roleName || "",
+          roleUrl: pending.roleUrl || "",
+          roleFn: pending.roleFn || "",
+          title: pending.title || "",
+          text: pending.text,
+          watermark: delivery.msgId,
+          sentAt: Date.now(),
+          verified: true,
+          seen,
+          at: pending.at || Date.now(),
+          tries: 0,
+          lastReplySig: "",
+          lastReplyAt: 0,
+        };
+        GM_setValue(K.expect, rebuilt);
+        journalDelivery(rebuilt, "delivered");
+        GM_setValue(K.pending, null);
+        GM_setValue(K.deadSend, "");
+        pendingNoticeAt = 0;
+        if (typeof liftDeliveredCaptchaPause === "function") liftDeliveredCaptchaPause();
+        log(
+          `Доставка подтверждена (${delivery.msgId}), но ожидание было потеряно — ` +
+            "восстановил его из очереди: ход не потерян, жду ответа.",
+          false,
+          { ntfy: "quiet" },
+        );
+        return true;
+      }
       pause(
         `Сообщение подтверждено в чате (${delivery.msgId || "id не получен"}), но ожидание выдачи ` +
           "потеряно или относится другому агенту. Очередь сохранена; автоматически не повторяю. " +
@@ -8984,6 +9056,7 @@
     });
     dbg("Send: доставка подтверждена, отметка внутри чата", { watermark: mark, via: delivery.via || "message" });
     journalDelivery(expect, "delivered");
+    if (typeof liftDeliveredCaptchaPause === "function") liftDeliveredCaptchaPause();
     GM_setValue(K.pending, null);
     GM_setValue(K.deadSend, "");
     pendingNoticeAt = 0;

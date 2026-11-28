@@ -2315,6 +2315,7 @@
       }
       GM_setValue(K.pending, null);
       pendingNoticeAt = 0;
+      if (typeof liftDeliveredCaptchaPause === "function") liftDeliveredCaptchaPause();
       // Старое ожидание без снимка распознаётся по последней реплике только
       // ради совместимости. Для пуша о доставке нужно более сильное
       // подтверждение: новая реплика относительно снимка до отправки.
@@ -2583,6 +2584,17 @@
       return true;
     }
     const expect = GM_getValue(K.expect, null);
+    // D-051: очередь общая для всех вкладок, `busy` — у каждой свой. Если
+    // другая вкладка уже разобрала эту очередь (сняла её или поставила
+    // новую), этот проход опоздал: исход решён, судить ожидание и писать
+    // квитанцию повторно нельзя — иначе подтверждённая доставка выглядит
+    // как «ожидание потеряно» (инцидент 28.11: msgId в чате есть, пауза
+    // delivery-state-lost).
+    const livePending = GM_getValue(K.pending, null);
+    if (!livePending || livePending.at !== pending.at) {
+      dbg("Send: очередь уже разобрана другой вкладкой — проход закрыт без выводов", { at: pending.at });
+      return true;
+    }
     // D-045: квитанция пишется и тогда, когда ожидание потеряно. Доставка
     // состоялась и подтверждена id сообщения — этот факт не должен зависеть
     // от того, дожила ли запись `K.expect` до перехода. Без квитанции пауза
@@ -2602,9 +2614,52 @@
       );
     }
     // D-044: сообщение в чате есть, а ожидание потеряно/подменено — это не
-    // «отправлено и можно забыть». Не снимаем очередь молча и не пишем успех:
-    // нужна сверка, иначе следующий шаг потеряет ход или продублирует его.
+    // «отправлено и можно забыть». D-051: потеря без подмены, с
+    // доказанной доставкой (msgId) и очередью, адресованной этой странице,
+    // — восстанавливаем ожидание из очереди (опознавательные данные хода
+    // едут в ней по построению) и продолжаем ждать ответа: сверка уже
+    // состоялась — её провёл сам deliver. Пауза остаётся только для чужого
+    // ожидания: его подменять нельзя.
     if (!expect || norm(expect.roleId) !== norm(me)) {
+      const meNow = typeof roleFromPath === "function" ? roleFromPath() : me;
+      if (!expect && delivery.msgId && pending.roleId && norm(pending.roleId) === norm(meNow)) {
+        const rebuilt = {
+          kind: pending.kind || "dispatch",
+          ref: pending.ref || "",
+          runId: pending.runId || "",
+          missionId: pending.missionId || "",
+          turnId: pending.turnId || "",
+          questionId: pending.questionId || "",
+          logId: pending.logId || "",
+          roleId: pending.roleId,
+          roleName: pending.roleName || "",
+          roleUrl: pending.roleUrl || "",
+          roleFn: pending.roleFn || "",
+          title: pending.title || "",
+          text: pending.text,
+          watermark: delivery.msgId,
+          sentAt: Date.now(),
+          verified: true,
+          seen,
+          at: pending.at || Date.now(),
+          tries: 0,
+          lastReplySig: "",
+          lastReplyAt: 0,
+        };
+        GM_setValue(K.expect, rebuilt);
+        journalDelivery(rebuilt, "delivered");
+        GM_setValue(K.pending, null);
+        GM_setValue(K.deadSend, "");
+        pendingNoticeAt = 0;
+        if (typeof liftDeliveredCaptchaPause === "function") liftDeliveredCaptchaPause();
+        log(
+          `Доставка подтверждена (${delivery.msgId}), но ожидание было потеряно — ` +
+            "восстановил его из очереди: ход не потерян, жду ответа.",
+          false,
+          { ntfy: "quiet" },
+        );
+        return true;
+      }
       pause(
         `Сообщение подтверждено в чате (${delivery.msgId || "id не получен"}), но ожидание выдачи ` +
           "потеряно или относится другому агенту. Очередь сохранена; автоматически не повторяю. " +
@@ -2631,6 +2686,7 @@
     });
     dbg("Send: доставка подтверждена, отметка внутри чата", { watermark: mark, via: delivery.via || "message" });
     journalDelivery(expect, "delivered");
+    if (typeof liftDeliveredCaptchaPause === "function") liftDeliveredCaptchaPause();
     GM_setValue(K.pending, null);
     GM_setValue(K.deadSend, "");
     pendingNoticeAt = 0;
